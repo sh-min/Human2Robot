@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Environments
+.venv/
+env/
+venv/
+
+# ML / data — paths or symlinks specific to this repo
+/ckpt
+/data
+/output
+/out
+/wandb
+
+# Model / feature artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npy
+*.npz
+
+# Logs
+*.log
+slurm-*.out
+slurm-*.err

@@ -30,7 +30,8 @@ src/retargeting/
 │   ├── xhand_right_dexpilot.yml
 │   └── xhand_left_dexpilot.yml
 ├── extract_urdf.py          # STAR1 full-body URDF → xhand 분리 (1회)
-├── retarget_from_npz.py     # ★ MANO npz → qpos pkl
+├── retarget_from_npz.py         # ★ MANO npz → qpos pkl
+├── retarget_from_npz_contact.py # ★ MANO npz + HACO contact → qpos pkl
 ├── overlay_on_rgb.py        # qpos + RGB → overlay mp4 (sapien)
 ├── play_sequence.py         # 인터랙티브 3D 뷰어 (trimesh)
 ├── inspect_combined.py      # axis 검증용 (xhand + MANO skeleton 양손)
@@ -44,6 +45,8 @@ src/retargeting/
 이미 생성돼 있어야 함.
 
 ### 1. Retargeting (양손)
+
+#### 1.1 Contact 없는 버전
 
 ```bash
 conda activate RFM_retarget
@@ -64,6 +67,36 @@ python retarget_from_npz.py \
 
 옵션:
 - `--hand right|left|both` (default both)
+- `--out_dir <path>`
+
+#### 1.2 Contact 적용 버전
+
+선행 조건: 위 1.1 npz + `src/contact_estimation/extract_hand_contact.py`로
+`<episode>/contact/*.npz`가 생성돼 있어야 함.
+
+```bash
+# contact 추출 (conda activate haco)
+cd <repo_root>/src/contact_estimation
+python extract_hand_contact.py \
+    --input_dir /path/to/<episode>
+
+# contact retargeting (conda activate RFM_retarget)
+cd <repo_root>/src/retargeting
+python retarget_from_npz_contact.py \
+    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz
+```
+
+`--contact_dir` 미지정 시 `<episode>/contact` 로 자동 설정.
+
+출력: npz와 같은 폴더에 `qpos_xhand_contact_right.pkl`, `qpos_xhand_contact_left.pkl`
+
+contact 적용 방식: contact mask가 있는 손가락은 fingertip joint 위치를 해당 finger의
+contact vertex centroid(물체 표면 근사점)로 대체한 뒤 retargeting. contact 없는
+손가락은 기존과 동일.
+
+옵션:
+- `--hand right|left|both` (default both)
+- `--contact_dir <path>`
 - `--out_dir <path>`
 
 ### 2. RGB Overlay 영상

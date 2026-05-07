@@ -13,6 +13,8 @@ Usage:
 import argparse
 import os
 import pickle
+import subprocess
+import tempfile
 from glob import glob
 
 import cv2
@@ -105,7 +107,9 @@ def main():
     map_l = np.array([left_d["joint_names"].index(n) for n in sj_l], dtype=int)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    writer = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"),
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(tmp_fd)
+    writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"),
                              args.fps, (W, H))
     far_away = sapien.Pose([0, 0, 100])
 
@@ -148,6 +152,13 @@ def main():
         writer.write(out_bgr)
 
     writer.release()
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", tmp_path,
+         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+         args.out],
+        check=True,
+    )
+    os.remove(tmp_path)
     print(f"saved {args.out}")
 
 

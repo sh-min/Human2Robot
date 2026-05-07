@@ -1,5 +1,69 @@
 # skill2policy
 
+## LLM pair-coding tools
+
+This repo is built assuming you'll be pair-coding with an LLM (Claude Code or
+similar) and ships with two helpers. Skim them first when adding a new module
+or trying to understand code a teammate wrote.
+
+### 1. [`CLAUDE.md`](CLAUDE.md) — coding guidelines
+
+Four behavioral rules in the spirit of Andrej Karpathy's coding-with-LLM notes:
+*Think before coding* / *Simplicity first* / *Surgical changes* /
+*Goal-driven execution*. Claude Code reads this file automatically at the start
+of each session. You shouldn't normally need to touch it — append project-
+specific rules below the existing ones if you want to extend it.
+
+### 2. `graphify` — codebase knowledge graph
+
+Turns the whole `src/` tree into a node/edge/community graph so an LLM can
+quickly grasp how modules connect. Useful when comparing structure before and
+after merging a new module, or finding the seam between your code and a
+collaborator's.
+
+**Install (once):**
+
+```bash
+pip install graphifyy
+graphify install --platform claude   # registers the /graphify slash command
+```
+
+**Build the graph** (`src/` only — skip `third_party/`):
+
+```bash
+# Inside Claude Code
+/graphify src
+
+# Or directly from the shell
+graphify build src
+```
+
+Outputs:
+- `GRAPH_REPORT.md` — god nodes, surprising connections, suggested questions
+  (the human-readable summary; read this first)
+- `graphify-out/graph.html` — interactive visualization (open in a browser)
+- `graphify-out/graph.json` — GraphRAG-ready index for LLM queries
+
+**Query / explore:**
+
+```bash
+graphify query "where is features.pt produced and where is it consumed?"
+graphify path "VJEPAFeatureExtractor" "SkillWindowDataset"
+graphify explain "infer_long_horizon.main"
+```
+
+**After refactoring or adding a new module:**
+
+```bash
+graphify update      # re-extracts only changed files (uses cache)
+```
+
+Re-running this once after dropping in a new folder (e.g. `src/policy/`,
+`src/sim/`) lets the LLM lock onto the overall structure faster in later
+sessions, with less context burned on rediscovery.
+
+---
+
 ## Cloning
 
 This repository uses git submodules. A plain `git clone` will leave the `third_party/` directories empty.

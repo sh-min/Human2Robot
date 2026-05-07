@@ -43,7 +43,9 @@ from scripts.scripts_test_video.hawor_video import (
     hawor_motion_estimation,
     hawor_infiller,
 )
-from scripts.scripts_test_video.hawor_slam import hawor_slam
+# `hawor_slam` pulls in DROID-SLAM (`droid` package) at import time, which is
+# only needed when SLAM is actually run. Lazy-import inside main() so users with
+# `--skip_slam` don't need DROID-SLAM installed.
 from hawor.utils.process import run_mano, run_mano_left
 from hawor.utils.rotation import rotation_matrix_to_angle_axis
 from lib.eval_utils.custom_utils import load_slam_cam
@@ -102,6 +104,13 @@ def main():
                         "frames without a hand detection are left invalid.")
     p.add_argument("--out_npz", type=str, default=None,
                    help="Defaults to <seq_folder>/retarget_input.npz")
+    p.add_argument("--vts_proj", action="store_true",
+                   help="After saving npz, project MANO mesh vertices (778 per "
+                        "hand) onto the source RGB and save vts_projection.mp4 "
+                        "alongside the npz, for visual sanity check.")
+    p.add_argument("--vts_proj_dot", type=int, default=1,
+                   help="Dot radius (px) for vertex projection.")
+    p.add_argument("--vts_proj_alpha", type=float, default=0.7)
     args = p.parse_args()
 
     if args.rgb_dir is not None:
@@ -165,6 +174,7 @@ def main():
             seq_folder, f"SLAM/hawor_slam_w_scale_{start_idx}_{end_idx}.npz"
         )
         if not os.path.exists(slam_path):
+            from scripts.scripts_test_video.hawor_slam import hawor_slam  # lazy
             hawor_slam(args, start_idx, end_idx)
         _, _, R_c2w, t_c2w = load_slam_cam(slam_path)
 
@@ -189,12 +199,16 @@ def main():
     )
     joints_left = _to_np(out_l["joints"])[0]
     joints_right = _to_np(out_r["joints"])[0]
+    verts_left = _to_np(out_l["vertices"])[0]    # (T, 778, 3) MANO mesh verts
+    verts_right = _to_np(out_r["vertices"])[0]
 
     out_npz = args.out_npz or os.path.join(seq_folder, "retarget_input.npz")
     os.makedirs(os.path.dirname(out_npz), exist_ok=True)
     save_kwargs = dict(
         joints_left=joints_left,
         joints_right=joints_right,
+        verts_left=verts_left,
+        verts_right=verts_right,
         mano_trans=_to_np(pred_trans),
         mano_global_orient=_to_np(pred_rot),
         mano_hand_pose=_to_np(pred_hand_pose),
@@ -211,10 +225,75 @@ def main():
     np.savez(out_npz, **save_kwargs)
 
     print(f"[done] saved {out_npz}")
-    print(f"  joints_left  {joints_left.shape}")
-    print(f"  joints_right {joints_right.shape}")
+    print(f"  joints_left  {joints_left.shape}   verts_left  {verts_left.shape}")
+    print(f"  joints_right {joints_right.shape}   verts_right {verts_right.shape}")
     print(f"  valid        {_to_np(pred_valid).shape}  (sum L/R: "
           f"{int(_to_np(pred_valid)[0].sum())}/{int(_to_np(pred_valid)[1].sum())})")
+
+    if args.vts_proj:
+        if args.rgb_dir is None:
+            print("[vts_proj] skipped: --rgb_dir not given")
+        else:
+            project_vertices_to_rgb(
+                rgb_dir=os.path.abspath(args.rgb_dir.rstrip("/")),
+                glob_pat=args.img_glob,
+                verts_l=verts_left, verts_r=verts_right,
+                valid=_to_np(pred_valid),
+                out_mp4=os.path.join(seq_folder, "vts_projection.mp4"),
+                fx=float(img_focal),
+                fps=args.fps,
+                dot_radius=args.vts_proj_dot,
+                alpha=args.vts_proj_alpha,
+            )
+
+
+def project_vertices_to_rgb(rgb_dir, glob_pat, verts_l, verts_r, valid,
+                            out_mp4, fx, fps=30, dot_radius=1, alpha=0.7):
+    """Project per-frame MANO mesh vertices onto RGB and write mp4."""
+    rgb_files = natsorted(glob(os.path.join(rgb_dir, glob_pat)))
+    if not rgb_files:
+        print(f"[vts_proj] no RGB matched {glob_pat!r} in {rgb_dir}")
+        return
+    sample = cv2.imread(rgb_files[0])
+    H, W = sample.shape[:2]
+    cx, cy = W / 2.0, H / 2.0
+    T = min(len(rgb_files), verts_l.shape[0], verts_r.shape[0])
+
+    print(f"[vts_proj] {T} frames, {W}x{H}, fx={fx} cx={cx} cy={cy} -> {out_mp4}")
+    writer = cv2.VideoWriter(
+        out_mp4, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H)
+    )
+    color_right = (0, 80, 255)   # BGR red-ish
+    color_left = (255, 80, 0)    # BGR blue-ish
+    try:
+        from tqdm import tqdm as _tqdm
+    except ImportError:
+        _tqdm = lambda x: x
+
+    for t in _tqdm(range(T)):
+        bgr = cv2.imread(rgb_files[t])
+        if bgr.shape[:2] != (H, W):
+            bgr = cv2.resize(bgr, (W, H))
+        overlay = bgr.copy()
+        for v_arr, color, h_idx in ((verts_r, color_right, 1), (verts_l, color_left, 0)):
+            if not bool(valid[h_idx, t]):
+                continue
+            pts = v_arr[t]
+            z = pts[:, 2]
+            ok = z > 1e-3
+            u = fx * pts[:, 0] / np.clip(z, 1e-3, None) + cx
+            v = fx * pts[:, 1] / np.clip(z, 1e-3, None) + cy
+            for i in np.where(ok)[0]:
+                ui, vi = int(round(u[i])), int(round(v[i]))
+                if 0 <= ui < W and 0 <= vi < H:
+                    cv2.circle(overlay, (ui, vi), dot_radius, color, -1, cv2.LINE_AA)
+        if alpha < 1.0:
+            bgr = cv2.addWeighted(overlay, alpha, bgr, 1 - alpha, 0)
+        else:
+            bgr = overlay
+        writer.write(bgr)
+    writer.release()
+    print(f"[vts_proj] saved {out_mp4}")
 
 
 if __name__ == "__main__":

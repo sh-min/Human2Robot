@@ -68,6 +68,7 @@ python extract_for_retarget.py \
 | 키 | 모양 | 설명 |
 |---|---|---|
 | `joints_left`, `joints_right` | `(T, 21, 3)` | mediapipe-21 layout 손 joint 위치 (cam 또는 world frame) |
+| `verts_left`, `verts_right` | `(T, 778, 3)` | MANO 메시 정점 위치 (joints와 동일 frame) |
 | `mano_trans` | `(2, T, 3)` | MANO `transl` 파라미터 (raw, canonical offset 미반영) |
 | `mano_global_orient` | `(2, T, 3)` | wrist axis-angle |
 | `mano_hand_pose` | `(2, T, 15, 3)` | 15-joint articulation axis-angle |

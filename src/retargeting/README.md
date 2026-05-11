@@ -161,7 +161,7 @@ Open3D 뷰어로 같은 cam frame 위에 4종을 동시 표시 (오른손):
 
 ## (legacy) retarget_from_npz_contact.py + visualize_contact_retarget.py
 
-> 이전 contact-aware retargeting 구현. **centroid-replacement 방식**: contact 있는 손가락의 MANO fingertip keypoint를 해당 손가락 contact vertex의 centroid로 교체한 뒤 일반 retargeting 호출. `retarget_from_npz.py --contact` 의 normal-aware Chamfer 방식보다 단순하지만, 손등쪽 contact까지 끌어와서 결과가 어색할 수 있음. 비교/참고용으로 남겨두고 있음.
+> 이전 contact-aware retargeting 구현. **centroid-replacement 방식**: contact 있는 손가락의 MANO fingertip keypoint를 해당 손가락 contact vertex의 centroid로 교체한 뒤 일반 retargeting 호출. `retarget_from_npz.py --contact` 의 normal-aware Chamfer 방식과 다름
 
 ### Centroid-방식 retargeting
 

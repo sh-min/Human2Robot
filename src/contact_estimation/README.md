@@ -16,9 +16,8 @@ episode 디렉토리 구조가 아래와 같아야 합니다:
 ```
 <input_dir>/
 ├── rgb/                         # 원본 RGB 프레임 이미지
-├── result.json                  # 프레임별 hand detection 결과 (kpts_2d, is_right)
 └── rgb_hawor/
-    └── retarget_input.npz       # HAWoR hand mesh (verts, valid, start_idx)
+    └── retarget_input.npz       # HAWoR 결과 (verts, joints, valid, start_idx)
 ```
 
 ## Usage
@@ -33,6 +32,7 @@ python extract_hand_contact.py \
 | 인자 | 기본값 | 설명 |
 |------|--------|------|
 | `--input_dir` | (필수) | episode 디렉토리 경로 |
+| `--img_focal` | `600.0` | bbox 투영용 카메라 focal length (pixels) |
 | `--backbone` | `hamer` | HACO backbone 종류 |
 | `--checkpoint` | `HACO_RELEASE/release_checkpoint/haco_neurips_hamer_checkpoint.ckpt` | 모델 체크포인트 경로 |
 

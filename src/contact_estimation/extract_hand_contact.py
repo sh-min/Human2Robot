@@ -8,7 +8,6 @@ os.chdir(HACO_DIR)
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import cv2
-import json
 import torch
 import trimesh
 import pyrender
@@ -51,10 +50,12 @@ def remove_small_contact_components(contact_mask, faces, min_size=20):
     return filtered_mask
 
 
-def get_bbox_from_kpts(kpts_2d, img_shape, pad_ratio=0.15):
-    kpts = np.array(kpts_2d)
-    x_min, y_min = kpts.min(axis=0)
-    x_max, y_max = kpts.max(axis=0)
+def get_bbox_from_joints3d(joints_3d, img_shape, focal, pad_ratio=0.15):
+    cx, cy = img_shape[1] / 2.0, img_shape[0] / 2.0
+    u = focal * joints_3d[:, 0] / joints_3d[:, 2] + cx
+    v = focal * joints_3d[:, 1] / joints_3d[:, 2] + cy
+    x_min, y_min = u.min(), v.min()
+    x_max, y_max = u.max(), v.max()
     pad = pad_ratio * max(x_max - x_min, y_max - y_min)
     x_min = max(0.0, x_min - pad)
     y_min = max(0.0, y_min - pad)
@@ -149,7 +150,9 @@ def predict_contact(model, orig_img, bbox, is_right, use_vit_norm, normalize, de
 def main():
     parser = argparse.ArgumentParser(description='Extract hand contact vertices')
     parser.add_argument('--input_dir', type=str, required=True,
-                        help='Episode directory containing rgb/ and result.json')
+                        help='Episode directory containing rgb/ and rgb_hawor/retarget_input.npz')
+    parser.add_argument('--img_focal', type=float, default=600.0,
+                        help='Camera focal length in pixels for 2D bbox projection')
     parser.add_argument('--backbone', type=str, default='hamer',
                         choices=['hamer', 'vit-l-16', 'vit-b-16', 'vit-s-16',
                                  'handoccnet', 'hrnet-w48', 'hrnet-w32',
@@ -159,7 +162,6 @@ def main():
 
     input_dir = os.path.abspath(args.input_dir)
     rgb_dir = os.path.join(input_dir, 'rgb')
-    result_path = os.path.join(input_dir, 'result.json')
     output_dir = os.path.join(input_dir, 'contact')
     viz_dir = os.path.join(output_dir, 'viz')
     os.makedirs(output_dir, exist_ok=True)
@@ -175,11 +177,9 @@ def main():
         checkpoint = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(checkpoint['state_dict'])
 
-    with open(result_path) as f:
-        result = json.load(f)
-
     hawor = np.load(os.path.join(input_dir, 'rgb_hawor', 'retarget_input.npz'))
     hawor_verts = {'left': hawor['verts_left'], 'right': hawor['verts_right']}
+    hawor_joints = {'left': hawor['joints_left'], 'right': hawor['joints_right']}
     hawor_valid = {'left': hawor['valid'][0], 'right': hawor['valid'][1]}
     hawor_start = int(hawor['start_idx'])
 
@@ -196,11 +196,11 @@ def main():
     for frame_file in tqdm(images):
         frame_key = os.path.splitext(frame_file)[0]
 
-        if frame_key not in result or not result[frame_key]:
-            continue
-
         frame_number = int(''.join(c for c in frame_key if c.isdigit()))
         frame_idx = frame_number - hawor_start
+
+        if frame_idx < 0 or frame_idx >= hawor_valid['left'].shape[0]:
+            continue
 
         frame = cv2.imread(os.path.join(rgb_dir, frame_file))
         orig_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -208,14 +208,11 @@ def main():
         save_dict = {}
         side_renders = {}
 
-        for hand in result[frame_key]:
-            is_right = hand['is_right'] > 0.5
-            side = 'right' if is_right else 'left'
-
+        for side, is_right in [('left', False), ('right', True)]:
             if not hawor_valid[side][frame_idx]:
                 continue
 
-            bbox = get_bbox_from_kpts(hand['kpts_2d'], orig_img.shape)
+            bbox = get_bbox_from_joints3d(hawor_joints[side][frame_idx], orig_img.shape, args.img_focal)
             contact_mask = predict_contact(
                 model, orig_img, bbox, is_right, use_vit_norm, normalize, device, eval_thres
             )

@@ -24,19 +24,20 @@ pip install -e .[example]
 
 ```
 src/retargeting/
-├── _paths.py                # 모듈 공용 경로 상수 (수정 X)
-├── assets/xhand/            # xhand URDF + STL meshes (양손)
-├── configs/                 # DexPilot yml (양손)
+├── _paths.py                    # 모듈 공용 경로 상수 (수정 X)
+├── assets/xhand/                # xhand URDF + STL meshes (양손)
+├── configs/                     # DexPilot yml (양손)
 │   ├── xhand_right_dexpilot.yml
 │   └── xhand_left_dexpilot.yml
-├── extract_urdf.py          # STAR1 full-body URDF → xhand 분리 (1회)
+├── extract_urdf.py              # STAR1 full-body URDF → xhand 분리 (1회)
 ├── retarget_from_npz.py         # ★ MANO npz → qpos pkl
 ├── retarget_from_npz_contact.py # ★ MANO npz + HACO contact → qpos pkl
-├── overlay_on_rgb.py        # qpos + RGB → overlay mp4 (sapien)
-├── play_sequence.py         # 인터랙티브 3D 뷰어 (trimesh)
-├── inspect_combined.py      # axis 검증용 (xhand + MANO skeleton 양손)
-├── inspect_wrist_axes.py    # 단일 핸드 axis arrows (URDF 검증)
-└── project_contact.py       # contact 점 RGB projection
+├── visualize_contact_retarget.py # ★ retargeting 시각화 (MANO + xhand)
+├── overlay_on_rgb.py            # qpos + RGB → overlay mp4 (sapien)
+├── play_sequence.py             # 인터랙티브 3D 플레이백 (trimesh)
+├── inspect_combined.py          # axis 검증용 (xhand + MANO skeleton 양손)
+├── inspect_wrist_axes.py        # 단일 핸드 axis arrows (URDF 검증)
+└── project_contact.py           # contact 점 RGB projection
 ```
 
 ## 실행
@@ -99,7 +100,55 @@ contact vertex centroid(물체 표면 근사점)로 대체한 뒤 retargeting. c
 - `--contact_dir <path>`
 - `--out_dir <path>`
 
-### 2. RGB Overlay 영상
+### 2. Retargeting 시각화
+
+선행 조건: 1.1과 1.2가 모두 완료되어 아래 4개 pkl이 존재해야 함.
+- `qpos_xhand_right.pkl`, `qpos_xhand_left.pkl`
+- `qpos_xhand_contact_right.pkl`, `qpos_xhand_contact_left.pkl`
+
+```bash
+conda activate vjepa2-312
+cd <repo_root>/src/retargeting
+
+python visualize_contact_retarget.py \
+    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz \
+    --frame 10
+```
+
+출력 (기본: `src/retargeting/vis/`):
+
+| 파일 | 내용 |
+|---|---|
+| `frame{N}_mano_2d.png` | MANO만 — original vs contact-adjusted, contact vertex 포함 |
+| `frame{N}_mano_3d.html` | 위 내용 인터랙티브 3D (브라우저에서 열기) |
+| `frame{N}_xhand_2d.png` | MANO + xhand — original(`retarget_from_npz`) vs contact-adjusted(`retarget_from_npz_contact`) |
+| `frame{N}_xhand_3d.html` | 위 내용 인터랙티브 3D |
+
+**시각화 요소 (xhand 패널 기준)**
+
+| 요소 | 색상 | 설명 |
+|---|---|---|
+| MANO mesh | 회색 반투명 | MANO 손 표면 |
+| MANO skeleton | 청회색 | 21개 관절 + bone |
+| Original fingertip | 청록 ● | HaWoR 추정 fingertip keypoint |
+| Contact centroid | 손가락별 색 ★ | HACO contact vertex의 centroid (교체된 fingertip 위치) |
+| MANO DexPilot vec | 파랑(original) / 주황(contact) 화살표 | MANO 공간의 retargeting reference vector 15개 |
+| xhand skeleton | 노랑 | FK 결과 로봇 관절 체인 |
+| xhand DexPilot vec | 노랑(original) / 주황(contact) 화살표 | 로봇 공간의 retargeting vector 15개 |
+
+**contact xhand란?**
+
+`retarget_from_npz_contact.py`의 출력. contact가 있는 손가락의 fingertip 위치를
+물체 표면 contact centroid로 교체한 뒤 retargeting하므로, 손가락이 물체를
+더 깊게 감싸는 방향으로 qpos가 조정됨.
+
+옵션:
+- `--frame N` : 시각화할 프레임 번호 (default: 10)
+- `--pkl_dir <path>` : qpos pkl 파일 위치 (default: `--npz`와 같은 폴더)
+- `--contact_dir <path>` : contact npz 위치 (default: `<episode>/contact`)
+- `--out_dir <path>` : 결과 저장 위치 (default: `src/retargeting/vis/`)
+
+### 3. RGB Overlay 영상
 
 ```bash
 python overlay_on_rgb.py \
@@ -113,7 +162,7 @@ python overlay_on_rgb.py \
 
 원본 RGB 위에 cam-frame xhand 메쉬가 alpha-blended로 합성 (default α=0.7).
 
-### 3. 인터랙티브 3D 플레이백
+### 5. 인터랙티브 3D 플레이백
 
 ```bash
 python play_sequence.py \
@@ -133,7 +182,7 @@ trimesh 뷰어로 양손 xhand + MANO skeleton + camera frustum 함께 재생.
 
 옵션: `--no_bones` (joint 점만), `--bone_radius 0.005`, `--fps 15`
 
-### 4. Frame alignment 검증 (디버깅용)
+### 6. Frame alignment 검증 (디버깅용)
 
 ```bash
 # 양손 동시 inspector (xhand 메쉬 + MANO skeleton)
@@ -144,14 +193,14 @@ python inspect_combined.py \
 python inspect_wrist_axes.py --hand right --save /tmp/right_axes.png
 ```
 
-### 5. xhand URDF 재생성 (일반적으로 불필요)
+### 7. xhand URDF 재생성 (일반적으로 불필요)
 
 ```bash
 # extract_urdf.py 안의 SRC_URDF / SRC_MESH_DIR을 STAR1 위치로 수정 후
 python extract_urdf.py
 ```
 
-### 6. (선택) Contact projection
+### 8. (선택) Contact projection
 
 ```bash
 python project_contact.py \

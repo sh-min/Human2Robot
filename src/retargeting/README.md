@@ -1,53 +1,70 @@
 # Retargeting (xhand)
 
-HaWoR이 만들어낸 양손 MANO 결과를 받아 [xhand](../../retarget/models/star1) 로봇 손
-qpos sequence로 변환하고, 검증용 시각화를 제공.
+HaWoR이 만들어낸 양손 MANO 결과를 xhand 로봇 손 qpos sequence로 변환.
 
-백엔드: vendored [dex-retargeting](https://github.com/dexsuite/dex-retargeting)
-(`third_party/dex-retargeting`) — DexPilot vector retargeting + pinocchio FK/IK.
+**Stage 1 (default)** — DexPilot vector retargeting (wrist + 5 fingertip 벡터 매칭)
+**Stage 2 (`--contact`)** — Stage 1 위에 HACO contact 정보로 손가락 자세 미세 조정. palmar + fingertip 영역 contact vertex만 사용하고, **vertex outward normal까지 같이 매칭**해서 xhand의 손등쪽이 contact 점에 끌리는 문제를 방지.
+
+백엔드: vendored [dex-retargeting](https://github.com/dexsuite/dex-retargeting) (`third_party/dex-retargeting`) — DexPilot + pinocchio FK + scipy.optimize.
 
 ## 환경 (conda env: `RFM_retarget`)
 
 ```bash
-# 1) env 만들기 (numpy 2.x + pinocchio + sapien)
 cd <repo_root>/third_party/dex-retargeting
-conda env create -f environment.yml -n RFM_retarget   # 또는 README 참고
+conda env create -f environment.yml -n RFM_retarget
 conda activate RFM_retarget
-
-# 2) dex-retargeting을 editable install (이 repo의 third_party 경로 그대로)
 pip install -e .[example]
 ```
 
-> `pip install -e`는 **현재 폴더 절대경로를 기록**하므로, 폴더 위치가 바뀌면 재실행 필요.
+> `pip install -e`는 절대경로 기록 — 폴더 옮기면 재실행 필요.
 
 ## 디렉터리
 
 ```
 src/retargeting/
-├── _paths.py                    # 모듈 공용 경로 상수 (수정 X)
-├── assets/xhand/                # xhand URDF + STL meshes (양손)
+├── _paths.py                    # 공용 경로 + R_MANO_XHAND 자동 로딩
+├── assets/
+│   ├── xhand/                   # xhand URDF + STL meshes
+│   ├── R_mano_xhand_{r,l}.npy   # Procrustes-fit MANO↔xhand rotation
+│   ├── palmar_mask_{r,l}.npy    # 778 bool, MANO palm-side vertex mask
+│   ├── fingertip_mask_{r,l}.npy # 778 bool, MANO distal vertex mask
+│   ├── finger_part_{r,l}.npy    # 778 int, MANO joint index per vertex
+│   └── mano_faces_{r,l}.npy     # MANO mesh faces (vertex normal 계산용)
 ├── configs/                     # DexPilot yml (양손)
-│   ├── xhand_right_dexpilot.yml
-│   └── xhand_left_dexpilot.yml
-├── extract_urdf.py              # STAR1 full-body URDF → xhand 분리 (1회)
-├── retarget_from_npz.py         # ★ MANO npz → qpos pkl
-├── retarget_from_npz_contact.py # ★ MANO npz + HACO contact → qpos pkl
-├── visualize_contact_retarget.py # ★ retargeting 시각화 (MANO + xhand)
-├── overlay_on_rgb.py            # qpos + RGB → overlay mp4 (sapien)
-├── play_sequence.py             # 인터랙티브 3D 플레이백 (trimesh)
-├── inspect_combined.py          # axis 검증용 (xhand + MANO skeleton 양손)
-├── inspect_wrist_axes.py        # 단일 핸드 axis arrows (URDF 검증)
-└── project_contact.py           # contact 점 RGB projection
+├── retarget_from_npz.py            # ★ MANO npz → xhand qpos (Stage 1 + Stage 2)
+├── overlay_on_rgb.py               # qpos + RGB → overlay mp4
+├── compare_stages.py               # Stage 1 vs Stage 2 인터랙티브 3D 뷰어 (오른손)
+├── retarget_from_npz_contact.py    # (legacy) centroid 방식 contact retargeting
+├── visualize_contact_retarget.py   # (legacy) retargeting 시각화
+├── build_palmar_mask.py            # palmar mask 생성 (1회)
+├── build_finger_parts.py           # finger-part / tip mask 생성 (1회)
+├── compute_R_mano_xhand.py         # Procrustes R 계산 (1회)
+├── extract_urdf.py                 # STAR1 풀바디 URDF → xhand 분리 (1회)
+└── ...                             # 기타 디버그/검증 스크립트
 ```
+
+## 1회 셋업 — assets 생성
+
+`assets/`의 `.npy` 파일들은 repo에 포함되어 있음. 만약 새로 빌드해야 한다면:
+
+```bash
+# Procrustes R (MANO canonical MCP knuckle ↔ xhand MCP)
+conda activate hawor     # MANO model 필요
+cd <repo_root>/src/retargeting
+python compute_R_mano_xhand.py
+python build_palmar_mask.py
+python build_finger_parts.py
+```
+
+세 스크립트 모두 1회 실행. 결과는 `assets/*.npy`에 저장되고, 그 후 `_paths.py`가 자동으로 로드.
 
 ## 실행
 
-선행 조건: `src/hand_estimation/extract_for_retarget.py`로 `retarget_input.npz`가
-이미 생성돼 있어야 함.
+선행 조건: `src/hand_estimation/extract_for_retarget.py`로 `retarget_input.npz` 생성. `--contact` 사용 시 `src/contact_estimation/extract_hand_contact.py`로 `contact/*.npz`도 생성되어 있어야 함.
 
-### 1. Retargeting (양손)
+### Retargeting (양손)
 
-#### 1.1 Contact 없는 버전
+**Stage 1 (vector only):**
 
 ```bash
 conda activate RFM_retarget
@@ -57,178 +74,112 @@ python retarget_from_npz.py \
     --npz /path/to/<seq>_hawor/retarget_input.npz
 ```
 
-출력: 같은 폴더에 `qpos_xhand_right.pkl`, `qpos_xhand_left.pkl`
+출력: 같은 폴더에 `qpos_xhand_{right,left}.pkl`
+
+**Stage 2 (contact-aware refinement):**
+
+```bash
+python retarget_from_npz.py \
+    --npz /path/to/<seq>_hawor/retarget_input.npz \
+    --contact
+```
+
+출력: `qpos_xhand_contact_{right,left}.pkl` (stage 1 pkl은 그대로 둠)
+
+`--contact_dir <path>` 미지정 시 `<npz 부모>/../contact` 사용.
+
+**옵션:**
+- `--hand right|left|both` (default both)
+- `--alpha 0.001` — anchor 강도 (stage1에서 이탈 패널티). 작게 → contact term 강함
+- `--normal_thr 0.3` — normal 호환 임계값 (n_h · n_r > thr)
+- `--out_dir <path>`
+
+**Pkl 포맷:**
 
 | 키 | 설명 |
 |---|---|
 | `data` | `(T, 12)` xhand 12-DOF qpos |
-| `joint_names` | qpos 순서대로 joint 이름 |
-| `valid` | `(T,)` 프레임 유효성 |
+| `joint_names` | qpos joint 순서 |
+| `valid` | `(T,)` bool, 프레임 유효성 |
 | `config_path`, `hand`, `dof` | 메타 |
 
-옵션:
-- `--hand right|left|both` (default both)
-- `--out_dir <path>`
-
-#### 1.2 Contact 적용 버전
-
-선행 조건: 위 1.1 npz + `src/contact_estimation/extract_hand_contact.py`로
-`<episode>/contact/*.npz`가 생성돼 있어야 함.
+### RGB Overlay
 
 ```bash
-# contact 추출 (conda activate haco)
-cd <repo_root>/src/contact_estimation
-python extract_hand_contact.py \
-    --input_dir /path/to/<episode>
+SEQ=/path/to/<dataset>
+HAWOR=$SEQ/rgb_hawor
 
-# contact retargeting (conda activate RFM_retarget)
-cd <repo_root>/src/retargeting
-python retarget_from_npz_contact.py \
-    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz
-```
-
-`--contact_dir` 미지정 시 `<episode>/contact` 로 자동 설정.
-
-출력: npz와 같은 폴더에 `qpos_xhand_contact_right.pkl`, `qpos_xhand_contact_left.pkl`
-
-contact 적용 방식: contact mask가 있는 손가락은 fingertip joint 위치를 해당 finger의
-contact vertex centroid(물체 표면 근사점)로 대체한 뒤 retargeting. contact 없는
-손가락은 기존과 동일.
-
-옵션:
-- `--hand right|left|both` (default both)
-- `--contact_dir <path>`
-- `--out_dir <path>`
-
-### 2. Retargeting 시각화
-
-선행 조건: 1.1과 1.2가 모두 완료되어 아래 4개 pkl이 존재해야 함.
-- `qpos_xhand_right.pkl`, `qpos_xhand_left.pkl`
-- `qpos_xhand_contact_right.pkl`, `qpos_xhand_contact_left.pkl`
-
-```bash
-conda activate vjepa2-312
-cd <repo_root>/src/retargeting
-
-python visualize_contact_retarget.py \
-    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz \
-    --frame 10
-```
-
-출력 (기본: `src/retargeting/vis/`):
-
-| 파일 | 내용 |
-|---|---|
-| `frame{N}_mano_2d.png` | MANO만 — original vs contact-adjusted, contact vertex 포함 |
-| `frame{N}_mano_3d.html` | 위 내용 인터랙티브 3D (브라우저에서 열기) |
-| `frame{N}_xhand_2d.png` | MANO + xhand — original(`retarget_from_npz`) vs contact-adjusted(`retarget_from_npz_contact`) |
-| `frame{N}_xhand_3d.html` | 위 내용 인터랙티브 3D |
-
-**시각화 요소 (xhand 패널 기준)**
-
-| 요소 | 색상 | 설명 |
-|---|---|---|
-| MANO mesh | 회색 반투명 | MANO 손 표면 |
-| MANO skeleton | 청회색 | 21개 관절 + bone |
-| Original fingertip | 청록 ● | HaWoR 추정 fingertip keypoint |
-| Contact centroid | 손가락별 색 ★ | HACO contact vertex의 centroid (교체된 fingertip 위치) |
-| MANO DexPilot vec | 파랑(original) / 주황(contact) 화살표 | MANO 공간의 retargeting reference vector 15개 |
-| xhand skeleton | 노랑 | FK 결과 로봇 관절 체인 |
-| xhand DexPilot vec | 노랑(original) / 주황(contact) 화살표 | 로봇 공간의 retargeting vector 15개 |
-
-**contact xhand란?**
-
-`retarget_from_npz_contact.py`의 출력. contact가 있는 손가락의 fingertip 위치를
-물체 표면 contact centroid로 교체한 뒤 retargeting하므로, 손가락이 물체를
-더 깊게 감싸는 방향으로 qpos가 조정됨.
-
-옵션:
-- `--frame N` : 시각화할 프레임 번호 (default: 10)
-- `--pkl_dir <path>` : qpos pkl 파일 위치 (default: `--npz`와 같은 폴더)
-- `--contact_dir <path>` : contact npz 위치 (default: `<episode>/contact`)
-- `--out_dir <path>` : 결과 저장 위치 (default: `src/retargeting/vis/`)
-
-### 3. RGB Overlay 영상
-
-```bash
+# stage 1 (vector)
 python overlay_on_rgb.py \
-    --npz       /path/to/<seq>_hawor/retarget_input.npz \
-    --rgb_dir   /path/to/rgb_frames \
-    --right_pkl /path/to/<seq>_hawor/qpos_xhand_right.pkl \
-    --left_pkl  /path/to/<seq>_hawor/qpos_xhand_left.pkl \
-    --out       /path/to/<seq>_hawor/overlay.mp4 \
+    --npz       $HAWOR/retarget_input.npz \
+    --rgb_dir   $SEQ/rgb \
+    --right_pkl $HAWOR/qpos_xhand_right.pkl \
+    --left_pkl  $HAWOR/qpos_xhand_left.pkl \
+    --out       $HAWOR/overlay_stage1.mp4 \
+    --img_focal 497.77
+
+# stage 2 (contact)
+python overlay_on_rgb.py \
+    --npz       $HAWOR/retarget_input.npz \
+    --rgb_dir   $SEQ/rgb \
+    --right_pkl $HAWOR/qpos_xhand_contact_right.pkl \
+    --left_pkl  $HAWOR/qpos_xhand_contact_left.pkl \
+    --out       $HAWOR/overlay_stage2_contact.mp4 \
     --img_focal 497.77
 ```
 
-원본 RGB 위에 cam-frame xhand 메쉬가 alpha-blended로 합성 (default α=0.7).
+원본 RGB 위에 cam-frame xhand 메쉬가 alpha-blended로 합성 (default α=0.7). 두 영상 비교해서 stage 2가 contact 영역에서 손가락이 더 잘 닿는지 확인.
 
-### 5. 인터랙티브 3D 플레이백
+### Stage 1 vs Stage 2 인터랙티브 비교 (오른손)
 
 ```bash
-python play_sequence.py \
-    --npz       /path/to/<seq>_hawor/retarget_input.npz \
-    --right_pkl /path/to/<seq>_hawor/qpos_xhand_right.pkl \
-    --left_pkl  /path/to/<seq>_hawor/qpos_xhand_left.pkl
+python compare_stages.py \
+    --npz  /path/to/<seq>_hawor/retarget_input.npz \
+    --pkl1 /path/to/<seq>_hawor/qpos_xhand_right.pkl \
+    --pkl2 /path/to/<seq>_hawor/qpos_xhand_contact_right.pkl
 ```
 
-trimesh 뷰어로 양손 xhand + MANO skeleton + camera frustum 함께 재생.
+Open3D 뷰어로 같은 cam frame 위에 4종을 동시 표시 (오른손):
+
+| 색 | 내용 |
+|---|---|
+| 회색 mesh | MANO (사람 손) |
+| 연한 청록 mesh | xhand stage 1 (vector only) |
+| 연한 빨강 mesh | xhand stage 2 (contact refined) |
+| 노란 점 | palmar + fingertip 필터된 contact verts |
+
+**키:**
 
 | 키 | 동작 |
 |---|---|
-| SPACE | pause / play |
-| LEFT / RIGHT | 한 프레임씩 (자동 pause) |
-| HOME / END | 처음 / 끝 |
-| 마우스 드래그 / 스크롤 | 회전 / 줌 |
+| `SPACE` | pause / play |
+| `[` / `]` | 한 프레임 이전 / 다음 |
+| `,` / `.` | 10 프레임씩 |
+| `H` / `E` | 처음 / 끝 |
+| `M` / `1` / `2` / `C` | MANO / xhand stage1 / xhand stage2 / contact 점 toggle |
+| 마우스 | 드래그=회전, 스크롤=줌, Shift+드래그=pan |
 
-옵션: `--no_bones` (joint 점만), `--bone_radius 0.005`, `--fps 15`
+## R_MANO_XHAND (정렬)
 
-### 6. Frame alignment 검증 (디버깅용)
+`assets/R_mano_xhand_{right,left}.npy`에 저장된 3×3 rotation을 `_paths.py`가 모든 스크립트에 노출. **MANO canonical wrist frame → xhand wrist link frame** 변환.
 
-```bash
-# 양손 동시 inspector (xhand 메쉬 + MANO skeleton)
-python inspect_combined.py \
-    --npz /path/to/<seq>_hawor/retarget_input.npz --frame 0
+계산 방식: `compute_R_mano_xhand.py`가 MANO 5 MCP knuckle (canonical T-pose) 위치와 xhand 5 MCP joint origin을 Procrustes (SVD) 로 정합. 평균 residual ~17mm (rigid rotation 한계).
 
-# 단일 손 axis arrows
-python inspect_wrist_axes.py --hand right --save /tmp/right_axes.png
-```
+## Stage 2 동작 원리
 
-### 7. xhand URDF 재생성 (일반적으로 불필요)
+1. Human contact (`{hand}_contact_mask` from HACO) 에서 **palmar AND fingertip** 영역만 남김
+2. 각 contact vertex h:
+   - 위치 (xhand wrist frame)
+   - outward normal (MANO mesh + face → trimesh로 매 프레임 계산)
+3. xhand fingertip link mesh의 각 vertex r:
+   - 위치는 FK로 계산
+   - normal은 link-local frame에서 1회 계산 후 매 iter rotation 적용
+4. **Normal-aware Chamfer**: 각 h에 대해 `n_h · n_r > normal_thr` 인 r들 중 위치 가장 가까운 것의 거리 제곱을 합산
+5. anchor `||q − q_stage1||²` 추가하여 stage 1 결과에서 너무 멀어지지 않게 제약
+6. scipy L-BFGS-B로 12 DOF 손가락 자세만 최적화 (손목 위치/회전은 HaWoR 그대로 유지)
 
-```bash
-# extract_urdf.py 안의 SRC_URDF / SRC_MESH_DIR을 STAR1 위치로 수정 후
-python extract_urdf.py
-```
-
-### 8. (선택) Contact projection
-
-```bash
-python project_contact.py \
-    --rgb_dir <...>/rgb \
-    --contact_dir <...>/contact \
-    --out <...>/contact_projection.mp4 \
-    --fx 497.77
-```
-
-## 핵심 정렬 정보
-
-`R_MANO_XHAND` (in `retarget_from_npz.py`) — MANO canonical wrist frame을 xhand
-wrist link frame으로 변환:
-
-```python
-R_MANO_XHAND = {
-    "right": [[0,  0, 1], [0, -1, 0], [1, 0, 0]],  # MANO (x,y,z) -> xhand (z, -y, x)
-    "left":  [[0,  0,-1], [0,  1, 0], [1, 0, 0]],  # MANO (x,y,z) -> xhand (-z, y, x)
-}
-```
-
-검증: `inspect_combined.py`로 양손 동시 plot. 손가락별 색 (thumb=red,
-index=blue, middle=green, ring=orange, pinky=purple)이 xhand 손가락과 일치하면 OK.
-
-## 검증된 결과 (cube manipulation 예시)
+## 검증된 결과 (cube manipulation 예시, Procrustes R 적용 후)
 
 DexPilot last distance:
-- right: 0.007128
-- left:  0.007490
-
-→ 두 손 모두 사람 손 자세를 충실히 재현.
+- right: **0.0011** (이전 R 0.0134 → 12× 개선)
+- left:  **0.0025** (이전 R 0.0075 → 3× 개선)

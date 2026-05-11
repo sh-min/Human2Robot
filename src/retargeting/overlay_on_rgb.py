@@ -26,12 +26,9 @@ from scipy.spatial.transform import Rotation as Rscipy
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 
-from _paths import URDF_ROOT
+from _paths import URDF_ROOT, R_MANO_XHAND as _R_DICT
 
-R_MANO_XHAND = {
-    "right": np.array([[0,  0, 1], [0, -1, 0], [1,  0, 0]], dtype=np.float64),
-    "left":  np.array([[0, 0, -1], [0, 1,  0], [1, 0,  0]], dtype=np.float64),
-}
+R_MANO_XHAND = {h: R.astype(np.float64) for h, R in _R_DICT.items()}
 
 # Sapien camera convention vs OpenCV camera (HaWoR cam):
 #   sapien cam local: +x forward, +y left, +z up

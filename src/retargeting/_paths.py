@@ -19,3 +19,24 @@ CONFIG_DIR = os.path.join(THIS_DIR, "configs")
 # Convenience yml paths
 YML_RIGHT = os.path.join(CONFIG_DIR, "xhand_right_dexpilot.yml")
 YML_LEFT = os.path.join(CONFIG_DIR, "xhand_left_dexpilot.yml")
+
+
+def load_R_mano_xhand():
+    """Loaded R_MANO_XHAND dict (right/left), built once by
+    compute_R_mano_xhand.py via Procrustes alignment of MCP knuckles.
+
+    Falls back to a hand-picked 90° rotation if the .npy is missing.
+    """
+    import numpy as np
+    fallback = {
+        "right": np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]], dtype=np.float64),
+        "left":  np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]], dtype=np.float64),
+    }
+    out = {}
+    for h in ("right", "left"):
+        p = os.path.join(ASSETS_DIR, f"R_mano_xhand_{h}.npy")
+        out[h] = np.load(p).astype(np.float64) if os.path.exists(p) else fallback[h]
+    return out
+
+
+R_MANO_XHAND = load_R_mano_xhand()

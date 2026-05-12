@@ -1,0 +1,10 @@
+name: mujoco_sim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -e ./third_party/lerobot[training,diffusion]
+      - mujoco
+      - imageio

@@ -4,7 +4,7 @@
   <option impratio="100" tolerance="1e-06" integrator="implicitfast" cone="elliptic" iterations="30"/>
 
   <visual>
-    <global offwidth="800" offheight="800"/>
+    <global offwidth="1280" offheight="720"/>
     <map force="0.1" zfar="30"/>
     <rgba haze="0.15 0.25 0.35 1"/>
   </visual>
@@ -129,6 +129,7 @@
 
   <worldbody>
     <geom name="floor" size="0 0 0.25" type="plane" condim="1" friction="0.05 0.001 0.05" solimp="0.95 0.99" material="plane"/>
+    <camera name="front_view" target="link_torso_2" pos="2 0 2" mode="targetbody" fovy="55"/>
     <light pos="0 0 5" dir="0 0 -1" type="directional" castshadow="false" diffuse="0.8 0.8 0.8" specular="0 0 0"/>
     <body name="base">
       <inertial pos="-0.0615794 -0.00142271 0.135139" quat="0.00383057 0.733861 -0.00742942 0.679248" mass="60.0804" diaginertia="3.77525 2.99424 1.36264"/>
@@ -417,6 +418,7 @@
                       <geom class="visual" material="69,69,69" mesh="NECK_2_1"/>
                       <geom class="in-model-collision" size="0.0184787" pos="4.63186e-08 0.0494026 0" quat="0.707107 0 0 0.707107"/>
                       <geom class="in-model-collision" size="0.0276942" pos="-4.61684e-07 0.036175 0.0270256" quat="0.840558 0.541722 0 0"/>
+                      <camera name="head_cam" pos="0.12 0 0.05" quat="-0.5 -0.5 0.5 0.5" fovy="60"/>
                     </body>
                   </body>
                 </body>
@@ -425,6 +427,9 @@
           </body>
         </body>
       </body>
+    </body>
+    <body name="table" pos="0.9 0 0.5">
+      <geom size="0.5 1 0.5" type="box" rgba="0.7 0.5 0.35 1"/>
     </body>
   </worldbody>
 

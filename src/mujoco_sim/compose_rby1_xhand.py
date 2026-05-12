@@ -1,12 +1,14 @@
-"""Compose RBY1 (no-gripper) + right XHand into a single MJCF scene.
+"""Compose RBY1 (no-gripper) + both XHands into a single MJCF scene.
 
 Loads:
 - third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml
 - src/mujoco_sim/assets/xhand_right/xhand_right.xml
+- src/mujoco_sim/assets/xhand_left/xhand_left.xml
 
-Attaches the XHand at the right wrist body (link_right_arm_6) via the
-MuJoCo 3.x MjSpec API, and writes the composed scene to
-src/mujoco_sim/scenes/rby1_xhand_right.xml.
+Attaches each XHand at the corresponding wrist (link_right_arm_6 /
+link_left_arm_6) via the MuJoCo 3.x MjSpec API at z=-0.1261 (RBY1's
+original EE mating surface). Writes the composed scene to
+src/mujoco_sim/scenes/rby1_xhand.xml.
 
 Run:
     PYTHONPATH=$PWD/src python -m mujoco_sim.compose_rby1_xhand
@@ -20,24 +22,31 @@ import mujoco
 REPO = Path(__file__).resolve().parent.parent.parent
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
 XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
-OUT = REPO / "src/mujoco_sim/scenes/rby1_xhand_right.xml"
+XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"
+OUT = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
+
+# RBY1's original gripper mounts at z=-0.1261 in link_*_arm_6 frame.
+EE_OFFSET = [0.0, 0.0, -0.1261]
+
+
+def attach_hand(spec, wrist_body_name, hand_xml_path, prefix):
+    """Attach an XHand spec under the given wrist body at the EE offset."""
+    hand = mujoco.MjSpec.from_file(str(hand_xml_path))
+    wrist = spec.body(wrist_body_name)
+    frame = wrist.add_frame()
+    frame.pos = EE_OFFSET
+    spec.attach(hand, prefix=prefix, frame=frame)
 
 
 def main():
     spec = mujoco.MjSpec.from_file(str(RBY1_SCENE))
-    xhand = mujoco.MjSpec.from_file(str(XHAND_R))
 
     # Increase offscreen framebuffer to allow HD720 rendering (1280x720).
     spec.visual.global_.offwidth = 1280
     spec.visual.global_.offheight = 720
 
-    wrist = spec.body("link_right_arm_6")
-    frame = wrist.add_frame()
-    # RBY1's original gripper mounts at z=-0.1261 in link_right_arm_6 frame.
-    # Match that so XHand sits at the arm's end-effector mating surface
-    # instead of being inset into the wrist link.
-    frame.pos = [0.0, 0.0, -0.1261]
-    spec.attach(xhand, prefix="rh_", frame=frame)
+    attach_hand(spec, "link_right_arm_6", XHAND_R, prefix="rh_")
+    attach_hand(spec, "link_left_arm_6",  XHAND_L, prefix="lh_")
 
     # Head-mounted egocentric camera on link_head_2.
     # MuJoCo camera convention: looks along -z, +y is up, +x is right.
@@ -73,16 +82,22 @@ def main():
         rgba=[0.7, 0.5, 0.35, 1.0],
     )
 
-    # spec.attach merges both specs under a single meshdir, so XHand meshes
-    # (originally relative to xhand_right/) get resolved under RBY1's
+    # spec.attach merges specs under a single meshdir, so XHand meshes
+    # (originally relative to xhand_{right,left}/) get resolved under RBY1's
     # assets/ and fail. Set each mesh's file to an absolute path so
     # spec.to_xml() validation passes, then text-substitute the repo root
     # prefix with a relative path from OUT so the saved XML stays portable.
     rby1_meshdir = (RBY1_SCENE.parent / "assets").resolve()
-    xhand_meshdir = (XHAND_R.parent / "meshes").resolve()
+    xhand_r_meshdir = (XHAND_R.parent / "meshes").resolve()
+    xhand_l_meshdir = (XHAND_L.parent / "meshes").resolve()
     repo_root = REPO.resolve()
     for mesh in spec.meshes:
-        src = xhand_meshdir if mesh.name.startswith("rh_") else rby1_meshdir
+        if mesh.name.startswith("rh_"):
+            src = xhand_r_meshdir
+        elif mesh.name.startswith("lh_"):
+            src = xhand_l_meshdir
+        else:
+            src = rby1_meshdir
         mesh.file = str(src / Path(mesh.file).name)
     spec.meshdir = ""
 

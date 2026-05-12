@@ -94,4 +94,19 @@
       </body>
     </body>
   </worldbody>
+
+  <actuator>
+    <position name="right_hand_thumb_bend_joint"   joint="right_hand_thumb_bend_joint"   ctrlrange="0 1.83"        kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_thumb_rota_joint1"  joint="right_hand_thumb_rota_joint1"  ctrlrange="-1.05 1.57"    kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_thumb_rota_joint2"  joint="right_hand_thumb_rota_joint2"  ctrlrange="-0.175 1.83"   kp="50" forcerange="-0.4 0.4"/>
+    <position name="right_hand_index_bend_joint"   joint="right_hand_index_bend_joint"   ctrlrange="-0.175 0.175"  kp="50" forcerange="-0.4 0.4"/>
+    <position name="right_hand_index_joint1"       joint="right_hand_index_joint1"       ctrlrange="0 1.92"        kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_index_joint2"       joint="right_hand_index_joint2"       ctrlrange="0 1.92"        kp="50" forcerange="-0.4 0.4"/>
+    <position name="right_hand_mid_joint1"         joint="right_hand_mid_joint1"         ctrlrange="0 1.92"        kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_mid_joint2"         joint="right_hand_mid_joint2"         ctrlrange="0 1.92"        kp="50" forcerange="-0.4 0.4"/>
+    <position name="right_hand_ring_joint1"        joint="right_hand_ring_joint1"        ctrlrange="0 1.92"        kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_ring_joint2"        joint="right_hand_ring_joint2"        ctrlrange="0 1.92"        kp="50" forcerange="-0.4 0.4"/>
+    <position name="right_hand_pinky_joint1"       joint="right_hand_pinky_joint1"       ctrlrange="0 1.92"        kp="50" forcerange="-1.1 1.1"/>
+    <position name="right_hand_pinky_joint2"       joint="right_hand_pinky_joint2"       ctrlrange="0 1.92"        kp="50" forcerange="-0.4 0.4"/>
+  </actuator>
 </mujoco>

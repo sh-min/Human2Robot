@@ -29,6 +29,10 @@ def main():
 
     wrist = spec.body("link_right_arm_6")
     frame = wrist.add_frame()
+    # RBY1's original gripper mounts at z=-0.1261 in link_right_arm_6 frame.
+    # Match that so XHand sits at the arm's end-effector mating surface
+    # instead of being inset into the wrist link.
+    frame.pos = [0.0, 0.0, -0.1261]
     spec.attach(xhand, prefix="rh_", frame=frame)
 
     # spec.attach merges both specs under a single meshdir, so XHand meshes

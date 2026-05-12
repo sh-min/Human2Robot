@@ -274,10 +274,10 @@
                                 <geom class="in-model-collision" size="0.0237996" pos="-0.0171854 0.0211146 -0.0968187" quat="0.495379 0.510192 -0.502794 0.491429"/>
                                 <geom class="visual" material="69,69,69" mesh="LINK_13_1_V1.1"/>
                                 <geom class="in-model-collision" size="0.0322564" pos="0.000118598 -0.000244909 -0.101696" quat="0.65164 0.273302 -0.652321 0.274134"/>
-                                <geom type="mesh" rgba="1 0.54902 0 1" mesh="rh_right_hand_base_link"/>
-                                <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="rh_right_hand_link"/>
-                                <geom pos="0 0 -0.065" quat="-3.67321e-06 1 0 0" type="mesh" rgba="1 0.54902 0 1" mesh="rh_right_hand_ee_link"/>
-                                <body name="rh_right_hand_thumb_bend_link" pos="0.0228 0.0095 -0.0305">
+                                <geom pos="0 0 -0.1261" type="mesh" rgba="1 0.54902 0 1" mesh="rh_right_hand_base_link"/>
+                                <geom pos="0 0 -0.1261" quat="1 0 0 0" type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="rh_right_hand_link"/>
+                                <geom pos="0 0 -0.1911" quat="-3.67321e-06 1 0 0" type="mesh" rgba="1 0.54902 0 1" mesh="rh_right_hand_ee_link"/>
+                                <body name="rh_right_hand_thumb_bend_link" pos="0.0228 0.0095 -0.1566">
                                   <inertial pos="0.0145291 -0.000901303 -0.000127926" quat="0.0288921 0.68936 0.0166971 0.72365" mass="0.00985529" diaginertia="1.30647e-06 1.29142e-06 5.40953e-07"/>
                                   <joint name="rh_right_hand_thumb_bend_joint" pos="0 0 0" axis="0 0 1" range="0 1.83" actuatorfrcrange="-1.1 1.1" armature="0" damping="1" frictionloss="1"/>
                                   <geom type="mesh" rgba="0.890196 0.890196 0.913725 1" mesh="rh_right_hand_thumb_bend_link"/>
@@ -293,7 +293,7 @@
                                     </body>
                                   </body>
                                 </body>
-                                <body name="rh_right_hand_index_bend_link" pos="0.0265 0.0065 -0.0899">
+                                <body name="rh_right_hand_index_bend_link" pos="0.0265 0.0065 -0.216">
                                   <inertial pos="8.08449e-05 0.000675884 0.00420851" quat="0.999802 -0.0189928 -0.00582288 0.000998418" mass="0.0677836" diaginertia="2.16592e-05 2.09943e-05 3.36803e-06"/>
                                   <joint name="rh_right_hand_index_bend_joint" pos="0 0 0" axis="0 1 0" range="-0.175 0.175" actuatorfrcrange="-0.4 0.4" armature="0" damping="1" frictionloss="1"/>
                                   <geom type="mesh" rgba="0.439216 0.439216 0.439216 1" mesh="rh_right_hand_index_bend_link"/>
@@ -309,7 +309,7 @@
                                     </body>
                                   </body>
                                 </body>
-                                <body name="rh_right_hand_mid_link1" pos="0.004 0.0065 -0.1082">
+                                <body name="rh_right_hand_mid_link1" pos="0.004 0.0065 -0.2343">
                                   <inertial pos="-0.000139769 -0.000800517 -0.0356039" quat="0.999865 0.00809181 -0.0131314 0.00566199" mass="0.0630216" diaginertia="2.05301e-05 1.92461e-05 4.135e-06"/>
                                   <joint name="rh_right_hand_mid_joint1" pos="0 0 0" axis="1 0 0" range="0 1.92" actuatorfrcrange="-1.1 1.1" armature="0" damping="1" frictionloss="1"/>
                                   <geom type="mesh" rgba="1 1 1 1" mesh="rh_right_hand_mid_link1"/>
@@ -320,7 +320,7 @@
                                     <geom pos="0 0 -0.042107" type="mesh" rgba="0.698039 0.698039 0.698039 1" mesh="rh_right_hand_mid_tip"/>
                                   </body>
                                 </body>
-                                <body name="rh_right_hand_ring_link1" pos="-0.016 0.0065 -0.1052">
+                                <body name="rh_right_hand_ring_link1" pos="-0.016 0.0065 -0.2313">
                                   <inertial pos="-0.00013977 -0.000800517 -0.0356039" quat="0.999865 0.00809183 -0.0131314 0.00566196" mass="0.0630216" diaginertia="2.05301e-05 1.92461e-05 4.135e-06"/>
                                   <joint name="rh_right_hand_ring_joint1" pos="0 0 0" axis="1 0 0" range="0 1.92" actuatorfrcrange="-1.1 1.1" armature="0" damping="1" frictionloss="1"/>
                                   <geom type="mesh" rgba="1 1 1 1" mesh="rh_right_hand_ring_link1"/>
@@ -331,7 +331,7 @@
                                     <geom pos="0 0 -0.0425" type="mesh" rgba="0.698039 0.698039 0.698039 1" mesh="rh_right_hand_ring_tip"/>
                                   </body>
                                 </body>
-                                <body name="rh_right_hand_pinky_link1" pos="-0.036 0.0065 -0.1022">
+                                <body name="rh_right_hand_pinky_link1" pos="-0.036 0.0065 -0.2283">
                                   <inertial pos="-0.000139769 -0.000800517 -0.0356039" quat="0.999865 0.00809181 -0.0131314 0.00566204" mass="0.0630216" diaginertia="2.05301e-05 1.92461e-05 4.135e-06"/>
                                   <joint name="rh_right_hand_pinky_joint1" pos="0 0 0" axis="1 0 0" range="0 1.92" actuatorfrcrange="-1.1 1.1" armature="0" damping="1" frictionloss="1"/>
                                   <geom type="mesh" rgba="1 1 1 1" mesh="rh_right_hand_pinky_link1"/>
@@ -460,5 +460,17 @@
     <general name="left_arm_7_act" joint="left_arm_6" ctrlrange="-2.79253 2.79253" forcelimited="true" forcerange="-8 8"/>
     <general name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523" forcelimited="true" forcerange="-7.3 7.3"/>
     <general name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57" forcelimited="true" forcerange="-7.3 7.3"/>
+    <general name="rh_right_hand_thumb_bend_joint" joint="rh_right_hand_thumb_bend_joint" ctrllimited="auto" ctrlrange="0 1.83" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_thumb_rota_joint1" joint="rh_right_hand_thumb_rota_joint1" ctrllimited="auto" ctrlrange="-1.05 1.57" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_thumb_rota_joint2" joint="rh_right_hand_thumb_rota_joint2" ctrllimited="auto" ctrlrange="-0.175 1.83" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_index_bend_joint" joint="rh_right_hand_index_bend_joint" ctrllimited="auto" ctrlrange="-0.175 0.175" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_index_joint1" joint="rh_right_hand_index_joint1" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_index_joint2" joint="rh_right_hand_index_joint2" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_mid_joint1" joint="rh_right_hand_mid_joint1" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_mid_joint2" joint="rh_right_hand_mid_joint2" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_ring_joint1" joint="rh_right_hand_ring_joint1" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_ring_joint2" joint="rh_right_hand_ring_joint2" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_pinky_joint1" joint="rh_right_hand_pinky_joint1" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
+    <general name="rh_right_hand_pinky_joint2" joint="rh_right_hand_pinky_joint2" ctrllimited="auto" ctrlrange="0 1.92" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>
   </actuator>
 </mujoco>

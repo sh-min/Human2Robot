@@ -8,3 +8,4 @@ dependencies:
       - -e ./third_party/lerobot[training,diffusion]
       - mujoco
       - imageio
+      - gradio

@@ -154,7 +154,6 @@
 
   <worldbody>
     <geom name="floor" size="0 0 0.25" type="plane" condim="1" friction="0.05 0.001 0.05" solimp="0.95 0.99" material="plane"/>
-    <camera name="front_view" target="link_torso_2" pos="2 0 2" mode="targetbody" fovy="55"/>
     <light pos="0 0 5" dir="0 0 -1" type="directional" castshadow="false" diffuse="0.8 0.8 0.8" specular="0 0 0"/>
     <body name="base">
       <inertial pos="-0.0615794 -0.00142271 0.135139" quat="0.00383057 0.733861 -0.00742942 0.679248" mass="60.0804" diaginertia="3.77525 2.99424 1.36264"/>
@@ -523,6 +522,7 @@
     </body>
     <body name="table" pos="0.9 0 0.5">
       <geom size="0.5 1 0.5" type="box" rgba="0.7 0.5 0.35 1"/>
+      <camera name="front_view" pos="1.1 0 1.5" quat="0.625551 0.329675 0.329675 0.625551" fovy="60"/>
     </body>
   </worldbody>
 

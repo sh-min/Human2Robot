@@ -62,17 +62,6 @@ def main():
         fovy=60.0,
     )
 
-    # Third-person debug camera using targetbody so we just specify position;
-    # orientation auto-tracks the robot. Pelvis would be ideal but use a
-    # mid-body link.
-    spec.worldbody.add_camera(
-        name="front_view",
-        pos=[2.0, 0.0, 2.0],
-        mode=mujoco.mjtCamLight.mjCAMLIGHT_TARGETBODY,
-        targetbody="link_torso_2",
-        fovy=55.0,
-    )
-
     # Static table in front of the robot. Box half-extents (0.5, 1.0, 0.5)
     # = (1m depth, 2m width, 1m height). Top surface at z=1.0.
     table = spec.worldbody.add_body(name="table", pos=[0.9, 0.0, 0.5])
@@ -80,6 +69,18 @@ def main():
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=[0.5, 1.0, 0.5],
         rgba=[0.7, 0.5, 0.35, 1.0],
+    )
+
+    # Third-person debug camera, parented to the (static) table so it never
+    # moves when the robot's joints change during IK / sim. Camera at
+    # world (2.0, 0, 2.0) -> table-local (1.1, 0, 1.5). Orientation baked
+    # via xyaxes (no targetbody) so the view never drifts: look-at is
+    # link_torso_2's default world pos (0, 0, 0.6305).
+    table.add_camera(
+        name="front_view",
+        pos=[1.1, 0.0, 1.5],
+        xyaxes=[0.0, 1.0, 0.0, -0.566, 0.0, 0.826],
+        fovy=60.0,
     )
 
     # spec.attach merges specs under a single meshdir, so XHand meshes

@@ -127,12 +127,78 @@ third_party/HaWoR/weights/external/detector.pt
 third_party/HaWoR/_DATA/data/mano_mean_params.npz
 ```
 
+---
+
+## Pipeline (`run_pipeline.sh`)
+
+RGB 프레임 하나의 에피소드를 처음부터 끝까지 처리하는 end-to-end 스크립트.
+
+```
+rgb/  →  [1] hand estimation   →  rgb_hawor/retarget_input.npz
+                                               ↓
+      →  [2] contact estimation →  contact/*.npz
+                                               ↓
+      →  [3] retargeting (stage1+2)  →  rgb_hawor/qpos_xhand_contact_{right,left}.pkl
+                                               ↓
+                            rgb_hawor/overlay_stage2_contact.mp4
+```
+
+### 기본 실행
+
+```bash
+# 스크립트 내 기본 DATA_DIR 사용 (contact + overlay 포함, SLAM 생략)
+bash run_pipeline.sh
+
+# 에피소드 경로 직접 지정
+bash run_pipeline.sh --data_dir /path/to/episode
+```
+
+### 자주 쓰는 조합
+
+```bash
+# contact/overlay 없이 stage1 retargeting만
+bash run_pipeline.sh --data_dir /path/to/episode \
+    --skip_contact --no_contact --no_overlay
+
+# 앞 단계 결과가 이미 있을 때 retargeting + overlay만 재실행
+bash run_pipeline.sh --data_dir /path/to/episode --skip_hand --skip_contact
+
+# 프레임 파일명 패턴이 다른 경우
+bash run_pipeline.sh --data_dir /path/to/episode --img_glob "rgb_frame*.png"
+```
+
+### 전체 옵션
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--data_dir PATH` | 스크립트 내 하드코딩 | 에피소드 루트 디렉터리 |
+| `--img_focal FLOAT` | `497.77` | 카메라 focal length (픽셀) |
+| `--img_glob PATTERN` | `frame_*.jpg` | RGB 프레임 파일명 glob |
+| `--with_slam` | off | HaWoR SLAM 활성화 (world frame 출력) |
+| `--contact` / `--no_contact` | **on** | stage-2 contact-aware retargeting |
+| `--overlay` / `--no_overlay` | **on** | retargeting 결과 RGB overlay mp4 생성 |
+| `--skip_hand` | off | stage 1 건너뜀 |
+| `--skip_contact` | off | stage 2 건너뜀 |
+| `--skip_retarget` | off | stage 3 건너뜀 |
+
+### 단계별 출력
+
+| 단계 | conda 환경 | 출력 경로 |
+|---|---|---|
+| 1. Hand Estimation | `hawor` | `<episode>/rgb_hawor/retarget_input.npz` |
+| 2. Contact Estimation | `haco` | `<episode>/contact/<frame>.npz` |
+| 3. Retargeting (stage1) | `vjepa2-312` | `<episode>/rgb_hawor/qpos_xhand_{right,left}.pkl` |
+| 3. Retargeting (stage2) | `vjepa2-312` | `<episode>/rgb_hawor/qpos_xhand_contact_{right,left}.pkl` |
+| + Overlay | `vjepa2-312` | `<episode>/rgb_hawor/overlay_stage{1,2_contact}.mp4` |
+
+---
+
 ### 모듈별 사용법
 
 각 모듈 폴더의 README 참고:
 - [`src/data_preprocess/README.md`](src/data_preprocess/README.md) — 원본 데이터 정리 / 프레임 추출
 - [`src/hand_estimation/README.md`](src/hand_estimation/README.md) — RGB → MANO
-- [`src/contact_estimation/README.md`](src/contact_estimation/README.md) — hand contact 추정
+- [`src/contact_estimation/README.md`](src/contact_estimation/README.md) — RGB + MANO → contact mask
 - [`src/retargeting/README.md`](src/retargeting/README.md) — MANO → xhand qpos + 시각화
 - [`src/inpainting/README.md`](src/inpainting/README.md) — 사람 손/팔 inpaint + xhand 오버레이 합성
 - [`src/skill_classifier/README.md`](src/skill_classifier/README.md) — V-JEPA 2 기반 skill 분류

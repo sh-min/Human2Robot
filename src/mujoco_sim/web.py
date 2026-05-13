@@ -14,6 +14,7 @@ robot transitions. Reset button forces back to home.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import gradio as gr
@@ -60,7 +61,10 @@ CAMERAS = ("head_cam", "front_view", "side_left", "side_right")
 _model = mujoco.MjModel.from_xml_path(str(SCENE))
 _data = mujoco.MjData(_model)
 # Per-camera render at 270x480 (16:9) -> 4 views ~ HD720 total pixels.
-_renderer = mujoco.Renderer(_model, height=270, width=480)
+_RENDER_HW = (270, 480)
+# EGL contexts are thread-bound; gradio's request workers may call us from
+# different threads. Keep a thread-local Renderer instance.
+_tls = threading.local()
 
 
 def _sync_ctrl_to_qpos() -> None:
@@ -91,8 +95,12 @@ def _reset_to_home() -> None:
 
 
 def _render(camera: str) -> np.ndarray:
-    _renderer.update_scene(_data, camera=camera)
-    return _renderer.render()
+    r = getattr(_tls, "renderer", None)
+    if r is None:
+        r = mujoco.Renderer(_model, height=_RENDER_HW[0], width=_RENDER_HW[1])
+        _tls.renderer = r
+    r.update_scene(_data, camera=camera)
+    return r.render()
 
 
 def _compute_target_qpos(

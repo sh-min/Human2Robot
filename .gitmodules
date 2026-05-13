@@ -13,3 +13,9 @@
 [submodule "third_party/lerobot"]
 	path = third_party/lerobot
 	url = https://github.com/huggingface/lerobot.git
+[submodule "third_party/sam2"]
+	path = third_party/sam2
+	url = https://github.com/facebookresearch/sam2.git
+[submodule "third_party/E2FGVI"]
+	path = third_party/E2FGVI
+	url = https://github.com/MCG-NKU/E2FGVI.git

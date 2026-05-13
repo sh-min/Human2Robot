@@ -82,12 +82,15 @@ git submodule update --init --recursive
 
 ### Third-party dependencies (`third_party/`)
 
-| Directory | Repository |
-|---|---|
-| `vjepa2` | https://github.com/facebookresearch/vjepa2 |
-| `HACO_RELEASE` | https://github.com/dqj5182/HACO_RELEASE |
-| `HaWoR` | https://github.com/ThunderVVV/HaWoR |
-| `dex-retargeting` | https://github.com/dexsuite/dex-retargeting |
+| Directory | Repository | 용도 |
+|---|---|---|
+| `vjepa2` | https://github.com/facebookresearch/vjepa2 | V-JEPA 2 video feature backbone |
+| `HACO_RELEASE` | https://github.com/dqj5182/HACO_RELEASE | hand-contact estimation |
+| `HaWoR` | https://github.com/ThunderVVV/HaWoR | RGB → MANO hand pose |
+| `dex-retargeting` | https://github.com/dexsuite/dex-retargeting | MANO → xhand qpos retargeting |
+| `lerobot` | https://github.com/huggingface/lerobot | robot policy training infra |
+| `sam2` | https://github.com/facebookresearch/sam2 | hand/arm segmentation for inpainting |
+| `E2FGVI` | https://github.com/MCG-NKU/E2FGVI | flow-guided video inpainting |
 
 ### Updating submodules
 
@@ -127,5 +130,9 @@ third_party/HaWoR/_DATA/data/mano_mean_params.npz
 ### 모듈별 사용법
 
 각 모듈 폴더의 README 참고:
+- [`src/data_preprocess/README.md`](src/data_preprocess/README.md) — 원본 데이터 정리 / 프레임 추출
 - [`src/hand_estimation/README.md`](src/hand_estimation/README.md) — RGB → MANO
+- [`src/contact_estimation/README.md`](src/contact_estimation/README.md) — hand contact 추정
 - [`src/retargeting/README.md`](src/retargeting/README.md) — MANO → xhand qpos + 시각화
+- [`src/inpainting/README.md`](src/inpainting/README.md) — 사람 손/팔 inpaint + xhand 오버레이 합성
+- [`src/skill_classifier/README.md`](src/skill_classifier/README.md) — V-JEPA 2 기반 skill 분류

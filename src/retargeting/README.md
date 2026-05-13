@@ -93,15 +93,35 @@ python retarget_from_npz.py \
 - `--alpha 0.001` — anchor 강도 (stage1에서 이탈 패널티). 작게 → contact term 강함
 - `--normal_thr 0.3` — normal 호환 임계값 (n_h · n_r > thr)
 - `--out_dir <path>`
+- `--smooth` — 후처리 smoothing 활성화, 별도 `*_smooth.pkl` 저장 (아래 참고)
+- `--smooth_win 15` `--smooth_wrist_win 21` `--smooth_med_win 5` — smoothing 파라미터
 
-**Pkl 포맷:**
+### Smoothing (`--smooth`)
+
+HaWoR/HACO 추정 + retargeting solver의 jitter를 잡아 로봇에 그대로 던질 수 있는 trajectory 만들기. raw `pkl`은 그대로 두고 `qpos_xhand{_contact}_{hand}_smooth.pkl` 추가로 저장.
+
+**파이프라인 (per channel):**
+1. `valid=False` 프레임을 양 옆 valid 프레임에서 **선형 보간** (smoothing 전 구멍 메우기)
+2. **Median filter** (default window=5): 1-2 프레임 spike outlier 완전 제거. 손목 jitter 같이 튀는 값 잡는 핵심
+3. **Savitzky-Golay** (default `data` win=15, `wrist_*` win=21, poly=3): 메인 smoothing, peak 보존
+4. **Quaternion 특수 처리**: median 건너뜀, 부호 antipodal unwrap → savgol → unit-norm 정규화
+
+손목은 더 noisy해서 window 더 크게 (21 vs 15). 30fps 기준 0.5~0.7초 평활.
+
+저장된 smooth pkl도 동일 키 구조 (`data`, `wrist_pos`, `wrist_quat`, ...) + 추가 메타 `smoothing` dict.
+
+**Pkl 포맷 (로봇에 그대로 던질 수 있는 self-contained trajectory):**
 
 | 키 | 설명 |
 |---|---|
-| `data` | `(T, 12)` xhand 12-DOF qpos |
-| `joint_names` | qpos joint 순서 |
+| `data` | `(T, 12)` xhand 12-DOF qpos (손가락 관절) |
+| `wrist_pos` | `(T, 3)` cam-frame 손목 위치 |
+| `wrist_quat` | `(T, 4)` xyzw, cam-frame xhand wrist link 회전 (이미 `R_MANO_XHAND` 합쳐진 상태) |
 | `valid` | `(T,)` bool, 프레임 유효성 |
+| `joint_names` | qpos joint 순서 |
 | `config_path`, `hand`, `dof` | 메타 |
+
+> `wrist_quat`은 MANO global orient에 `R_MANO_XHAND`를 곱해서 저장하므로, 로봇 wrist link의 cam-frame 자세 그대로 사용 가능 (추가 변환 불필요).
 
 ### RGB Overlay
 
@@ -126,9 +146,20 @@ python overlay_on_rgb.py \
     --left_pkl  $HAWOR/qpos_xhand_contact_left.pkl \
     --out       $HAWOR/overlay_stage2_contact.mp4 \
     --img_focal 497.77
+
+# stage 2 + smoothing (손목 떨림까지 잡힌 최종본)
+python overlay_on_rgb.py \
+    --npz       $HAWOR/retarget_input.npz \
+    --rgb_dir   $SEQ/rgb \
+    --right_pkl $HAWOR/qpos_xhand_contact_right_smooth.pkl \
+    --left_pkl  $HAWOR/qpos_xhand_contact_left_smooth.pkl \
+    --out       $HAWOR/overlay_stage2_smooth.mp4 \
+    --img_focal 497.77
 ```
 
-원본 RGB 위에 cam-frame xhand 메쉬가 alpha-blended로 합성 (default α=0.7). 두 영상 비교해서 stage 2가 contact 영역에서 손가락이 더 잘 닿는지 확인.
+원본 RGB 위에 cam-frame xhand 메쉬가 alpha-blended로 합성 (default α=0.7).
+
+> **wrist source**: pkl에 `wrist_pos`/`wrist_quat` 키가 있으면 (smooth pkl 또는 새로 retarget한 pkl) **그걸 우선 사용**. 없으면 npz의 raw HaWoR wrist로 fallback. 콘솔에 `wrist source: right=pkl, left=pkl` 또는 `=npz` 로 출력됨 — smooth 영상에선 반드시 `pkl`로 떠야 손목 떨림 잡힌 결과 봄.
 
 ### Stage 1 vs Stage 2 인터랙티브 비교 (오른손)
 

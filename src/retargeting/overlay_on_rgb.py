@@ -74,6 +74,18 @@ def main():
     right_qpos = np.asarray(right_d["data"])
     left_qpos = np.asarray(left_d["data"])
 
+    # Prefer wrist trajectory baked into the pkl (these get smoothed when the
+    # retargeter was run with --smooth). Fall back to raw npz wrist otherwise.
+    def _wrist_from_pkl(d):
+        if "wrist_pos" in d and "wrist_quat" in d:
+            return np.asarray(d["wrist_pos"]), np.asarray(d["wrist_quat"])
+        return None, None
+    r_wpos, r_wquat = _wrist_from_pkl(right_d)
+    l_wpos, l_wquat = _wrist_from_pkl(left_d)
+    src_r = "pkl" if r_wpos is not None else "npz"
+    src_l = "pkl" if l_wpos is not None else "npz"
+    print(f"wrist source: right={src_r}, left={src_l}")
+
     rgb_files = natsorted(glob(os.path.join(args.rgb_dir, args.rgb_glob)))
     T = min(len(rgb_files), right_qpos.shape[0], left_qpos.shape[0])
     print(f"Using T={T} (rgb={len(rgb_files)}, qpos_r={right_qpos.shape[0]}, qpos_l={left_qpos.shape[0]})")
@@ -113,17 +125,23 @@ def main():
     for t in tqdm.tqdm(range(T)):
         robot_r.set_qpos(right_qpos[t][map_r])
         robot_l.set_qpos(left_qpos[t][map_l])
-        for robot, h_idx, joints_arr, hand_name in [
-            (robot_l, 0, joints_left, "left"),
-            (robot_r, 1, joints_right, "right"),
+        for robot, h_idx, joints_arr, hand_name, wpos, wquat in [
+            (robot_l, 0, joints_left,  "left",  l_wpos, l_wquat),
+            (robot_r, 1, joints_right, "right", r_wpos, r_wquat),
         ]:
             if not valid[h_idx, t]:
                 robot.set_pose(far_away)
                 continue
-            R_cam_mano = Rscipy.from_rotvec(mano_root[h_idx, t]).as_matrix()
-            t_cam = joints_arr[t, 0]
-            R_cam_xhand = R_cam_mano @ R_MANO_XHAND[hand_name]
-            robot.set_pose(matrix_to_pose(R_cam_xhand, t_cam))
+            if wpos is not None:
+                # use wrist trajectory from pkl (already includes R_MANO_XHAND)
+                qxyzw = wquat[t]
+                quat_wxyz = np.array([qxyzw[3], qxyzw[0], qxyzw[1], qxyzw[2]])
+                robot.set_pose(sapien.Pose(wpos[t].astype(np.float64), quat_wxyz))
+            else:
+                R_cam_mano = Rscipy.from_rotvec(mano_root[h_idx, t]).as_matrix()
+                t_cam = joints_arr[t, 0]
+                R_cam_xhand = R_cam_mano @ R_MANO_XHAND[hand_name]
+                robot.set_pose(matrix_to_pose(R_cam_xhand, t_cam))
 
         scene.update_render()
         cam.take_picture()

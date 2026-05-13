@@ -52,6 +52,65 @@ def _tip_link_names(hand):
     ]
 
 
+def _interp_invalid(arr, valid):
+    """Linear-interpolate per channel where valid is False."""
+    if valid.all():
+        return arr.astype(np.float64).copy()
+    out = arr.astype(np.float64).copy()
+    t = np.arange(len(out))
+    vi = np.where(valid)[0]
+    if len(vi) < 2:
+        return out
+    for c in range(out.shape[1]):
+        out[~valid, c] = np.interp(t[~valid], vi, out[vi, c])
+    return out
+
+
+def _quat_unwrap(q):
+    """Flip antipodal signs so the quaternion sequence stays continuous."""
+    out = q.astype(np.float64).copy()
+    for k in range(1, len(out)):
+        if np.dot(out[k - 1], out[k]) < 0:
+            out[k] = -out[k]
+    return out
+
+
+def smooth_trajectory(qpos, wrist_pos, wrist_quat, valid,
+                       win=15, wrist_win=21, poly=3, med_win=5):
+    """Smooth a retargeted trajectory.
+
+    Pipeline per channel:
+        invalid-frame interp -> median(med_win) -> savgol(win, poly).
+    Quaternion: skip median, antipodal-unwrap before savgol, renormalise after.
+    """
+    from scipy.signal import medfilt, savgol_filter
+
+    def _odd(n, cap):
+        n = min(n, cap)
+        return n - 1 if n % 2 == 0 else n
+
+    def _sav(arr, w):
+        w = _odd(w, len(arr))
+        return savgol_filter(arr, w, poly, axis=0) if w >= poly + 2 else arr
+
+    q  = _interp_invalid(qpos,       valid)
+    wp = _interp_invalid(wrist_pos,  valid)
+    wq = _interp_invalid(wrist_quat, valid)
+
+    mw = _odd(med_win, len(q))
+    if mw >= 3:
+        q  = medfilt(q,  kernel_size=(mw, 1))
+        wp = medfilt(wp, kernel_size=(mw, 1))
+
+    wq = _quat_unwrap(wq)
+    q  = _sav(q,  win)
+    wp = _sav(wp, wrist_win)
+    wq = _sav(wq, wrist_win)
+    wq /= np.clip(np.linalg.norm(wq, axis=1, keepdims=True), 1e-9, None)
+
+    return q.astype(np.float32), wp.astype(np.float32), wq.astype(np.float32)
+
+
 def _build_contact_refiner(hand, joint_names):
     """Stage-2 refiner: normal-aware vertex matching between human contact
     verts and xhand fingertip mesh verts.
@@ -145,7 +204,8 @@ def _load_masks():
 
 
 def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
-                       normal_thr=0.3):
+                       normal_thr=0.3, smooth=False,
+                       smooth_win=15, smooth_wrist_win=21, smooth_med_win=5):
     hand_idx = 0 if hand == "left" else 1
     joints_world = data[f"joints_{hand}"].astype(np.float32)
     root_orient = data["mano_global_orient"][hand_idx].astype(np.float32)
@@ -230,12 +290,24 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
         last = qpos
         n_valid += 1
 
+    # Wrist pose in cam frame (so the pkl is a self-contained robot trajectory):
+    #   wrist_pos:  joints_world[:, 0]   = actual MANO wrist position
+    #   wrist_quat: mano_global_orient → quaternion (xyzw), composed with
+    #               R_MANO_XHAND so it directly represents the xhand wrist link
+    #               orientation in cam frame.
+    wrist_pos = joints_world[:, 0].astype(np.float32)             # (T, 3)
+    R_cam_mano = Rscipy.from_rotvec(root_orient).as_matrix()      # (T, 3, 3)
+    R_cam_xhand = R_cam_mano @ R                                  # (T, 3, 3)
+    wrist_quat = Rscipy.from_matrix(R_cam_xhand).as_quat().astype(np.float32)  # (T,4) xyzw
+
     suffix = "_contact" if use_contact else ""
     out_path = os.path.join(out_dir, f"qpos_xhand{suffix}_{hand}.pkl")
     with open(out_path, "wb") as f:
         pickle.dump(
             dict(
                 data=qpos_seq,
+                wrist_pos=wrist_pos,
+                wrist_quat=wrist_quat,
                 valid=valid,
                 joint_names=joint_names,
                 config_path=cfg_path,
@@ -248,6 +320,37 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
     print(f"[{hand}] -> {out_path}  shape={qpos_seq.shape}  "
           f"valid={n_valid}/{T}  dof={dof}{extra}")
     retargeting.verbose()
+
+    if smooth:
+        valid_np = np.asarray(valid).astype(bool)
+        q_s, wp_s, wq_s = smooth_trajectory(
+            qpos_seq, wrist_pos, wrist_quat, valid_np,
+            win=smooth_win, wrist_win=smooth_wrist_win,
+            med_win=smooth_med_win,
+        )
+        smooth_path = os.path.join(
+            out_dir, f"qpos_xhand{suffix}_{hand}_smooth.pkl"
+        )
+        with open(smooth_path, "wb") as f:
+            pickle.dump(
+                dict(
+                    data=q_s,
+                    wrist_pos=wp_s,
+                    wrist_quat=wq_s,
+                    valid=valid_np,
+                    joint_names=joint_names,
+                    config_path=cfg_path,
+                    hand=hand,
+                    dof=dof,
+                    smoothing=dict(
+                        win=smooth_win,
+                        wrist_win=smooth_wrist_win,
+                        med_win=smooth_med_win,
+                    ),
+                ),
+                f,
+            )
+        print(f"[{hand}] -> {smooth_path}  (smoothed)")
 
 
 def main():
@@ -264,6 +367,17 @@ def main():
                          "<npz parent>/../contact")
     ap.add_argument("--alpha", type=float, default=0.001,
                     help="Anchor weight on ||q - q_stage1|| in stage-2 loss.")
+    ap.add_argument("--smooth", action="store_true",
+                    help="Also save a smoothed pkl (median + savgol). Pipeline: "
+                         "invalid-frame interp -> median(med_win) -> savgol(win,3); "
+                         "quaternion gets antipodal-unwrap + savgol + renorm.")
+    ap.add_argument("--smooth_win", type=int, default=15,
+                    help="Savgol window for finger qpos (odd, default 15).")
+    ap.add_argument("--smooth_wrist_win", type=int, default=21,
+                    help="Savgol window for wrist pos/quat (odd, default 21, "
+                         "bigger because wrist estimation is jitterier).")
+    ap.add_argument("--smooth_med_win", type=int, default=5,
+                    help="Median filter window for outlier removal (odd, default 5).")
     args = ap.parse_args()
 
     RetargetingConfig.set_default_urdf_dir(URDF_ROOT)
@@ -281,8 +395,14 @@ def main():
 
     hands = ["right", "left"] if args.hand == "both" else [args.hand]
     for h in hands:
-        retarget_one_hand(data, h, out_dir,
-                          contact_dir=contact_dir, alpha=args.alpha)
+        retarget_one_hand(
+            data, h, out_dir,
+            contact_dir=contact_dir, alpha=args.alpha,
+            smooth=args.smooth,
+            smooth_win=args.smooth_win,
+            smooth_wrist_win=args.smooth_wrist_win,
+            smooth_med_win=args.smooth_med_win,
+        )
 
 
 if __name__ == "__main__":

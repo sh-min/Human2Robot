@@ -111,13 +111,13 @@ def main():
     )
 
     # Third-person debug camera, parented to the (static) table so it
-    # never moves when the robot's joints change during IK / sim. World
-    # pos (1.5, 0, 2.0) -> table-local (0.6, 0, 1.5). Orientation baked
-    # via xyaxes (no targetbody) so the view never drifts; look-at is the
-    # robot torso/head midpoint (0, 0, 1.0).
+    # never moves when the robot's joints change during IK / sim.
+    # World pos (1.0, 0, 1.65) -> table-local (0.1, 0, 1.15), 0.6 m
+    # along the look ray (-0.832, 0, -0.555) from the original
+    # (1.5, 0, 2.0); aimed near robot torso z~1.0.
     table.add_camera(
         name="front_view",
-        pos=[0.6, 0.0, 1.5],
+        pos=[0.10, 0.0, 1.15],
         xyaxes=[0.0, 1.0, 0.0, -0.555, 0.0, 0.832],
         fovy=65.0,
     )

@@ -27,27 +27,36 @@ REPO = Path(__file__).resolve().parent.parent.parent
 SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
 
 # Orientation presets: (right_quat, left_quat) in MuJoCo (w, x, y, z).
+# All three keep the fingertips pointing along world +x. Only the palm
+# normal direction changes — palms face each other, then down, then up.
 ORIENT_PRESETS: dict[str, tuple[np.ndarray, np.ndarray]] = {
     "palms-inward": (
         np.array([0.7071, 0.0, -0.7071, 0.0]),
         np.array([0.7071, 0.0, -0.7071, 0.0]),
     ),
     "palms-down": (
-        np.array([0.7071, -0.7071, 0.0, 0.0]),
-        np.array([0.7071, 0.7071, 0.0, 0.0]),
+        np.array([0.5, -0.5, -0.5, 0.5]),
+        np.array([0.5, 0.5, -0.5, -0.5]),
     ),
     "palms-up": (
-        np.array([0.0, 0.0, 0.7071, -0.7071]),
-        np.array([0.0, 0.0, 0.7071, 0.7071]),
+        np.array([0.5, 0.5, -0.5, -0.5]),
+        np.array([0.5, -0.5, -0.5, 0.5]),
     ),
 }
 
 DEFAULTS = {
-    "rx": 0.55, "ry": -0.10, "rz": 1.10,
-    "lx": 0.55, "ly":  0.10, "lz": 1.10,
+    "rx": 0.45, "ry": -0.10, "rz": 1.25,
+    "lx": 0.45, "ly":  0.10, "lz": 1.25,
     "head_pitch": 0.6,
     "hand_close": 0.0,
     "orient": "palms-inward",
+}
+
+# Slider ranges chosen to stay within the locked-torso arm's reachable
+# workspace (right wrist on the -y side, left on +y).
+SLIDER_RANGES = {
+    "rx": (0.20, 0.46),  "ry": (-0.40, 0.00),  "rz": (1.00, 1.55),
+    "lx": (0.20, 0.46),  "ly": ( 0.00, 0.40),  "lz": (1.00, 1.55),
 }
 
 # Stream parameters
@@ -65,6 +74,10 @@ _RENDER_HW = (270, 480)
 # EGL contexts are thread-bound; gradio's request workers may call us from
 # different threads. Keep a thread-local Renderer instance.
 _tls = threading.local()
+# Reset is requested from a click handler thread, but qpos can only be
+# mutated safely from the stream_loop thread (otherwise mj_step crashes
+# mid-update). Use a flag to defer the actual reset.
+_reset_pending = threading.Event()
 
 
 def _sync_ctrl_to_qpos() -> None:
@@ -145,15 +158,19 @@ def set_target(rx, ry, rz, lx, ly, lz, head_pitch, hand_close, orient):
 
 def stream_loop():
     """Infinite generator. Steps physics and yields a tuple of frames from
-    all 4 cameras every ``_SUBSTEPS_PER_YIELD`` substeps."""
+    all 4 cameras every ``_SUBSTEPS_PER_YIELD`` substeps. Handles deferred
+    resets between substep batches so qpos is never mutated mid-step."""
     while True:
+        if _reset_pending.is_set():
+            _reset_to_home()
+            _reset_pending.clear()
         for _ in range(_SUBSTEPS_PER_YIELD):
             mujoco.mj_step(_model, _data)
         yield tuple(_render(cam) for cam in CAMERAS)
 
 
 def reset_action():
-    _reset_to_home()
+    _reset_pending.set()
 
 
 # Initialize persistent state to the home pose at module load.
@@ -166,13 +183,13 @@ def build_app() -> gr.Blocks:
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("### Right wrist target")
-                rx = gr.Slider(-0.3, 1.2, DEFAULTS["rx"], step=0.01, label="x")
-                ry = gr.Slider(-1.0, 1.0, DEFAULTS["ry"], step=0.01, label="y")
-                rz = gr.Slider(0.3, 2.0, DEFAULTS["rz"], step=0.01, label="z")
+                rx = gr.Slider(*SLIDER_RANGES["rx"], DEFAULTS["rx"], step=0.01, label="x")
+                ry = gr.Slider(*SLIDER_RANGES["ry"], DEFAULTS["ry"], step=0.01, label="y")
+                rz = gr.Slider(*SLIDER_RANGES["rz"], DEFAULTS["rz"], step=0.01, label="z")
                 gr.Markdown("### Left wrist target")
-                lx = gr.Slider(-0.3, 1.2, DEFAULTS["lx"], step=0.01, label="x")
-                ly = gr.Slider(-1.0, 1.0, DEFAULTS["ly"], step=0.01, label="y")
-                lz = gr.Slider(0.3, 2.0, DEFAULTS["lz"], step=0.01, label="z")
+                lx = gr.Slider(*SLIDER_RANGES["lx"], DEFAULTS["lx"], step=0.01, label="x")
+                ly = gr.Slider(*SLIDER_RANGES["ly"], DEFAULTS["ly"], step=0.01, label="y")
+                lz = gr.Slider(*SLIDER_RANGES["lz"], DEFAULTS["lz"], step=0.01, label="z")
                 gr.Markdown("### Body / hand")
                 head = gr.Slider(-0.35, 1.57, DEFAULTS["head_pitch"], step=0.01, label="head pitch")
                 close = gr.Slider(0.0, 1.0, DEFAULTS["hand_close"], step=0.02, label="hand close")

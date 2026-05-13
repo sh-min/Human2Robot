@@ -48,6 +48,45 @@ def main():
     attach_hand(spec, "link_right_arm_6", XHAND_R, prefix="rh_")
     attach_hand(spec, "link_left_arm_6",  XHAND_L, prefix="lh_")
 
+    # Lock everything below the shoulder: base freejoint, 4 wheels, and
+    # the 6 torso joints. Only the two arms (incl. wrists), both hands,
+    # and the 2 head joints remain articulated.
+    LOWER_BODY_JOINTS = (
+        "world_j",
+        "wheel_fr", "wheel_fl", "wheel_rr", "wheel_rl",
+        "torso_0", "torso_1", "torso_2", "torso_3", "torso_4", "torso_5",
+        # head_0 (yaw) is removed because the RBY1 actuator can't fully hold
+        # it against numerical drift — the head_cam slowly rotates even
+        # at rest. Only head_1 (pitch) is needed for tabletop manipulation.
+        "head_0",
+    )
+    for jname in LOWER_BODY_JOINTS:
+        joint = next((j for j in spec.joints if j.name == jname), None)
+        if joint is not None:
+            spec.delete(joint)
+    # Drop the actuators that drove those joints.
+    LOWER_BODY_ACTUATORS = (
+        "front_right_wheel_act", "front_left_wheel_act",
+        "rear_right_wheel_act",  "rear_left_wheel_act",
+        "link1_act", "link2_act", "link3_act", "link4_act", "link5_act", "link6_act",
+        "head_0_act",
+    )
+    for aname in LOWER_BODY_ACTUATORS:
+        actuator = next((a for a in spec.actuators if a.name == aname), None)
+        if actuator is not None:
+            spec.delete(actuator)
+
+    # Original RBY1 limits on head_1 are too small (actuator forcerange
+    # ~7.3 N*m and joint actuatorfrcrange=0,0), so the commanded pitch
+    # silently drifts under gravity / numerical error. Restore a sane
+    # torque budget on both the joint and the actuator.
+    j = next((j for j in spec.joints if j.name == "head_1"), None)
+    if j is not None:
+        j.actfrcrange = [-500.0, 500.0]
+    a = next((a for a in spec.actuators if a.name == "head_1_act"), None)
+    if a is not None:
+        a.forcerange = [-500.0, 500.0]
+
     # Head-mounted egocentric camera on link_head_2.
     # MuJoCo camera convention: looks along -z, +y is up, +x is right.
     # In head frame, +x is forward, +z is up, so we orient the camera with
@@ -71,16 +110,34 @@ def main():
         rgba=[0.7, 0.5, 0.35, 1.0],
     )
 
-    # Third-person debug camera, parented to the (static) table so it never
-    # moves when the robot's joints change during IK / sim. Camera at
-    # world (2.0, 0, 2.0) -> table-local (1.1, 0, 1.5). Orientation baked
-    # via xyaxes (no targetbody) so the view never drifts: look-at is
-    # link_torso_2's default world pos (0, 0, 0.6305).
+    # Third-person debug camera, parented to the (static) table so it
+    # never moves when the robot's joints change during IK / sim. World
+    # pos (1.5, 0, 2.0) -> table-local (0.6, 0, 1.5). Orientation baked
+    # via xyaxes (no targetbody) so the view never drifts; look-at is the
+    # robot torso/head midpoint (0, 0, 1.0).
     table.add_camera(
         name="front_view",
-        pos=[1.1, 0.0, 1.5],
-        xyaxes=[0.0, 1.0, 0.0, -0.566, 0.0, 0.826],
-        fovy=60.0,
+        pos=[0.6, 0.0, 1.5],
+        xyaxes=[0.0, 1.0, 0.0, -0.555, 0.0, 0.832],
+        fovy=65.0,
+    )
+
+    # Side-view debug cameras with fixed xyaxes. Look mainly along ±y but
+    # tilted down 15° to favor the table-top scene. World positions:
+    #   side_left  -> (0.5, +1.6, 1.25)  (robot's left,  viewer-right)
+    #   side_right -> (0.5, -1.6, 1.25)  (robot's right, viewer-left)
+    # Table at world (0.9, 0, 0.5) so table-local = world - table_pos.
+    table.add_camera(
+        name="side_left",
+        pos=[-0.4, 1.6, 0.75],
+        xyaxes=[-1.0, 0.0, 0.0, 0.0, -0.259, 0.966],
+        fovy=70.0,
+    )
+    table.add_camera(
+        name="side_right",
+        pos=[-0.4, -1.6, 0.75],
+        xyaxes=[1.0, 0.0, 0.0, 0.0, 0.259, 0.966],
+        fovy=70.0,
     )
 
     # spec.attach merges specs under a single meshdir, so XHand meshes

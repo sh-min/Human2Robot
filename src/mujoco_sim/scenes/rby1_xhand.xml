@@ -157,7 +157,6 @@
     <light pos="0 0 5" dir="0 0 -1" type="directional" castshadow="false" diffuse="0.8 0.8 0.8" specular="0 0 0"/>
     <body name="base">
       <inertial pos="-0.0615794 -0.00142271 0.135139" quat="0.00383057 0.733861 -0.00742942 0.679248" mass="60.0804" diaginertia="3.77525 2.99424 1.36264"/>
-      <joint name="world_j" type="free"/>
       <geom class="visual" material="10,10,10" mesh="m_base_1"/>
       <geom class="visual" material="25,25,25" mesh="m_base_2"/>
       <geom class="visual" material="10,10,10" mesh="m_base_3"/>
@@ -174,37 +173,31 @@
       <geom class="collision" mesh="m_base_7"/>
       <body name="wheel_fr_link" pos="0.243 -0.245 0.076">
         <inertial pos="-0.00010511 0.0009458 0" quat="0.707046 0 0 0.707168" mass="2.5441" diaginertia="0.00616429 0.00470985 0.00470754"/>
-        <joint name="wheel_fr" pos="0 0 0" axis="0 1 0" limited="false"/>
         <geom class="visual" material="191,191,191" mesh="MECANUM_WHEEL"/>
         <geom class="collision" mesh="MECANUM_WHEEL"/>
       </body>
       <body name="wheel_fl_link" pos="0.243 0.245 0.076">
         <inertial pos="-0.00010433 -0.00094577 0" quat="0.707168 0 0 0.707046" mass="2.54418" diaginertia="0.00616468 0.00471013 0.00470782"/>
-        <joint name="wheel_fl" pos="0 0 0" axis="0 1 0" limited="false"/>
         <geom class="visual" material="191,191,191" mesh="MECANUM_WHEEL_M"/>
         <geom class="collision" mesh="MECANUM_WHEEL_M"/>
       </body>
       <body name="wheel_rr_link" pos="-0.247 -0.245 0.076">
         <inertial pos="-0.00010511 0.0009458 0" quat="0.707046 0 0 0.707168" mass="2.5441" diaginertia="0.00616429 0.00470985 0.00470754"/>
-        <joint name="wheel_rr" pos="0 0 0" axis="0 1 0" limited="false"/>
         <geom class="visual" material="191,191,191" mesh="MECANUM_WHEEL_M"/>
         <geom class="collision" mesh="MECANUM_WHEEL_M"/>
       </body>
       <body name="wheel_rl_link" pos="-0.247 0.245 0.076">
         <inertial pos="-0.00010433 -0.00094577 0" quat="0.707168 0 0 0.707046" mass="2.54418" diaginertia="0.00616468 0.00471013 0.00470782"/>
-        <joint name="wheel_rl" pos="0 0 0" axis="0 1 0" limited="false"/>
         <geom class="visual" material="191,191,191" mesh="MECANUM_WHEEL"/>
         <geom class="collision" mesh="MECANUM_WHEEL"/>
       </body>
       <body name="link_torso_0" pos="0 0 0.2805">
         <inertial pos="-0.0884841 0.00021367 4.6e-07" quat="0.443798 0.550483 -0.443815 0.55049" mass="2.24282" diaginertia="0.0189253 0.0143368 0.00985172"/>
-        <joint name="torso_0" pos="0 0 0" axis="1 0 0" limited="true" range="-0.349066 0.349066"/>
         <geom class="visual" material="254,254,255" mesh="LINK_1"/>
         <geom class="in-model-collision" size="0.0797082" pos="-0.0663351 0.00133783 -6.74287e-09" quat="0.502525 0.497462 -0.502525 0.497462"/>
         <geom class="in-model-collision" size="0.105" pos="-0.115 0 0" quat="0.707105 0 0.707108 0"/>
         <body name="link_torso_1">
           <inertial pos="0.00728955 -0.0172852 0.0691138" quat="0.997768 -0.0453891 0.0382115 -0.0306483" mass="9.72163" diaginertia="0.149421 0.139376 0.0275059"/>
-          <joint name="torso_1" pos="0 0 0" axis="0 1 0" limited="true" range="-1.0472 1.52173"/>
           <geom class="visual" material="0,0,0" mesh="LINK_2_0"/>
           <geom class="visual" material="254,254,255" mesh="LINK_2_1"/>
           <geom class="in-model-collision" size="0.0675904" pos="0.000760053 0.000948487 0.0043131" quat="0.704011 0.705085 0.0600636 -0.0601334"/>
@@ -212,7 +205,6 @@
           <geom class="in-model-collision" size="0.115" pos="0.01 0 0.24"/>
           <body name="link_torso_2" pos="0 0 0.35">
             <inertial pos="0.00653835 -0.0176954 0.0563658" quat="0.99687 -0.052526 0.0433482 -0.0401474" mass="9.21692" diaginertia="0.12242 0.116748 0.0292915"/>
-            <joint name="torso_2" pos="0 0 0" axis="0 1 0" limited="true" range="-2.47837 1.5708"/>
             <geom class="visual" material="10,10,10" mesh="LINK_3_0"/>
             <geom class="visual" material="254,254,255" mesh="LINK_3_1"/>
             <geom class="in-model-collision" size="0.0675555" pos="0.00059399 0.00101176 0.00336057" quat="0.704219 0.705056 0.0590187 -0.059059"/>
@@ -220,18 +212,15 @@
             <geom class="in-model-collision" size="0.095" pos="0.025 0 0.23"/>
             <body name="link_torso_3" pos="0 0 0.35">
               <inertial pos="-0.00574156 -0.0172598 5.61e-05" quat="0.0913806 0.682262 -0.18841 0.700478" mass="4.18679" diaginertia="0.00955618 0.00946572 0.00832635"/>
-              <joint name="torso_3" pos="0 0 0" axis="0 1 0" limited="true" range="-0.785398 1.5708"/>
               <geom class="visual" material="10,10,10" mesh="LINK_4"/>
               <geom class="in-model-collision" size="0.0580901" pos="-0.0065774 0.000596693 -3.80522e-08" quat="0.600631 0.373153 -0.600632 0.37315"/>
               <body name="link_torso_4">
                 <inertial pos="-0.0909709 5.085e-05 0.0260195" quat="-0.0536434 0.4399 -0.0270045 0.896036" mass="4.45566" diaginertia="0.0255574 0.0255082 0.00942882"/>
-                <joint name="torso_4" pos="0 0 0" axis="1 0 0" limited="true" range="-0.523599 0.523599"/>
                 <geom class="visual" material="10,10,10" mesh="LINK_5"/>
                 <geom class="in-model-collision" size="0.0857099" pos="-0.0566243 4.5363e-08 0.0429423" quat="0.557979 0.434351 0.43435 0.557978"/>
                 <geom class="in-model-collision" size="0.105" pos="-0.07 0 0.0385" quat="0.707105 0 0.707108 0"/>
                 <body name="link_torso_5" pos="0 0 0.309427">
                   <inertial pos="-0.0132199 0.000254676 -0.0318761" quat="0.998675 -0.00438307 -0.0510462 0.00477378" mass="12.6659" diaginertia="0.21618 0.167212 0.132309"/>
-                  <joint name="torso_5" pos="0 0 0" axis="0 0 1" limited="true" range="-1.5708 1.5708"/>
                   <geom class="visual" material="254,254,255_LINK_6" mesh="LINK_6_0"/>
                   <geom class="visual" material="191,191,191" mesh="LINK_6_1"/>
                   <geom class="visual" material="70,70,70" mesh="LINK_6_2"/>
@@ -500,12 +489,11 @@
                   </body>
                   <body name="link_head_1" pos="0.022 0 0.200073">
                     <inertial pos="-0.00041643 0.00593524 -0.00289916" quat="0.686943 0.726608 -0.0122145 -4.20643e-05" mass="0.704765" diaginertia="0.000662227 0.000593368 0.000359954"/>
-                    <joint name="head_0" pos="0 0 0" axis="0 0 1" limited="true" range="-1.57 1.57"/>
                     <geom class="visual" material="254,254,255" mesh="NECK_1"/>
                     <geom class="in-model-collision" size="0.0369011" pos="-3.38109e-07 -0.00509656 -0.010132" quat="0.772632 0.634854 -1.03689e-05 -8.5199e-06"/>
                     <body name="link_head_2">
                       <inertial pos="0.0531532 0.00547509 0.0591391" quat="0.221288 0.46561 -0.261859 0.815885" mass="0.952627" diaginertia="0.00173533 0.00136285 0.000633984"/>
-                      <joint name="head_1" pos="0 0 0" axis="0 1 0" limited="true" range="-1.57 1.57"/>
+                      <joint name="head_1" pos="0 0 0" axis="0 1 0" limited="true" range="-1.57 1.57" actuatorfrcrange="-500 500"/>
                       <geom class="visual" material="254,254,255" mesh="NECK_2_0"/>
                       <geom class="visual" material="69,69,69" mesh="NECK_2_1"/>
                       <geom class="in-model-collision" size="0.0184787" pos="4.63186e-08 0.0494026 0" quat="0.707107 0 0 0.707107"/>
@@ -522,7 +510,9 @@
     </body>
     <body name="table" pos="0.9 0 0.5">
       <geom size="0.5 1 0.5" type="box" rgba="0.7 0.5 0.35 1"/>
-      <camera name="front_view" pos="1.1 0 1.5" quat="0.625551 0.329675 0.329675 0.625551" fovy="60"/>
+      <camera name="front_view" pos="0.6 0 1.5" quat="0.623484 0.333567 0.333567 0.623484" fovy="65"/>
+      <camera name="side_left" pos="-0.4 1.6 0.75" quat="0 0 0.6087 0.793401" fovy="70"/>
+      <camera name="side_right" pos="-0.4 -1.6 0.75" quat="0.793401 0.6087 0 0" fovy="70"/>
     </body>
   </worldbody>
 
@@ -532,16 +522,6 @@
   </contact>
 
   <actuator>
-    <general name="front_right_wheel_act" joint="wheel_fr" ctrlrange="-3.14 3.14" biasprm="0 0 -4000"/>
-    <general name="front_left_wheel_act" joint="wheel_fl" ctrlrange="-3.14 3.14" biasprm="0 0 -4000"/>
-    <general name="rear_right_wheel_act" joint="wheel_rr" ctrlrange="-3.14 3.14" biasprm="0 0 -4000"/>
-    <general name="rear_left_wheel_act" joint="wheel_rl" ctrlrange="-3.14 3.14" biasprm="0 0 -4000"/>
-    <general name="link1_act" joint="torso_0" ctrlrange="-0.261799 0.261799" forcelimited="true" forcerange="-270 270"/>
-    <general name="link2_act" joint="torso_1" ctrlrange="-0.523599 1.5708" forcelimited="true" forcerange="-270 270"/>
-    <general name="link3_act" joint="torso_2" ctrlrange="-2.61799 1.5708" forcelimited="true" forcerange="-270 270"/>
-    <general name="link4_act" joint="torso_3" ctrlrange="-0.785398 1.5708" forcelimited="true" forcerange="-270 270"/>
-    <general name="link5_act" joint="torso_4" ctrlrange="-0.523599 0.523599" forcelimited="true" forcerange="-120 120"/>
-    <general name="link6_act" joint="torso_5" ctrlrange="-2.35619 2.35619" forcelimited="true" forcerange="-120 120"/>
     <general name="right_arm_1_act" joint="right_arm_0" ctrlrange="-3.14159 3.14159" forcelimited="true" forcerange="-70 70"/>
     <general name="right_arm_2_act" joint="right_arm_1" ctrlrange="-3.14159 0.0174533" forcelimited="true" forcerange="-70 70"/>
     <general name="right_arm_3_act" joint="right_arm_2" ctrlrange="-3.14159 3.14159" forcelimited="true" forcerange="-70 70"/>
@@ -556,8 +536,7 @@
     <general name="left_arm_5_act" joint="left_arm_4" ctrlrange="-3.14159 3.14159" forcelimited="true" forcerange="-10 10"/>
     <general name="left_arm_6_act" joint="left_arm_5" ctrlrange="-1.5708 1.91986" forcelimited="true" forcerange="-10 10"/>
     <general name="left_arm_7_act" joint="left_arm_6" ctrlrange="-2.79253 2.79253" forcelimited="true" forcerange="-8 8"/>
-    <general name="head_0_act" joint="head_0" ctrlrange="-0.523 0.523" forcelimited="true" forcerange="-7.3 7.3"/>
-    <general name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57" forcelimited="true" forcerange="-7.3 7.3"/>
+    <general name="head_1_act" joint="head_1" ctrlrange="-0.35 1.57" forcelimited="true" forcerange="-500 500"/>
     <general name="rh_right_hand_thumb_bend_joint" joint="rh_right_hand_thumb_bend_joint" ctrllimited="auto" ctrlrange="0 1.83" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
     <general name="rh_right_hand_thumb_rota_joint1" joint="rh_right_hand_thumb_rota_joint1" ctrllimited="auto" ctrlrange="-1.05 1.57" forcerange="-1.1 1.1" gainprm="50" biasprm="0 -50 0"/>
     <general name="rh_right_hand_thumb_rota_joint2" joint="rh_right_hand_thumb_rota_joint2" ctrllimited="auto" ctrlrange="-0.175 1.83" forcerange="-0.4 0.4" gainprm="50" biasprm="0 -50 0"/>

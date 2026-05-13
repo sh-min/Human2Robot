@@ -7,8 +7,9 @@ then SSH-tunnel from your laptop:
     ssh -L 7860:localhost:7860 worker-nodeN
 and open http://localhost:7860 in a browser.
 
-Each control change re-runs IK (per arm, 7-DOF only) and renders one frame
-from the selected camera. No dynamics; collisions are not enforced.
+State is persistent across slider changes — moving a slider sets new ctrl
+targets and the env's mj_step loop streams intermediate frames as the
+robot transitions. Reset button forces back to home.
 """
 
 from __future__ import annotations
@@ -24,79 +25,136 @@ from mujoco_sim.ik import solve_wrist_ik
 REPO = Path(__file__).resolve().parent.parent.parent
 SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
 
-# Orientation presets: maps preset name -> (right_quat, left_quat)
-# (w, x, y, z) in MuJoCo convention.
+# Orientation presets: (right_quat, left_quat) in MuJoCo (w, x, y, z).
 ORIENT_PRESETS: dict[str, tuple[np.ndarray, np.ndarray]] = {
     "palms-inward": (
         np.array([0.7071, 0.0, -0.7071, 0.0]),
         np.array([0.7071, 0.0, -0.7071, 0.0]),
     ),
     "palms-down": (
-        np.array([1.0, 0.0, 0.0, 0.0]),
-        np.array([1.0, 0.0, 0.0, 0.0]),
+        np.array([0.7071, -0.7071, 0.0, 0.0]),
+        np.array([0.7071, 0.7071, 0.0, 0.0]),
     ),
     "palms-up": (
-        np.array([0.0, 1.0, 0.0, 0.0]),
-        np.array([0.0, 1.0, 0.0, 0.0]),
+        np.array([0.0, 0.0, 0.7071, -0.7071]),
+        np.array([0.0, 0.0, 0.7071, 0.7071]),
     ),
 }
 
-# Default pose values (used for reset).
 DEFAULTS = {
     "rx": 0.55, "ry": -0.10, "rz": 1.10,
     "lx": 0.55, "ly":  0.10, "lz": 1.10,
     "head_pitch": 0.6,
     "hand_close": 0.0,
     "orient": "palms-inward",
-    "camera": "front_view",
 }
 
+# Stream parameters
+SIM_FREQ_HZ = 500.0           # MJCF timestep is 0.002s -> 500Hz
+YIELD_HZ = 30.0               # frames pushed to browser per second
+_SUBSTEPS_PER_YIELD = int(round(SIM_FREQ_HZ / YIELD_HZ))
+
+CAMERAS = ("head_cam", "front_view", "side_left", "side_right")
+
+# Module-level persistent MuJoCo state.
 _model = mujoco.MjModel.from_xml_path(str(SCENE))
 _data = mujoco.MjData(_model)
-_renderer = mujoco.Renderer(_model, height=720, width=1280)
+# Per-camera render at 270x480 (16:9) -> 4 views ~ HD720 total pixels.
+_renderer = mujoco.Renderer(_model, height=270, width=480)
 
 
-def render_pose(
+def _sync_ctrl_to_qpos() -> None:
+    """Set every position actuator's ctrl to its joint's current qpos so the
+    controller doesn't snap the robot toward zero when stepping begins."""
+    for ai in range(_model.nu):
+        jid = int(_model.actuator_trnid[ai, 0])
+        if jid >= 0:
+            _data.ctrl[ai] = _data.qpos[_model.jnt_qposadr[jid]]
+
+
+def _reset_to_home() -> None:
+    """Reset to the default slider pose (cube-grasp ready)."""
+    mujoco.mj_resetData(_model, _data)
+    # Pre-set head pitch so IK starts with the head in place.
+    hjid = mujoco.mj_name2id(_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")
+    _data.qpos[_model.jnt_qposadr[hjid]] = DEFAULTS["head_pitch"]
+    mujoco.mj_forward(_model, _data)
+    # Solve IK for the default wrist targets and apply as initial qpos.
+    q_home = _compute_target_qpos(
+        DEFAULTS["rx"], DEFAULTS["ry"], DEFAULTS["rz"],
+        DEFAULTS["lx"], DEFAULTS["ly"], DEFAULTS["lz"],
+        DEFAULTS["head_pitch"], DEFAULTS["hand_close"], DEFAULTS["orient"],
+    )
+    _data.qpos[:] = q_home
+    _sync_ctrl_to_qpos()
+    mujoco.mj_forward(_model, _data)
+
+
+def _render(camera: str) -> np.ndarray:
+    _renderer.update_scene(_data, camera=camera)
+    return _renderer.render()
+
+
+def _compute_target_qpos(
     rx: float, ry: float, rz: float,
     lx: float, ly: float, lz: float,
     head_pitch: float,
     hand_close: float,
     orient: str,
-    camera: str,
 ) -> np.ndarray:
-    mujoco.mj_resetData(_model, _data)
-
-    # Head pitch (head_1 joint) via qpos so head_cam follows.
-    hjid = mujoco.mj_name2id(_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")
-    _data.qpos[_model.jnt_qposadr[hjid]] = head_pitch
-    mujoco.mj_forward(_model, _data)
-
-    quat_r, quat_l = ORIENT_PRESETS[orient]
+    """Kinematic IK (doesn't mutate _data) producing a 38-DOF target qpos
+    for every position-actuated joint. Other DOFs stay at current."""
     q = _data.qpos.copy()
+    # Head
+    hjid = mujoco.mj_name2id(_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")
+    q[_model.jnt_qposadr[hjid]] = head_pitch
+    # Arm IK
+    quat_r, quat_l = ORIENT_PRESETS[orient]
     q = solve_wrist_ik(_model, q, "link_right_arm_6", np.array([rx, ry, rz]), quat_r)
     q = solve_wrist_ik(_model, q, "link_left_arm_6",  np.array([lx, ly, lz]), quat_l)
-    _data.qpos[:] = q
-
-    # Hand closure: drive flexion joints (joint1/joint2) on both hands.
+    # Hand: target finger qpos = fraction along ctrl range
     for i in range(_model.nu):
         n = mujoco.mj_id2name(_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
         if not n:
             continue
         if (n.startswith("rh_") or n.startswith("lh_")) and ("joint1" in n or "joint2" in n):
-            jid = _model.actuator_trnid[i, 0]
+            jid = int(_model.actuator_trnid[i, 0])
             qa = _model.jnt_qposadr[jid]
-            hi = _model.actuator_ctrlrange[i, 1]
-            lo = _model.actuator_ctrlrange[i, 0]
-            _data.qpos[qa] = lo + hand_close * (hi - lo) * 0.9
+            lo, hi = _model.actuator_ctrlrange[i]
+            q[qa] = lo + hand_close * (hi - lo) * 0.9
+    return q
 
-    mujoco.mj_forward(_model, _data)
-    _renderer.update_scene(_data, camera=camera)
-    return _renderer.render()
+
+def set_target(rx, ry, rz, lx, ly, lz, head_pitch, hand_close, orient):
+    """Slider handler. Compute new IK target and push to ctrl. No outputs —
+    images are fed by stream_loop() continuously."""
+    q_target = _compute_target_qpos(rx, ry, rz, lx, ly, lz, head_pitch, hand_close, orient)
+    for ai in range(_model.nu):
+        jid = int(_model.actuator_trnid[ai, 0])
+        if jid >= 0:
+            _data.ctrl[ai] = q_target[_model.jnt_qposadr[jid]]
+
+
+def stream_loop():
+    """Infinite generator. Steps physics and yields a tuple of frames from
+    all 4 cameras every ``_SUBSTEPS_PER_YIELD`` substeps."""
+    while True:
+        for _ in range(_SUBSTEPS_PER_YIELD):
+            mujoco.mj_step(_model, _data)
+        yield tuple(_render(cam) for cam in CAMERAS)
+
+
+def reset_action():
+    _reset_to_home()
+
+
+# Initialize persistent state to the home pose at module load.
+_reset_to_home()
 
 
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="RBY1 + XHand poser") as app:
-        gr.Markdown("# RBY1 + XHand interactive poser")
+        gr.Markdown("# RBY1 + XHand interactive poser (streaming, 4 views)")
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("### Right wrist target")
@@ -111,19 +169,30 @@ def build_app() -> gr.Blocks:
                 head = gr.Slider(-0.35, 1.57, DEFAULTS["head_pitch"], step=0.01, label="head pitch")
                 close = gr.Slider(0.0, 1.0, DEFAULTS["hand_close"], step=0.02, label="hand close")
                 orient = gr.Dropdown(list(ORIENT_PRESETS), value=DEFAULTS["orient"], label="orientation")
-                camera = gr.Radio(["head_cam", "front_view"], value=DEFAULTS["camera"], label="camera")
-            with gr.Column(scale=2):
-                out = gr.Image(label="render", height=540)
+                reset_btn = gr.Button("Reset to home", variant="secondary")
+            with gr.Column(scale=3):
+                outs: list[gr.Image] = []
+                with gr.Row():
+                    for cam in CAMERAS[:2]:
+                        outs.append(gr.Image(label=cam, show_label=True, elem_classes=["cam-img"]))
+                with gr.Row():
+                    for cam in CAMERAS[2:]:
+                        outs.append(gr.Image(label=cam, show_label=True, elem_classes=["cam-img"]))
 
-        controls = [rx, ry, rz, lx, ly, lz, head, close, orient, camera]
+        controls = [rx, ry, rz, lx, ly, lz, head, close, orient]
         for ctl in controls:
-            ctl.change(render_pose, inputs=controls, outputs=out)
-
-        # Initial render on load
-        app.load(render_pose, inputs=controls, outputs=out)
+            ctl.change(set_target, inputs=controls, outputs=None)
+        reset_btn.click(reset_action, inputs=None, outputs=None)
+        app.load(stream_loop, inputs=None, outputs=outs)
     return app
 
 
+_CAM_CSS = """
+.cam-img,
+.cam-img div:has(img) { width: 100% !important; max-width: 100% !important; }
+.cam-img img { width: 100% !important; height: auto !important; object-fit: contain !important; }
+"""
+
 if __name__ == "__main__":
     app = build_app()
-    app.launch(server_name="0.0.0.0", server_port=7860)
+    app.launch(server_name="0.0.0.0", server_port=7860, css=_CAM_CSS)

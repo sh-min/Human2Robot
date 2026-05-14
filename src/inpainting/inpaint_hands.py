@@ -1,18 +1,23 @@
-"""E2FGVI video inpainting over SAM2 arm masks.
+"""E2FGVI video inpainting over a per-frame human mask.
 
-Minimal port of phantom's `HandInpaintProcessor`, keeping only the batched
-inference + temporal context loop. Drops the BaseProcessor framework and
-the epic-mode resolution path.
+Two modes:
+    legacy   — input video_rgb_imgs.mkv + masks_arm.npy (full arm+hand). Output
+               inpaint_processor/video_human_inpaint.mkv. This is the original
+               behavior and is kept so you can A/B against the new pipeline.
+    residual — input overlay_processor/video_overlay_raw.mkv +
+               overlay_processor/residual_mask.npy (small slivers left over
+               after the hull-aware xhand overlay). Output video_overlay_xhand.mkv
+               at the processed_demo root. Much smaller mask → much sharper fill.
 
-Inputs:
-    <processed_demo>/video_rgb_imgs.mkv               (ffv1, produced by inject_hawor_data.py)
-    <processed_demo>/segmentation_processor/masks_arm.npy   (bool, produced by segment_arms.py)
-
-Output:
-    <processed_demo>/inpaint_processor/video_human_inpaint.mkv  (ffv1)
+Mask dilation:
+    legacy uses 4-iter cross dilation (the mask is conservative and we want it
+    to cover the silhouette). Residual masks are tight against the robot
+    silhouette already; dilating outward would eat the robot's edge, so the
+    default is 1 iteration.
 
 Usage:
     python inpaint_hands.py --processed_demo /result/cam0_inpaint/cam0/0
+    python inpaint_hands.py --processed_demo /result/cam0_inpaint/cam0/0 --mode residual
 """
 import argparse
 import gc
@@ -45,15 +50,17 @@ def _read_frames(video_path: Path) -> List[Image.Image]:
     return [Image.fromarray(f) for f in media.read_video(str(video_path))]
 
 
-def _read_masks(mask_path: Path, size: Tuple[int, int]) -> List[Image.Image]:
-    """Load arm masks, resize, and dilate (matches phantom's read_mask)."""
+def _read_masks(mask_path: Path, size: Tuple[int, int],
+                dilate_iter: int) -> List[Image.Image]:
+    """Load masks, resize, and optionally dilate."""
     out = []
     kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
     for frame in np.load(mask_path, allow_pickle=True):
         m = Image.fromarray(frame).resize(size, Image.NEAREST)
         binary = (np.array(m.convert("L")) > 0).astype(np.uint8)
-        dilated = cv2.dilate(binary, kernel, iterations=4)
-        out.append(Image.fromarray(dilated * 255))
+        if dilate_iter > 0:
+            binary = cv2.dilate(binary, kernel, iterations=dilate_iter)
+        out.append(Image.fromarray(binary * 255))
     return out
 
 
@@ -165,9 +172,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed_demo", type=Path, required=True)
+    ap.add_argument("--mode", choices=["legacy", "residual"], default="legacy",
+                    help="legacy: full arm+hand inpaint on raw video "
+                         "(produces the inpainted bg used by composite_layered.py). "
+                         "residual: leftover inpaint on the hull-aware overlay "
+                         "from render_xhand_overlay.py (legacy renderer; not on "
+                         "the locked-in pipeline).")
     ap.add_argument("--output_resolution", type=int, default=None,
                     help="Resize frames to this height before inpainting "
                          "(default: keep original)")
+    ap.add_argument("--dilate_iter", type=int, default=None,
+                    help="Mask dilation iterations. Default: 4 for legacy, 1 for residual.")
     ap.add_argument("--fps", type=int, default=15)
     args = ap.parse_args()
 
@@ -177,8 +192,16 @@ def main() -> None:
                  f"-O {E2FGVI_CHECKPOINT}")
 
     pd = args.processed_demo
-    video_path = pd / "video_rgb_imgs.mkv"
-    mask_path  = pd / "segmentation_processor" / "masks_arm.npy"
+    if args.mode == "legacy":
+        video_path = pd / "video_rgb_imgs.mkv"
+        mask_path  = pd / "segmentation_processor" / "masks_arm.npy"
+        out_path   = pd / "inpaint_processor" / "video_human_inpaint.mkv"
+        dilate_iter = 4 if args.dilate_iter is None else args.dilate_iter
+    else:  # residual
+        video_path = pd / "overlay_processor" / "video_overlay_raw.mkv"
+        mask_path  = pd / "overlay_processor" / "residual_mask.npy"
+        out_path   = pd / "video_overlay_xhand.mkv"
+        dilate_iter = 1 if args.dilate_iter is None else args.dilate_iter
     for p in (video_path, mask_path):
         if not p.exists():
             sys.exit(f"missing input: {p}")
@@ -187,7 +210,7 @@ def main() -> None:
     model = InpaintGenerator().to(device)
     model.load_state_dict(torch.load(E2FGVI_CHECKPOINT, map_location=device))
     model.eval()
-    print(f"[info] E2FGVI loaded on {device}")
+    print(f"[info] E2FGVI loaded on {device} (mode={args.mode}, dilate_iter={dilate_iter})")
 
     frames = _read_frames(video_path)
     w0, h0 = frames[0].size
@@ -197,16 +220,14 @@ def main() -> None:
         frames = [f.resize(size) for f in frames]
         print(f"[info] resized to {size}")
     size = frames[0].size  # (w, h)
-    masks = _read_masks(mask_path, size)
+    masks = _read_masks(mask_path, size, dilate_iter)
     print(f"[info] T={len(frames)}, frame size {size[0]}x{size[1]}")
 
     comp = _inpaint_video(model, device, frames, masks)
 
-    out_dir = pd / "inpaint_processor"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "video_human_inpaint.mkv"
-    media.write_video(str(out), comp, fps=args.fps, codec="ffv1")
-    print(f"[ok] wrote {out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    media.write_video(str(out_path), comp, fps=args.fps, codec="ffv1")
+    print(f"[ok] wrote {out_path}")
 
 
 if __name__ == "__main__":

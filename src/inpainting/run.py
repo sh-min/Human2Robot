@@ -3,11 +3,17 @@
 All stages are local scripts in this directory — no phantom dependency.
 
 Stages:
-    1. prepare_demo.py        rgb frames     -> video_L.mp4 in demo layout
-    2. inject_hawor_data.py   HaWoR keypoints -> bbox_data + hand_data + video_rgb_imgs.mkv
-    3. segment_arms.py        SAM2            -> segmentation_processor/masks_arm.npy
-    4. inpaint_hands.py       E2FGVI          -> inpaint_processor/video_human_inpaint.mkv
-    5. render_xhand_overlay.py pyrender + xhand qpos -> video_overlay_xhand.mkv
+    1. prepare_demo.py               rgb frames     -> video_L.mp4 in demo layout
+    2. inject_hawor_data.py          HaWoR kpts     -> bbox + hand_data + video_rgb_imgs.mkv
+    3. segment_arms.py               SAM2           -> segmentation_processor/masks_arm.npy
+    4. inpaint_hands.py --mode legacy
+                                     E2FGVI         -> inpaint_processor/video_human_inpaint.mkv
+                                                       (kept as A/B baseline)
+    5. render_xhand_overlay.py       pyrender       -> overlay_processor/video_overlay_raw.mkv
+                                                       overlay_processor/residual_mask.npy
+                                       Robot clipped to arm_mask (draw = robot ∧ arm_mask).
+    6. inpaint_hands.py --mode residual
+                                     E2FGVI         -> video_overlay_xhand.mkv   (★ final)
 
 Each stage skips itself if its primary output already exists, so this script
 is re-runnable.
@@ -58,6 +64,11 @@ def main() -> None:
     ap.add_argument("--glob", default="*.jpg",
                     help="(frames-dir mode only) glob pattern for images")
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--mask_dilate", type=int, default=0,
+                    help="Iterations of 3x3 cross dilation on the arm mask before "
+                         "clipping the robot (stage 5).")
+    ap.add_argument("--skip_legacy_inpaint", action="store_true",
+                    help="Skip stage 4 (legacy inpaint A/B baseline)")
     args = ap.parse_args()
 
     processed_demo = args.processed_root / args.demo_name / args.demo_num
@@ -87,27 +98,41 @@ def main() -> None:
         _run([sys.executable, str(HERE / "segment_arms.py"),
               "--processed_demo", processed_demo])
 
-    # Stage 4: E2FGVI inpainting
-    inpaint_mkv = processed_demo / "inpaint_processor" / "video_human_inpaint.mkv"
-    if inpaint_mkv.exists() and inpaint_mkv.stat().st_size > 0:
-        print(f"\n[skip] {inpaint_mkv} exists ({inpaint_mkv.stat().st_size // 1024 // 1024} MB)")
+    # Stage 4: E2FGVI legacy inpaint (A/B baseline, kept for comparison)
+    legacy_mkv = processed_demo / "inpaint_processor" / "video_human_inpaint.mkv"
+    if args.skip_legacy_inpaint:
+        print(f"\n[skip] legacy inpaint (--skip_legacy_inpaint)")
+    elif legacy_mkv.exists() and legacy_mkv.stat().st_size > 0:
+        print(f"\n[skip] {legacy_mkv} exists ({legacy_mkv.stat().st_size // 1024 // 1024} MB)")
     else:
         _run([sys.executable, str(HERE / "inpaint_hands.py"),
-              "--processed_demo", processed_demo])
+              "--processed_demo", processed_demo,
+              "--mode", "legacy"])
 
-    # Stage 5: pyrender xhand overlay
-    overlay_mkv = processed_demo / "video_overlay_xhand.mkv"
-    if overlay_mkv.exists() and overlay_mkv.stat().st_size > 0:
-        print(f"\n[skip] {overlay_mkv} exists")
+    # Stage 5: pyrender xhand overlay (robot clipped to arm mask, writes residual mask)
+    overlay_raw = processed_demo / "overlay_processor" / "video_overlay_raw.mkv"
+    residual_npy = processed_demo / "overlay_processor" / "residual_mask.npy"
+    if overlay_raw.exists() and residual_npy.exists() and overlay_raw.stat().st_size > 0:
+        print(f"\n[skip] {overlay_raw} + {residual_npy} exist")
     else:
         _run([sys.executable, "-u", str(HERE / "render_xhand_overlay.py"),
               "--processed_demo", processed_demo,
               "--hawor_npz", args.hawor_npz,
               "--right_pkl", args.right_pkl,
               "--left_pkl",  args.left_pkl,
-              "--hand", args.hand])
+              "--hand", args.hand,
+              "--mask_dilate", str(args.mask_dilate)])
 
-    print(f"\n[done] final overlay: {overlay_mkv}")
+    # Stage 6: residual E2FGVI inpaint -> final video
+    final_mkv = processed_demo / "video_overlay_xhand.mkv"
+    if final_mkv.exists() and final_mkv.stat().st_size > 0:
+        print(f"\n[skip] {final_mkv} exists")
+    else:
+        _run([sys.executable, str(HERE / "inpaint_hands.py"),
+              "--processed_demo", processed_demo,
+              "--mode", "residual"])
+
+    print(f"\n[done] final overlay: {final_mkv}")
 
 
 if __name__ == "__main__":

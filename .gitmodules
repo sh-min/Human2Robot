@@ -19,3 +19,6 @@
 [submodule "third_party/E2FGVI"]
 	path = third_party/E2FGVI
 	url = https://github.com/MCG-NKU/E2FGVI.git
+[submodule "third_party/Depth-Anything-V2"]
+	path = third_party/Depth-Anything-V2
+	url = https://github.com/DepthAnything/Depth-Anything-V2.git

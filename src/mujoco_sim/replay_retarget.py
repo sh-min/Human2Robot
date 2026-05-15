@@ -25,7 +25,14 @@ import mujoco
 import numpy as np
 import pinocchio as pin
 
-from mujoco_sim.ik_arm import SCENE, apply_frame, head_cam_world
+from mujoco_sim.ik_arm import (
+    SCENE,
+    apply_frame,
+    cam_to_world,
+    head_cam_world,
+    solve_arm_ik,
+    wrist_to_arm6,
+)
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
@@ -53,15 +60,42 @@ def main():
     pin_data = pin_model.createData()
     muj_model = mujoco.MjModel.from_xml_path(str(SCENE))
     muj_data = mujoco.MjData(muj_model)
+    # Robot joints come first in MuJoCo's qpos/qvel; cube state follows.
+    # Pinocchio sees only the robot, so its nq/nv give the slice into
+    # MuJoCo's state that corresponds to the robot.
+    ROBOT_NQ = pin_model.nq
+    ROBOT_NV = pin_model.nv
 
-    q_home = np.zeros(pin_model.nq)
+    q_home = muj_model.qpos0.copy()
     hjid = mujoco.mj_name2id(muj_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")
     q_home[muj_model.jnt_qposadr[hjid]] = args.head_pitch
+    # Bias arm joints to the middle of their range so the 7-DOF IK
+    # redundancy is resolved into the natural elbow-down branch instead
+    # of the elbow-inverted (out-of-range) branch that zero-warm-start
+    # converges to.
+    for side in ("right", "left"):
+        for i in range(7):
+            jid = mujoco.mj_name2id(muj_model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_arm_{i}")
+            lo, hi = muj_model.jnt_range[jid]
+            q_home[muj_model.jnt_qposadr[jid]] = 0.5 * (lo + hi)
     muj_data.qpos[:] = q_home
     mujoco.mj_forward(muj_model, muj_data)
 
-    T_world_cam = head_cam_world(pin_model, pin_data, q_home)
+    T_world_cam = head_cam_world(pin_model, pin_data, q_home[:ROBOT_NQ])
     renderer = mujoco.Renderer(muj_model, height=args.height, width=args.width)
+
+    # Drive the robot through its position actuators: each frame compute
+    # the IK target via pinocchio, push to ctrl, let mj_step's PD track.
+    # Cube physics and any contact reactions emerge naturally from the
+    # same mj_step. n_substeps makes sim time advance ~1/fps per frame.
+    n_substeps = max(1, int(round(1.0 / (args.fps * muj_model.opt.timestep))))
+
+    # Sync actuator targets to the seeded home pose so the first mj_step
+    # doesn't snap the robot toward zero.
+    for ai in range(muj_model.nu):
+        jid = int(muj_model.actuator_trnid[ai, 0])
+        if jid >= 0:
+            muj_data.ctrl[ai] = muj_data.qpos[muj_model.jnt_qposadr[jid]]
 
     rgb_dir = REPO / args.rgb_dir
     use_rgb = rgb_dir.exists()
@@ -80,6 +114,11 @@ def main():
     try:
         for t in range(T):
             apply_frame(pin_model, pin_data, muj_model, muj_data, pose, t, T_world_cam)
+            robot_q = muj_data.qpos[:ROBOT_NQ].copy()
+            for _ in range(n_substeps):
+                mujoco.mj_step(muj_model, muj_data)
+                muj_data.qpos[:ROBOT_NQ] = robot_q
+                muj_data.qvel[:ROBOT_NV] = 0
             renderer.update_scene(muj_data, camera="head_cam")
             img_head = renderer.render()
             renderer.update_scene(muj_data, camera="front_view")

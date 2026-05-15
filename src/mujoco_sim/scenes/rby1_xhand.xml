@@ -32,6 +32,17 @@
       <joint range="0 0" armature="0" damping="0"/>
       <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
     </default>
+    <default class="cube_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="cube_cube_geom">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01"/>
+      </default>
+      <default class="cube_cube_sticker">
+        <geom contype="0" conaffinity="0" group="1"/>
+      </default>
+    </default>
   </default>
 
   <asset>
@@ -513,6 +524,40 @@
       <camera name="front_view" pos="0.1 0 1.15" quat="0.623484 0.333567 0.333567 0.623484" fovy="65"/>
       <camera name="side_left" pos="-0.4 1.6 0.75" quat="0 0 0.6087 0.793401" fovy="70"/>
       <camera name="side_right" pos="-0.4 -1.6 0.75" quat="0.793401 0.6087 0 0" fovy="70"/>
+    </body>
+    <body name="cube_root" pos="0.55 0 1.1">
+      <inertial pos="0 0 -0.0125" mass="0.034" diaginertia="9e-06 9e-06 1.4e-05"/>
+      <joint name="cube_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="cube_bottom" class="cube_cube_geom" size="0.025 0.025 0.0125" pos="0 0 -0.0125" type="box" rgba="0.1 0.1 0.1 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 0.0125 -0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
+      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 0.0125 -0.0125" type="box" rgba="0.9 0.15 0.15 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 0.0255 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 -0.0125 -0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
+      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 -0.0125 -0.0125" type="box" rgba="0.15 0.4 1 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 -0.0255 -0.0125" type="box" rgba="1 1 1 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 0.0125 -0.0255" type="box" rgba="1 1 1 1"/>
+      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 0.0125 -0.0125" type="box" rgba="0.15 0.75 0.25 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 0.0255 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 -0.0125 -0.0255" type="box" rgba="0.15 0.4 1 1"/>
+      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 -0.0125 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
+      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 -0.0255 -0.0125" type="box" rgba="1 0.5 0.1 1"/>
+      <body name="cube_top">
+        <inertial pos="0 0 0.0125" mass="0.034" diaginertia="9e-06 9e-06 1.4e-05"/>
+        <joint name="cube_face" pos="0 0 0" axis="0 0 1" limited="false" range="0 0" armature="0" damping="0.002" frictionloss="0.02"/>
+        <geom name="cube_top" class="cube_cube_geom" size="0.025 0.025 0.0125" pos="0 0 0.0125" type="box" rgba="0.1 0.1 0.1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 0.0125 0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
+        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 0.0125 0.0125" type="box" rgba="1 1 1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 0.0255 0.0125" type="box" rgba="0.15 0.4 1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 -0.0125 0.0255" type="box" rgba="1 0.95 0.2 1"/>
+        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 -0.0125 0.0125" type="box" rgba="0.15 0.75 0.25 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 -0.0255 0.0125" type="box" rgba="1 1 1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 0.0125 0.0255" type="box" rgba="0.15 0.4 1 1"/>
+        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 0.0125 0.0125" type="box" rgba="1 0.5 0.1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 0.0255 0.0125" type="box" rgba="1 1 1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 -0.0125 0.0255" type="box" rgba="1 0.95 0.2 1"/>
+        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 -0.0125 0.0125" type="box" rgba="0.15 0.4 1 1"/>
+        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 -0.0255 0.0125" type="box" rgba="1 1 1 1"/>
+      </body>
     </body>
   </worldbody>
 

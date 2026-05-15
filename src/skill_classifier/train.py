@@ -2,9 +2,9 @@
 Train skill classifier on precomputed V-JEPA + hand pose features.
 
 Usage:
-    cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/RFM_Proj
-    PYTHONPATH=$PWD/pipeline python -m skill_segmentor.train \
-        --config pipeline/skill_segmentor/config/transformer.yaml
+    cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy
+    PYTHONPATH=$PWD/src python -m skill_classifier.train \
+        --config src/skill_classifier/config/transformer.yaml
 
 Experiment output:
     output/skill_classifier/{exp_id}/

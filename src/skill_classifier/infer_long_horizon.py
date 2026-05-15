@@ -8,13 +8,15 @@ Given a long video with multiple skills performed sequentially:
 4. Output: per-frame skill predictions + visualization video
 
 Usage (V-JEPA + hand):
-    python -m skill_segmentor.infer_long_horizon \
+    cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy
+    PYTHONPATH=$PWD/src python -m skill_classifier.infer_long_horizon \
         --data_dir data/cube_dataset/0325 \
         --vjepa_ckpt ckpt/egodex/vitl16-256px-16f/latest.pt \
         --classifier_ckpt output/skill_classifier/mlp_w8_0325_0138/best_mlp.pt
 
 Usage (MANO hand-only):
-    python -m skill_segmentor.infer_long_horizon \
+    cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy
+    PYTHONPATH=$PWD/src python -m skill_classifier.infer_long_horizon \
         --data_dir data/cube_dataset/0412_val \
         --classifier_ckpt output/skill_classifier/mlp_w8_0416_1547/best_mlp.pt
 """

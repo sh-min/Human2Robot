@@ -18,8 +18,10 @@ raw rgb + HaWoR(retarget_input.npz) + xhand qpos
    5.  render_xhand_overlay_depth         overlay_processor/robot_{rgb,depth,mask}.npy
    6.  estimate_depth (Depth Anything V2) depth_processor/depth_raw.npy   (disparity)
    7.  align_depth                        depth_processor/depth_aligned.npy   (metric m)
-   8.  crop_cube_layer                    cube_layer/cube_mask_raw.npy   (top-q + center CC)
-   9.  regularize_and_cut_cube            cube_layer/cube_mask_clean.npy   (open/CC/close/hull/outlier/SDF)
+ 8-9.  run_cube_segmentation               cube segmentation (8a+8b+9, orchestrated):
+        8a. segment_cube (SAM2)            cube_layer/cube_mask_raw.npy     (depth-seeded modal track)
+        8b. amodal_cube (Diffusion-VAS)    cube_layer/cube_mask_amodal.npy  (amodal silhouette + RGB)
+        9.  regularize_and_cut_cube        cube_layer/cube_mask_clean.npy   (open/CC/close/outlier/SDF)
   10.  composite_layered                  overlay_processor_layered/video_overlay.mp4    ★ 최종
 ```
 
@@ -51,15 +53,32 @@ pip install mmcv-full -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.1
 # (mmcv-full이 numpy 2.x로 올리면 다시 `pip install numpy==1.26.4`)
 ```
 
+### 두 번째 env: `diffusion_vas` (cube amodal stage 8b 전용)
+
+Diffusion-VAS는 `diffusers==0.29.1` 등 `inpaint`와 충돌하는 deps를 써서 별도 env로
+격리한다. Stage 8b (`amodal_cube.py`)만 이 env에서 돈다 —
+`run_cube_segmentation.py`가 `conda run -n diffusion_vas`로 호출.
+
+```bash
+conda create -n diffusion_vas python=3.10 -y
+conda run -n diffusion_vas pip install -r third_party/diffusion-vas/requirements.txt
+conda run -n diffusion_vas pip install --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.1.0 torchvision==0.16.0
+# requirements.txt의 unpinned `transformers`가 5.x를 끌어옴 → diffusers 0.29.1과
+# 충돌 (FLAX_WEIGHTS_NAME). 4.x로 내림:
+conda run -n diffusion_vas pip install "transformers==4.44.2"
+```
+
 ## Vendored submodules (`third_party/`)
 
 | Submodule | Upstream | 용도 |
 |---|---|---|
-| `third_party/sam2`              | facebookresearch/sam2     | 손/팔 segmentation (M_hand) |
+| `third_party/sam2`              | facebookresearch/sam2     | 손/팔 (M_hand) + cube modal segmentation |
 | `third_party/E2FGVI`            | MCG-NKU/E2FGVI            | flow-guided 영상 inpainting |
 | `third_party/Depth-Anything-V2` | DepthAnything/Depth-Anything-V2 | monocular depth |
+| `third_party/diffusion-vas`     | Kaihua-Chen/diffusion-vas | cube video amodal segmentation (stage 8b) |
 
-## 모델 가중치 (별도 다운로드, ~2.9 GB)
+## 모델 가중치 (별도 다운로드, ~2.9 GB + diffusion-vas ~15 GB)
 
 ```bash
 # 1. SAM2 (~880 MB)
@@ -72,10 +91,15 @@ mkdir -p third_party/E2FGVI/release_model
 gdown 'https://drive.google.com/uc?id=10wGdKSUOie0XmCr8SQ2A2FeDe-mfn5w3' \
     -O third_party/E2FGVI/release_model/E2FGVI-HQ-CVPR22.pth
 
-# 3. Depth Anything V2 vitl (~1.3 GB)
+# 3. Depth Anything V2 vitl (~1.3 GB) — inpaint stage 6 + diffusion-vas 둘 다 사용
 mkdir -p /ckpt/depth_anything
 wget -P /ckpt/depth_anything \
     https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth
+
+# 4. Diffusion-VAS (~15 GB; amodal segmentation + content completion 각 ~7.6 GB)
+mkdir -p /ckpt/diffusion_vas && cd /ckpt/diffusion_vas && git lfs install
+git clone https://huggingface.co/kaihuac/diffusion-vas-amodal-segmentation
+git clone https://huggingface.co/kaihuac/diffusion-vas-content-completion
 ```
 
 xhand URDF / mesh / `R_mano_xhand_*.npy` 는 `src/retargeting/assets/` 의 것을 그대로 쓴다.
@@ -120,11 +144,15 @@ depth_processor/
   ├── depth_aligned.npy                            # metric depth (m)
   └── depth_align_params.npz                       # per-frame (a, b)
 cube_layer/
-  ├── cube_mask_raw.npy                            # rough mask (top-q + center CC)
-  ├── cube_cropped_raw.mp4                         # raw crop, 디버깅용
-  ├── cube_mask_clean.npy                          # regularized + SDF-smoothed mask
-  ├── cube_layer_final.mp4                         # bg cut by clean mask
-  └── cube_edges_viz.mp4                           # bg + red outline
+  ├── cube_mask_raw.npy                            # 8a SAM2 modal mask
+  ├── cube_cropped_raw.mp4                         # 8a raw crop, 디버깅용
+  ├── cube_mask_amodal.npy                         # 8b Diffusion-VAS amodal silhouette
+  ├── cube_amodal_overlay.mp4                      # 8b raw + amodal outline, 디버깅용
+  ├── cube_amodal_rgb.npy                          # 8b amodal cube RGB (content completion)
+  ├── cube_amodal_rgb.mp4                          # 8b amodal RGB cut to mask, 디버깅용
+  ├── cube_mask_clean.npy                          # 9 regularized + SDF-smoothed mask
+  ├── cube_layer_final.mp4                         # 9 bg cut by clean mask
+  └── cube_edges_viz.mp4                           # 9 bg + red outline
 overlay_processor_layered/
   └── video_overlay.mp4                            # ★ 최종 결과
 ```
@@ -135,10 +163,11 @@ overlay_processor_layered/
 # Depth Anything V2 encoder
 --encoder {vits, vitb, vitl}      # 기본 vitl
 
-# 8. crop_cube_layer
---cube_quantile FLOAT             # 0.25 (depth top quantile for cube isolation)
-
-# 9. regularize_and_cut_cube
+# 8-9. run_cube_segmentation
+--cube_quantile FLOAT             # 0.25 (depth quantile for the SAM2 seed-frame bootstrap)
+--cube_overlap INT                # 0 (frames shared between Diffusion-VAS 25-frame windows;
+                                  #    0 = non-overlapping/fastest, 4-6 = smoother seams)
+--no_content_completion           # skip the Diffusion-VAS amodal-RGB pass (amodal mask only)
 --sdf_sigma FLOAT                 # 8.0 (temporal smoothing sigma in frames)
 --area_mad_k FLOAT                # 5.0 (area outlier MAD multiplier)
 --centroid_max_jump FLOAT         # 120.0 (centroid jump in px)
@@ -162,8 +191,13 @@ PYOPENGL_PLATFORM=egl python -u render_xhand_overlay_depth.py \
                                   --right_pkl <...> --left_pkl <...>
 python estimate_depth.py          --processed_demo <pd> --encoder vitl
 python align_depth.py             --processed_demo <pd>
-python crop_cube_layer.py         --processed_demo <pd> --quantile 0.25 --cc_pick center
-python regularize_and_cut_cube.py --processed_demo <pd> --sdf_sigma 8.0
+# cube segmentation: 8a+8b+9를 한 번에 (8b는 diffusion_vas env로 자동 전환)
+python run_cube_segmentation.py   --processed_demo <pd> --cube_quantile 0.25 --overlap 0
+#   또는 단계별로:
+python segment_cube.py            --processed_demo <pd> --quantile 0.25
+conda run -n diffusion_vas python amodal_cube.py --processed_demo <pd> --overlap 0
+python regularize_and_cut_cube.py --processed_demo <pd> --sdf_sigma 8.0 --no_hull \
+                                  --raw_mask cube_layer/cube_mask_amodal.npy
 python composite_layered.py       --processed_demo <pd> --hawor_npz <...> \
                                   --cube_mask_npy cube_layer/cube_mask_clean.npy \
                                   --threshold_joint 5
@@ -229,19 +263,43 @@ acc = α_front  · robot_rgb + (1-α_front)  · acc       # front-MCP layer
 | 5 (idx-MCP) | 0.279 | 2.29 | **기본값** — 균형 |
 | 9 (mid-MCP) | 0.305 | 4.24 | cube가 robot 사이만 보임 |
 
-## Cube mask 정제 흐름 (Stage 8 → 9)
+## Cube segmentation 흐름 (Stage 8 → 9, `run_cube_segmentation.py`)
+
+Stages 8a / 8b / 9는 모두 cube layer mask를 만드는 한 묶음 —
+`run_cube_segmentation.py`가 순서대로 호출 (8b만 `diffusion_vas` env).
+
+Stage 8a (`segment_cube.py`) — SAM2로 cube modal mask 추적:
 
 ```
-1. depth_aligned[t][~M_hand]에서 top-q% (default q=0.25)  → rough mask
-2. 가장 image center에 가까운 connected component만 keep (cube ≠ 가장 큰 blob, 종종 table)
-3. MORPH_OPEN k=7 → table edge와 연결된 thin neck 절단
-4. center-CC pick (다시) → cube 본체만 유지
-5. MORPH_CLOSE k=5 → 작은 hole 메움 + 경계 smooth
-6. cv2.convexHull → finger bite 영역까지 cube 전체 silhouette로 확장
-7. dilate k=3 → 3px 마진
-8. outlier rejection (MAD on area + centroid jump) → 망친 프레임은 temporally 가장
-   가까운 valid 프레임으로 대체
-9. SDF temporal smoothing (Gaussian sigma=8 frames) → 경계 떨림 제거
+1. depth_aligned[t][~M_hand]에서 top-q% (default q=0.25) + center-CC → rough mask
+   (depth는 cube를 전 프레임에서 잡는 게 아니라 seed 한 프레임만 찾는 용도)
+2. seed frame = rough mask의 distance-transform peak이 가장 큰 프레임
+   (area-outlier 프레임은 제외 — table leak 방지)
+3. seed frame에서 box(=mask extent) + interior point(=DT peak) 추출
+4. SAM2 video predictor로 forward + reverse 전파 → union → cube_mask_raw.npy (modal)
+```
+
+Stage 8b (`amodal_cube.py`) — Diffusion-VAS로 amodal 완성:
+
+```
+5. modal mask를 25-frame window로 분할 (766 frames → ~31 windows)
+   --overlap K: window가 25-K frame씩 이동, 겹치는 구간은 평균 (seam smoothing)
+6. 각 window: modal mask + (DA-V2) depth → amodal mask (SVD diffusion)
+7. content completion: modal RGB + amodal mask → amodal cube RGB
+   (--no_content_completion 으로 끌 수 있음)
+8. window 결과 stitch → cube_mask_amodal.npy (+ cube_amodal_rgb.npy)
+```
+
+Stage 9 (`regularize_and_cut_cube.py --raw_mask cube_mask_amodal.npy --no_hull`):
+
+```
+9.  MORPH_OPEN k=7 → thin neck 절단
+10. center-CC pick → cube 본체만 유지
+11. MORPH_CLOSE k=5 → 작은 hole 메움 + 경계 smooth
+    (convexHull은 skip — Diffusion-VAS가 이미 진짜 amodal을 만듦)
+12. dilate k=3 → 3px 마진
+13. outlier rejection (MAD on area + centroid jump) → 망친 프레임 대체
+14. SDF temporal smoothing (Gaussian sigma=8 frames) → 경계 떨림 제거
 ```
 
 ## 알려진 함정
@@ -261,13 +319,20 @@ pyrender가 PyOpenGL을 3.1.0으로 silently downgrade. 3.1.0은 `OpenGL.EGL.EGL
 `retarget_input.npz` 의 T가 input frames보다 크면 `min`으로 자름. 반대로 npz가 짧으면
 그만큼만 합성되고 나머지는 inpainted bg 그대로.
 
-### 5. Cube isolation이 table을 잡아가는 경우
-`crop_cube_layer.py`에서 quantile을 낮추거나 (`--quantile 0.10`), regularize 단계의
-MORPH_OPEN 커널을 키워 (`--open_k 11`) 더 적극적으로 연결을 끊으면 됨.
+### 5. SAM2 seed가 cube가 아니라 table을 잡는 경우
+`segment_cube.py`의 depth bootstrap이 엉뚱한 seed 프레임을 고르면 SAM2가 table을
+추적함. `--quantile`을 낮춰 (`--quantile 0.10`) 더 가까운 픽셀만 남기면 됨. 그래도
+안 되면 seed가 cube에 떨어졌는지 로그(`seed frame=... box=...`)로 확인.
 
 ### 6. Cube outline이 robot palm을 너무 많이 덮음
 `composite_layered.py --threshold_joint 9` (mid-MCP) 로 cube 깊이 평면을 뒤로 밀거나,
 `--depth_bias 0.02`로 robot z에 +2cm를 더해 robot을 더 자주 "앞"으로 분류.
+
+### 7. Diffusion-VAS amodal stage가 안 도는 경우
+`amodal_cube.py`는 `inpaint`가 아니라 `diffusion_vas` env에서 돌아야 함 (`diffusers==0.29.1`).
+`run_cube_segmentation.py`가 `conda run -n diffusion_vas`로 자동 전환하지만, env가
+없으면 위 "두 번째 env" 참고. checkpoint는 `/ckpt/diffusion_vas/diffusion-vas-*` (~15 GB).
+window seam에서 mask가 튀면 `--cube_overlap 5`.
 
 ## 파일 구조
 
@@ -284,7 +349,9 @@ src/inpainting/
 ├── render_xhand_overlay_depth.py      # 5.  pyrender → robot RGBD
 ├── estimate_depth.py                  # 6.  Depth Anything V2 → disparity
 ├── align_depth.py                     # 7.  HaWoR anchors → metric depth
-├── crop_cube_layer.py                 # 8.  rough cube mask
+├── run_cube_segmentation.py           # 8-9. cube segmentation orchestrator (8a+8b+9)
+├── segment_cube.py                    # 8a. SAM2 cube modal mask (depth-seeded)
+├── amodal_cube.py                     # 8b. Diffusion-VAS amodal (diffusion_vas env)
 ├── regularize_and_cut_cube.py         # 9.  cube mask cleanup + SDF smoothing
 ├── composite_layered.py               # 10. final 4-layer alpha-blend overlay
 ├── run_layered.py                     # end-to-end orchestrator (skips cached stages)
@@ -292,6 +359,8 @@ src/inpainting/
 │   # legacy renderer + orchestrator (arm-mask clipped overlay; deprecated but kept)
 ├── render_xhand_overlay.py            #     pyrender + arm-mask clip
 ├── run.py                             #     legacy orchestrator
+├── crop_cube_layer.py                 #     legacy depth-only cube mask (retired stage 8;
+│                                      #     _keep_center_cc still reused by segment_cube)
 │
 │   # debug visualizers
 ├── visualize_depth.py

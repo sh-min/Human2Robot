@@ -132,11 +132,15 @@ def main() -> None:
                          "median centroid. Set <=0 to disable.")
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--bg_video", default="inpaint_processor/video_human_inpaint.mkv")
+    ap.add_argument("--raw_mask", default="cube_layer/cube_mask_raw.npy",
+                    help="input mask to regularize, relative to processed_demo. "
+                         "Point at cube_layer/cube_mask_amodal.npy when running "
+                         "after the Diffusion-VAS amodal stage.")
     args = ap.parse_args()
 
     pd = args.processed_demo
     bg = media.read_video(str(pd / args.bg_video))
-    raw_mask = np.load(pd / "cube_layer" / "cube_mask_raw.npy").astype(bool)
+    raw_mask = np.load(pd / args.raw_mask).astype(bool)
     T = min(bg.shape[0], raw_mask.shape[0])
     bg, raw_mask = bg[:T], raw_mask[:T]
     H, W = bg.shape[1], bg.shape[2]

@@ -9,9 +9,10 @@ Stages (each skips itself if its primary output already exists):
     5. render_xhand_overlay_depth.py        pyrender → overlay_processor/robot_{rgb,depth,mask}.npy
     6. estimate_depth.py                    Depth Anything V2 → depth_processor/depth_raw.npy
     7. align_depth.py                       HaWoR Z anchors → depth_processor/depth_aligned.npy
-    8. crop_cube_layer.py                   top-q depth + center-CC → cube_layer/cube_mask_raw.npy
-    9. regularize_and_cut_cube.py           open/CC/close/hull/outlier/SDF →
-                                                            cube_layer/cube_mask_clean.npy
+  8-9. run_cube_segmentation.py             cube segmentation orchestrator:
+         8a. segment_cube.py                  SAM2 (depth-seeded)  → cube_mask_raw.npy
+         8b. amodal_cube.py                   Diffusion-VAS amodal → cube_mask_amodal.npy
+         9.  regularize_and_cut_cube.py       open/CC/close/SDF    → cube_mask_clean.npy
    10. composite_layered.py                 4-layer alpha-blend →
                                                             overlay_processor_layered/video_overlay.mp4
 
@@ -57,7 +58,12 @@ def main() -> None:
     # depth + cube layer knobs
     ap.add_argument("--encoder", default="vitl", choices=["vits", "vitb", "vitl"])
     ap.add_argument("--cube_quantile", type=float, default=0.25,
-                    help="quantile of non-hand depth used as cube isolation threshold")
+                    help="non-hand depth quantile for the SAM2 seed-frame bootstrap")
+    ap.add_argument("--cube_overlap", type=int, default=0,
+                    help="frames shared between Diffusion-VAS 25-frame windows "
+                         "(0 = non-overlapping; 4-6 smooths window seams)")
+    ap.add_argument("--no_content_completion", action="store_true",
+                    help="skip the Diffusion-VAS amodal-RGB pass (amodal mask only)")
     ap.add_argument("--sdf_sigma", type=float, default=8.0,
                     help="temporal SDF Gaussian sigma (frames) for cube mask")
     ap.add_argument("--area_mad_k", type=float, default=5.0,
@@ -134,26 +140,21 @@ def main() -> None:
     else:
         _run([sys.executable, str(HERE / "align_depth.py"), "--processed_demo", pd])
 
-    # Stage 8: rough cube mask
-    cube_raw = pd / "cube_layer" / "cube_mask_raw.npy"
-    if cube_raw.exists():
-        print(f"\n[skip] {cube_raw} exists")
-    else:
-        _run([sys.executable, str(HERE / "crop_cube_layer.py"),
-              "--processed_demo", pd,
-              "--quantile", str(args.cube_quantile),
-              "--cc_pick", "center"])
-
-    # Stage 9: regularize + temporal SDF smoothing
+    # Stages 8-9: cube segmentation (SAM2 modal → Diffusion-VAS amodal → regularize)
     cube_clean = pd / "cube_layer" / "cube_mask_clean.npy"
     if cube_clean.exists():
         print(f"\n[skip] {cube_clean} exists")
     else:
-        _run([sys.executable, str(HERE / "regularize_and_cut_cube.py"),
-              "--processed_demo", pd,
-              "--sdf_sigma", str(args.sdf_sigma),
-              "--area_mad_k", str(args.area_mad_k),
-              "--centroid_max_jump", str(args.centroid_max_jump)])
+        cube_cmd = [sys.executable, str(HERE / "run_cube_segmentation.py"),
+                    "--processed_demo", pd,
+                    "--cube_quantile", str(args.cube_quantile),
+                    "--overlap", str(args.cube_overlap),
+                    "--sdf_sigma", str(args.sdf_sigma),
+                    "--area_mad_k", str(args.area_mad_k),
+                    "--centroid_max_jump", str(args.centroid_max_jump)]
+        if args.no_content_completion:
+            cube_cmd.append("--no_content_completion")
+        _run(cube_cmd)
 
     # Stage 10: final layered composite
     final_mp4 = pd / "overlay_processor_layered" / "video_overlay.mp4"

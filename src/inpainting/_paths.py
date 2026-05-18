@@ -25,12 +25,12 @@ SAM2_CONFIG_NAME = "sam2_hiera_l.yaml"   # SAM2 looks this up via its hydra conf
 E2FGVI_CHECKPOINT = os.path.join(E2FGVI_DIR, "release_model", "E2FGVI-HQ-CVPR22.pth")
 
 # Diffusion-VAS checkpoints (~7.6 GB each); live under /ckpt per global CLAUDE.md.
-DIFFUSION_VAS_CKPT_DIR  = "/ckpt/diffusion_vas"
+DIFFUSION_VAS_CKPT_DIR  = "/result/skill2policy/ckpt/diffusion_vas"
 DIFFUSION_VAS_MASK_CKPT = os.path.join(DIFFUSION_VAS_CKPT_DIR, "diffusion-vas-amodal-segmentation")
 DIFFUSION_VAS_RGB_CKPT  = os.path.join(DIFFUSION_VAS_CKPT_DIR, "diffusion-vas-content-completion")
 
 # Depth Anything V2 checkpoints live under /ckpt per the global CLAUDE.md convention.
-DEPTH_ANYTHING_CKPT_DIR = "/ckpt/depth_anything"
+DEPTH_ANYTHING_CKPT_DIR = "/result/skill2policy/ckpt/depth_anything"
 DEPTH_ANYTHING_CKPTS = {
     "vits": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vits.pth"),
     "vitb": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vitb.pth"),

@@ -51,7 +51,7 @@ def main() -> None:
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--bg_video", default="inpaint_processor/video_human_inpaint.mkv")
     ap.add_argument("--cube_mask_npy",
-                    default="overlay_processor_cube_v2/cube_mask.npy")
+                    default="cube_layer/cube_mask_amodal.npy")
     ap.add_argument("--debug", action="store_true",
                     help="also emit a 4-up debug video showing each layer")
     ap.add_argument("--zmcp_sigma_t", type=float, default=8.0,
@@ -152,7 +152,7 @@ def main() -> None:
             # Panel 3: bg with only behind-MCP robot
             p3 = bg[t].copy(); p3[behind_robot] = r_rgb[t][behind_robot]
             # Panel 4: final
-            p4 = frame
+            p4 = out_frames[t]
             dbg[t, :,           :W]        = p1
             dbg[t, :,   W +  6: 2 * W +  6] = p2_mask
             dbg[t, :, 2 * W + 12: 3 * W + 12] = p3

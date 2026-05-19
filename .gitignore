@@ -39,3 +39,4 @@ venv/
 *.log
 slurm-*.out
 slurm-*.err
+docs/progress_slides.pdf

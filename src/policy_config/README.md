@@ -1,34 +1,56 @@
-# policy_config
+# Policy Config — Training and Evaluation
 
-LeRobot Diffusion Policy 및 GR00T N1 학습/평가 설정.
+Configuration files and scripts for training policies on the converted LeRobot
+dataset and evaluating them in the MuJoCo simulation.
 
-## 파일 구성
+---
 
-| 파일 | 역할 |
-|------|------|
-| `diffusion_xhand.yaml` | LeRobot Diffusion Policy 학습 설정 |
+## Files
+
+| File | Purpose |
+|------|---------|
+| `diffusion_xhand.yaml` | LeRobot Diffusion Policy training config |
 | `groot_xhand_config.py` | GR00T N1 `NEW_EMBODIMENT` modality config |
-| `eval_mujoco.py` | MuJoCo 환경에서 학습된 정책 평가 |
+| `eval_mujoco.py` | Evaluate trained policy in MuJoCo RBY1+XHand env |
 
-## Diffusion Policy 학습
+---
 
+## Training: Diffusion Policy
+
+Prerequisites:
 ```bash
-# 1. 데이터셋 변환 (dataset_converter 참고)
-PYTHONPATH=$PWD/src python -m dataset_converter.convert_batch \
-    --data_root /path/to/episodes \
-    --out_dir data/lerobot_xhand_dataset
-
-# 2. 학습
-lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
-    --dataset.repo_id=data/lerobot_xhand_dataset
+pip install -e third_party/lerobot[training,diffusion]
 ```
 
-## GR00T N1 학습
-
+Train:
 ```bash
-# 1. 데이터셋 변환 (위와 동일)
+lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
+    --dataset.repo_id=data/lerobot_xhand_dataset \
+    --dataset.local_files_only=true
+```
 
-# 2. 학습 (Isaac-GR00T 환경 필요)
+Override hyperparameters:
+```bash
+lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
+    --dataset.repo_id=data/lerobot_xhand_dataset \
+    --dataset.local_files_only=true \
+    --batch_size=32 \
+    --steps=200000
+```
+
+---
+
+## Training: GR00T N1
+
+Prerequisites:
+```bash
+# Clone and install Isaac-GR00T
+git clone https://github.com/NVIDIA/Isaac-GR00T.git
+pip install -e Isaac-GR00T
+```
+
+Train:
+```bash
 python gr00t_finetune.py \
     --dataset-path data/lerobot_xhand_dataset \
     --modality-config-path src/policy_config/groot_xhand_config.py \
@@ -36,17 +58,22 @@ python gr00t_finetune.py \
     --num-gpus 1
 ```
 
-## 정책 평가 (MuJoCo)
+---
+
+## Evaluation: MuJoCo
+
+Evaluate any trained checkpoint in the simulated RBY1+XHand environment:
 
 ```bash
-# LeRobot 정책 평가
+# LeRobot policy
 MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy_config.eval_mujoco \
     --backend lerobot \
     --checkpoint /path/to/checkpoint \
     --n_episodes 10 \
-    --save_video
+    --save_video \
+    --output_dir output/eval
 
-# GR00T N1 정책 평가
+# GR00T N1 policy
 MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy_config.eval_mujoco \
     --backend groot \
     --checkpoint /path/to/checkpoint \
@@ -55,17 +82,26 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy_config.eval_mujoco \
     --save_video
 ```
 
-## MuJoCo 환경 사양
+Output:
+- `output/eval/eval_metrics.json` — episode lengths, rewards
+- `output/eval/episode_*.mp4` — rollout videos (if `--save_video`)
 
-`mujoco_sim.env.RBY1XHandEnv`는 아래 인터페이스를 제공합니다:
+---
 
+## Environment Details
+
+The MuJoCo environment (`src/mujoco_sim/env.py`) provides:
+
+- **Robot**: Rainbow Robotics RBY1 + bimanual XHand
 - **Action space**: 38-DOF absolute target qpos
-  - `[0:7]` right arm, `[7:14]` left arm
-  - `[14:26]` right hand (12 fingers), `[26:38]` left hand (12 fingers)
+  - Indices 0–6: right arm (7 joints)
+  - Indices 7–13: left arm (7 joints)
+  - Indices 14–25: right hand (12 finger joints)
+  - Indices 26–37: left hand (12 finger joints)
 - **Observation space**:
-  - `observation.images.head_cam`: (H, W, 3) uint8 이미지
-  - `observation.state`: (38,) float32 현재 관절 위치
+  - `observation.images.head_cam`: (224, 224, 3) uint8
+  - `observation.state`: (38,) float32
 
-데이터셋 변환기의 38-D 벡터와 MuJoCo 환경의 38-D action space는
-손가락 관절 부분이 동일한 순서를 사용합니다. 다만 변환기의 벡터에는
-손목 pos/quat이 포함되어 있고 MuJoCo 환경에서는 IK로 처리됩니다.
+Note: The dataset's 38-D vector maps finger joints directly to the env's hand joints.
+Wrist pose from the dataset is converted to arm joint targets via inverse kinematics
+during evaluation.

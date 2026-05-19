@@ -1,16 +1,16 @@
 """Convert a single retargeted episode (pkl + RGB) to LeRobot dataset files.
 
-Supports both LeRobot v2 (episode-per-file, GR00T compatible) and v3
-(multi-episode files) layouts.  This module handles one episode at a time;
-use convert_batch.py to assemble a complete dataset with metadata.
+Supports LeRobot v2 (episode-per-file, GR00T compatible).
+This module handles one episode at a time; use convert_batch.py to
+assemble a complete dataset with metadata.
 
 Input directory layout (produced by run_pipeline.sh):
     <episode>/
-        rgb/frame_*.jpg              (or .png)
+        rgb/frame_*.jpg
         rgb_hawor/
-            qpos_xhand_contact_right.pkl
+            final_pose.pkl           (preferred: has wrist pose)
+            qpos_xhand_contact_right.pkl  (fallback: finger-only)
             qpos_xhand_contact_left.pkl
-            retarget_input.npz       (optional, for extra metadata)
 
 Output (v2 layout, one episode):
     <out>/data/chunk-000/episode_NNNNNN.parquet
@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 from dataset_converter.schema import (
     BIMANUAL_DIM,
     HANDS,
+    final_pose_to_state_action,
     pkl_to_state_action,
 )
 
@@ -137,18 +138,31 @@ def convert_episode(
     out_dir = str(Path(out_dir).resolve())
     rgb_dir = os.path.join(episode_dir, "rgb")
 
-    # --- Load pkls ---
-    pkls: dict[str, dict] = {}
-    for hand in HANDS:
-        pkl_path = _find_pkl(episode_dir, hand)
-        if pkl_path is not None:
-            pkls[hand] = _load_pkl(pkl_path)
-            print(f"  [{hand}] loaded {pkl_path}")
+    # --- Load action data ---
+    # Prefer final_pose.pkl (contains wrist pose + finger qpos for both hands).
+    # Fall back to per-hand qpos pkl files (finger-only, no wrist).
+    hawor_dir = os.path.join(episode_dir, "rgb_hawor")
+    final_pose_path = os.path.join(hawor_dir, "final_pose.pkl")
 
-    if not pkls:
-        raise FileNotFoundError(f"No retarget pkl found in {episode_dir}/rgb_hawor/")
+    if os.path.isfile(final_pose_path):
+        final_pose = _load_pkl(final_pose_path)
+        print(f"  loaded final_pose.pkl (T={final_pose['T']})")
+        states, actions, valid = final_pose_to_state_action(
+            final_pose, action_mode=action_mode
+        )
+    else:
+        pkls: dict[str, dict] = {}
+        for hand in HANDS:
+            pkl_path = _find_pkl(episode_dir, hand)
+            if pkl_path is not None:
+                pkls[hand] = _load_pkl(pkl_path)
+                print(f"  [{hand}] loaded {pkl_path}")
+        if not pkls:
+            raise FileNotFoundError(
+                f"No final_pose.pkl or retarget pkl found in {hawor_dir}/"
+            )
+        states, actions, valid = pkl_to_state_action(pkls, action_mode=action_mode)
 
-    states, actions, valid = pkl_to_state_action(pkls, action_mode=action_mode)
     T = states.shape[0]
 
     # --- Load and align frames ---

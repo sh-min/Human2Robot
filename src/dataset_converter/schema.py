@@ -83,18 +83,27 @@ class EpisodeSchema:
         return BIMANUAL_DIM
 
 
-def pkl_to_state_action(
-    pkls: dict[str, dict],
+def _rotmat_to_quat(R: np.ndarray) -> np.ndarray:
+    """Convert (T, 3, 3) rotation matrices to (T, 4) quaternions (xyzw)."""
+    from scipy.spatial.transform import Rotation
+
+    return Rotation.from_matrix(R).as_quat().astype(np.float32)  # (T, 4) xyzw
+
+
+def final_pose_to_state_action(
+    final_pose: dict,
     *,
     action_mode: Literal["absolute", "delta"] = "absolute",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Convert per-hand pkl dicts to aligned (T, 38) state and action arrays.
+    """Convert final_pose.pkl to aligned (T, 38) state and action arrays.
 
     Parameters
     ----------
-    pkls : {"right": pkl_dict, "left": pkl_dict}
-        Each pkl_dict has keys ``data`` (T, 12), ``wrist_pos`` (T, 3),
-        ``wrist_quat`` (T, 4), ``valid`` (T,).
+    final_pose : dict loaded from final_pose.pkl
+        Top-level keys: "right", "left", "T".
+        Each hand dict has: "qpos" (T, 12), "wrist_pos" (T, 3),
+        "wrist_rot" (T, 3, 3), "valid" (T,), "joint_names" (list).
+
     action_mode : "absolute" or "delta"
         "absolute" -> action[t] = state[t+1]
         "delta"    -> action[t] = state[t+1] - state[t]
@@ -104,6 +113,60 @@ def pkl_to_state_action(
     states : (T, 38) float32
     actions : (T, 38) float32  (last frame's action repeats the final state)
     valid : (T,) bool  (AND of both hands' valid masks)
+    """
+    T = int(final_pose["T"])
+    states = np.zeros((T, BIMANUAL_DIM), dtype=np.float32)
+    valid = np.ones(T, dtype=bool)
+
+    for side in HANDS:
+        if side not in final_pose:
+            continue
+        p = final_pose[side]
+        offset = 0 if side == "right" else PER_HAND_DIM
+
+        qpos = np.asarray(p["qpos"], dtype=np.float32)
+        wrist_pos = np.asarray(p["wrist_pos"], dtype=np.float32)
+        wrist_rot = np.asarray(p["wrist_rot"], dtype=np.float32)
+        wrist_quat = _rotmat_to_quat(wrist_rot)
+
+        states[:, offset : offset + FINGER_DOF] = qpos
+        states[:, offset + FINGER_DOF : offset + FINGER_DOF + WRIST_POS_DIM] = wrist_pos
+        states[:, offset + FINGER_DOF + WRIST_POS_DIM : offset + PER_HAND_DIM] = wrist_quat
+        valid &= np.asarray(p["valid"]).astype(bool)
+
+    if action_mode == "absolute":
+        actions = np.empty_like(states)
+        actions[:-1] = states[1:]
+        actions[-1] = states[-1]
+    else:
+        actions = np.zeros_like(states)
+        actions[:-1] = states[1:] - states[:-1]
+
+    return states, actions, valid
+
+
+def pkl_to_state_action(
+    pkls: dict[str, dict],
+    *,
+    action_mode: Literal["absolute", "delta"] = "absolute",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert per-hand qpos pkl dicts to aligned (T, 38) state and action arrays.
+
+    This is the fallback for older pkl files that lack wrist data.
+    Only finger qpos is filled; wrist fields remain zero.
+
+    Parameters
+    ----------
+    pkls : {"right": pkl_dict, "left": pkl_dict}
+        Each pkl_dict has keys ``data`` (T, 12), ``valid`` (T,).
+        Optionally ``wrist_pos`` (T, 3) and ``wrist_quat`` (T, 4).
+    action_mode : "absolute" or "delta"
+
+    Returns
+    -------
+    states : (T, 38) float32
+    actions : (T, 38) float32
+    valid : (T,) bool
     """
     lengths = [v["data"].shape[0] for v in pkls.values()]
     T = lengths[0]
@@ -118,8 +181,12 @@ def pkl_to_state_action(
         p = pkls[side]
         offset = 0 if side == "right" else PER_HAND_DIM
         states[:, offset : offset + FINGER_DOF] = p["data"]
-        states[:, offset + FINGER_DOF : offset + FINGER_DOF + WRIST_POS_DIM] = p["wrist_pos"]
-        states[:, offset + FINGER_DOF + WRIST_POS_DIM : offset + PER_HAND_DIM] = p["wrist_quat"]
+        if "wrist_pos" in p:
+            states[:, offset + FINGER_DOF : offset + FINGER_DOF + WRIST_POS_DIM] = p["wrist_pos"]
+        if "wrist_quat" in p:
+            states[:, offset + FINGER_DOF + WRIST_POS_DIM : offset + PER_HAND_DIM] = p[
+                "wrist_quat"
+            ]
         valid &= np.asarray(p["valid"]).astype(bool)
 
     if action_mode == "absolute":

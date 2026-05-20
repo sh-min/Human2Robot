@@ -196,9 +196,14 @@ bash run_pipeline.sh --data_dir /path/to/episode --img_glob "rgb_frame*.png"
 ### 모듈별 사용법
 
 각 모듈 폴더의 README 참고:
-- [`src/data_preprocess/README.md`](src/data_preprocess/README.md) — 원본 데이터 정리 / 프레임 추출
+- [`src/data_preprocess/README.md`](src/data_preprocess/README.md) — 원본 데이터 정리 / 프레임 추출 (skill classifier용 features.pt)
 - [`src/hand_estimation/README.md`](src/hand_estimation/README.md) — RGB → MANO
 - [`src/contact_estimation/README.md`](src/contact_estimation/README.md) — RGB + MANO → contact mask
 - [`src/retargeting/README.md`](src/retargeting/README.md) — MANO → xhand qpos + 시각화
 - [`src/inpainting/README.md`](src/inpainting/README.md) — 사람 손/팔 inpaint + xhand 오버레이 합성
 - [`src/skill_classifier/README.md`](src/skill_classifier/README.md) — V-JEPA 2 기반 skill 분류
+- [`src/pkl_to_lerobot/README.md`](src/pkl_to_lerobot/README.md) — retarget pkl → LeRobot v3 dataset
+- [`src/policy/README.md`](src/policy/README.md) — Diffusion Policy / GR00T 학습 + offline action-MSE eval
+- [`src/sim/mujoco_sim/README.md`](src/sim/mujoco_sim/README.md) — MuJoCo RBY1+xhand 시뮬레이션 (retarget 검증 + policy eval)
+- [`src/sim/isaac_lab/README.md`](src/sim/isaac_lab/README.md) — Isaac Lab 변형 (USD 변환 + replay)
+- [`src/simulation_tool/README.md`](src/simulation_tool/README.md) — cube 6-DoF pose 최적화 도구

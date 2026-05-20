@@ -1,8 +1,7 @@
 """Convert a single retargeted episode (pkl + RGB) to LeRobot dataset files.
 
-Supports LeRobot v2 (episode-per-file, GR00T compatible).
-This module handles one episode at a time; use convert_batch.py to
-assemble a complete dataset with metadata.
+Emits LeRobot v3.0 layout (one episode per file, file_index = episode_index).
+Use convert_batch.py to assemble metadata across episodes.
 
 Input directory layout (produced by run_pipeline.sh):
     <episode>/
@@ -12,9 +11,9 @@ Input directory layout (produced by run_pipeline.sh):
             qpos_xhand_contact_right.pkl  (fallback: finger-only)
             qpos_xhand_contact_left.pkl
 
-Output (v2 layout, one episode):
-    <out>/data/chunk-000/episode_NNNNNN.parquet
-    <out>/videos/chunk-000/observation.images.head_cam/episode_NNNNNN.mp4
+Output (v3 layout, one episode):
+    <out>/data/chunk-000/file-NNN.parquet
+    <out>/videos/observation.images.head_cam/chunk-000/file-NNN.mp4
 
 Usage:
     python -m dataset_converter.convert_episode \\
@@ -31,6 +30,9 @@ import os
 import pickle
 import re
 import subprocess
+
+HEAD_CAM_KEY = "observation.images.head_cam"
+TARGET_IMG_SIZE = 224  # Video frames are downscaled to this square size.
 from pathlib import Path
 
 import numpy as np
@@ -107,7 +109,7 @@ def frames_to_mp4(
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "concat", "-safe", "0",
             "-i", str(list_file),
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-vf", f"scale={TARGET_IMG_SIZE}:{TARGET_IMG_SIZE}",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-r", str(int(fps)),
@@ -188,36 +190,32 @@ def convert_episode(
     frames = [frames[i] for i in valid_idx]
     T_valid = len(valid_idx)
 
-    # --- Write MP4 ---
+    # --- Write MP4 (v3 layout: videos/<key>/chunk-XXX/file-NNN.mp4) ---
     chunk_str = f"chunk-{chunk:03d}"
-    ep_str = f"episode_{episode_index:06d}"
-    video_dir = Path(out_dir) / "videos" / chunk_str / "observation.images.head_cam"
-    mp4_path = video_dir / f"{ep_str}.mp4"
+    file_str = f"file-{episode_index:03d}"
+    video_dir = Path(out_dir) / "videos" / HEAD_CAM_KEY / chunk_str
+    mp4_path = video_dir / f"{file_str}.mp4"
     frames_to_mp4(frames, mp4_path, fps=fps)
-    print(f"  video -> {mp4_path}  ({T_valid} frames)")
+    print(f"  video -> {mp4_path}  ({T_valid} frames, {TARGET_IMG_SIZE}x{TARGET_IMG_SIZE})")
 
     # --- Build Parquet table ---
-    # Each row: one timestep.
     timestamps = (np.arange(T_valid, dtype=np.float64) / fps).tolist()
-
-    # Global index placeholder (batch converter fills the real value).
-    global_start = 0
+    global_start = 0  # batch converter rewrites the real value.
 
     rows = {
         "observation.state": [states[t].tolist() for t in range(T_valid)],
         "action": [actions[t].tolist() for t in range(T_valid)],
         "timestamp": timestamps,
+        "frame_index": list(range(T_valid)),
         "episode_index": [episode_index] * T_valid,
         "index": list(range(global_start, global_start + T_valid)),
         "task_index": [0] * T_valid,
-        "next.done": [False] * (T_valid - 1) + [True],
-        "next.reward": [0.0] * T_valid,
     }
 
     table = pa.table(rows)
     parquet_dir = Path(out_dir) / "data" / chunk_str
     parquet_dir.mkdir(parents=True, exist_ok=True)
-    parquet_path = parquet_dir / f"{ep_str}.parquet"
+    parquet_path = parquet_dir / f"{file_str}.parquet"
     pq.write_table(table, str(parquet_path))
     print(f"  parquet -> {parquet_path}  ({T_valid} rows)")
 

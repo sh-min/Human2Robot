@@ -2,13 +2,13 @@
 
 Loads:
 - third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml
-- src/mujoco_sim/assets/xhand_right/xhand_right.xml
-- src/mujoco_sim/assets/xhand_left/xhand_left.xml
+- src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml
+- src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml
 
 Attaches each XHand at the corresponding wrist (link_right_arm_6 /
 link_left_arm_6) via the MuJoCo 3.x MjSpec API at z=-0.1261 (RBY1's
 original EE mating surface). Writes the composed scene to
-src/mujoco_sim/scenes/rby1_xhand.xml.
+src/sim/mujoco_sim/scenes/rby1_xhand.xml.
 
 Run:
     PYTHONPATH=$PWD/src python -m mujoco_sim.compose_rby1_xhand
@@ -21,10 +21,10 @@ import mujoco
 
 REPO = Path(__file__).resolve().parents[3]
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
-XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
-XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"
-CUBE = REPO / "src/mujoco_sim/assets/cube/cube.xml"
-OUT = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
+XHAND_R = REPO / "src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml"
+XHAND_L = REPO / "src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml"
+CUBE = REPO / "src/sim/mujoco_sim/assets/cube/cube.xml"
+OUT = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
 
 # RBY1's original gripper mounts at z=-0.1261 in link_*_arm_6 frame.
 EE_OFFSET = [0.0, 0.0, -0.1261]

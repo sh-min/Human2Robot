@@ -29,7 +29,7 @@ import numpy as np
 from gymnasium import spaces
 
 REPO = Path(__file__).resolve().parents[3]
-SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
+SCENE = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
 
 # Per-hand finger joint suffixes in the order used by both XHands.
 _HAND_FINGER_NAMES = (

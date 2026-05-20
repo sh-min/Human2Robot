@@ -1,7 +1,7 @@
 """Convert the robot-only MJCF (built by ``sim.mujoco_sim.build_robot_mjcf``) to
 a USD asset that Isaac Lab can load as an Articulation.
 
-Outputs ``src/isaac_lab/assets/rby1_xhand/rby1_xhand.usd`` plus any materials/
+Outputs ``src/sim/isaac_lab/assets/rby1_xhand/rby1_xhand.usd`` plus any materials/
 meshes the converter generates.
 
 Run (from repo root, in the isaac_lab env):
@@ -33,8 +33,8 @@ enable_extension("isaacsim.asset.importer.mjcf")
 from isaaclab.sim.converters import MjcfConverter, MjcfConverterCfg  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
-MJCF_PATH = REPO / "src/isaac_lab/assets/rby1_xhand.xml"
-USD_DIR = REPO / "src/isaac_lab/assets/rby1_xhand"
+MJCF_PATH = REPO / "src/sim/isaac_lab/assets/rby1_xhand.xml"
+USD_DIR = REPO / "src/sim/isaac_lab/assets/rby1_xhand"
 
 
 def main():

@@ -55,7 +55,7 @@ from isaaclab.utils.math import matrix_from_quat, subtract_frame_transforms
 from .scene import build_scene
 
 REPO = Path(__file__).resolve().parents[3]
-USD_PATH = REPO / "src/isaac_lab/assets/rby1_xhand/rby1_xhand.usd"
+USD_PATH = REPO / "src/sim/isaac_lab/assets/rby1_xhand/rby1_xhand.usd"
 
 
 # --- Geometry constants (physical facts about how the scene was composed) ---

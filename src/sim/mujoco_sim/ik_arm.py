@@ -32,7 +32,7 @@ import numpy as np
 import pinocchio as pin
 
 REPO = Path(__file__).resolve().parents[3]
-SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
+SCENE = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
 
 # CV camera frame -> MuJoCo camera frame.
 _CV_TO_MJ = pin.SE3(np.diag([1.0, -1.0, -1.0]), np.zeros(3))

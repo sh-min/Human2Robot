@@ -32,7 +32,7 @@ THICK = 0.0005       # sticker half-thickness
 WIDE = 0.010         # sticker half-width on each face (in-plane)
 
 REPO = Path(__file__).resolve().parents[3]
-OUT = REPO / "src/mujoco_sim/assets/cube/cube.xml"
+OUT = REPO / "src/sim/mujoco_sim/assets/cube/cube.xml"
 
 
 def _geom_line(pos, size, rgb) -> str:

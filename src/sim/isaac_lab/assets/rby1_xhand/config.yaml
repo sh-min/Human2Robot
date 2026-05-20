@@ -1,5 +1,5 @@
-asset_path: /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy/src/isaac_lab/assets/rby1_xhand.xml
-usd_dir: /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy/src/isaac_lab/assets/rby1_xhand
+asset_path: /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy/src/sim/isaac_lab/assets/rby1_xhand.xml
+usd_dir: /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy/src/sim/isaac_lab/assets/rby1_xhand
 usd_file_name: rby1_xhand.usd
 force_usd_conversion: true
 make_instanceable: false

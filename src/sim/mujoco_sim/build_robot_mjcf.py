@@ -20,8 +20,8 @@ from .compose_rby1_xhand import attach_hand
 
 REPO = Path(__file__).resolve().parents[3]
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
-XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
-XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"
+XHAND_R = REPO / "src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml"
+XHAND_L = REPO / "src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml"
 OUT = REPO / "src/sim/isaac_lab/assets/rby1_xhand.xml"
 
 

@@ -24,7 +24,7 @@ import numpy as np
 from .ik import solve_wrist_ik
 
 REPO = Path(__file__).resolve().parents[3]
-SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
+SCENE = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
 
 # Orientation presets: (right_quat, left_quat) in MuJoCo (w, x, y, z).
 # All three keep the fingertips pointing along world +x. Only the palm

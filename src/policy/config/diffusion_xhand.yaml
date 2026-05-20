@@ -1,0 +1,70 @@
+# Diffusion Policy training config for xHand bimanual manipulation.
+#
+# This config is designed for LeRobot's `lerobot-train` CLI (draccus-based).
+# It trains a Diffusion Policy on the retargeted xHand demonstration data
+# converted to LeRobot v2/v3 format by pkl_to_lerobot.
+#
+# Usage:
+#   # 1. Convert episodes first:
+#   PYTHONPATH=$PWD/src python -m pkl_to_lerobot.convert_batch \
+#       --data_root /path/to/episodes \
+#       --out_dir /path/to/lerobot_dataset
+#
+#   # 2. Train:
+#   lerobot-train --config_path src/policy/config/diffusion_xhand.yaml
+#
+#   # Or override specific fields via CLI:
+#   lerobot-train --config_path src/policy/config/diffusion_xhand.yaml \
+#       --dataset.repo_id=/path/to/lerobot_dataset \
+#       --batch_size=32
+
+# --- Dataset ---
+dataset:
+  repo_id: xhand/local                 # logical id (not on Hub)
+  root: data/lerobot_xhand_train       # local dataset directory
+
+# --- Policy ---
+policy:
+  type: diffusion
+  n_obs_steps: 2
+
+  input_features:
+    observation.images.head_cam:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.state:
+      type: STATE
+      shape: [38]
+
+  output_features:
+    action:
+      type: ACTION
+      shape: [38]
+
+  # Diffusion-specific: predict 16 future actions from 2 observation steps
+  n_action_steps: 16
+  horizon: 32
+  num_inference_steps: 10
+
+  device: cuda
+  use_amp: true
+
+# --- Training ---
+batch_size: 64
+steps: 100000
+seed: 42
+num_workers: 4
+
+save_checkpoint: true
+save_freq: 10000
+log_freq: 100
+eval_freq: 10000
+
+# --- Optimizer (use policy preset if not specified) ---
+use_policy_training_preset: true
+
+# --- Logging ---
+wandb:
+  enable: true
+  project: skill2policy-diffusion
+  notes: "Diffusion Policy on xHand bimanual cube manipulation"

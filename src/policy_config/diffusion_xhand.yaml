@@ -20,8 +20,8 @@
 
 # --- Dataset ---
 dataset:
-  repo_id: data/lerobot_xhand_dataset  # local path to converted dataset
-  local_files_only: true
+  repo_id: xhand/local                 # logical id (not on Hub)
+  root: data/lerobot_xhand_train       # local dataset directory
 
 # --- Policy ---
 policy:

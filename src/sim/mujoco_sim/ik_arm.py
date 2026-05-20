@@ -31,7 +31,7 @@ import mujoco
 import numpy as np
 import pinocchio as pin
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 SCENE = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
 
 # CV camera frame -> MuJoCo camera frame.

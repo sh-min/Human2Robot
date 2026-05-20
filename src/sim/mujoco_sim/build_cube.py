@@ -31,7 +31,7 @@ OFFSET = 0.0005      # sticker offset along outward normal (avoid z-fight)
 THICK = 0.0005       # sticker half-thickness
 WIDE = 0.010         # sticker half-width on each face (in-plane)
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 OUT = REPO / "src/mujoco_sim/assets/cube/cube.xml"
 
 

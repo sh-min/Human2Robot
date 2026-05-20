@@ -12,7 +12,7 @@ from pathlib import Path
 import imageio.v2 as imageio
 import mujoco
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 MJCF = REPO_ROOT / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.3.xml"
 OUT = REPO_ROOT / "output/rby1_probe.mp4"
 

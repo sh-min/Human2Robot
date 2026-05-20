@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 def _make_env(image_size: int = 224, max_steps: int = 300):
     """Instantiate the MuJoCo sim environment."""
-    from .sim.mujoco_sim.env import EnvConfig, RBY1XHandEnv
+    from sim.mujoco_sim.env import EnvConfig, RBY1XHandEnv
 
     cfg = EnvConfig(image_size=image_size, max_episode_steps=max_steps)
     return RBY1XHandEnv(cfg)

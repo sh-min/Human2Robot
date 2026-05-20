@@ -96,7 +96,7 @@ Output:
 
 ## Environment Details
 
-The MuJoCo environment (`src/policy/sim/mujoco_sim/env.py`) provides:
+The MuJoCo environment (`src/sim/mujoco_sim/env.py`) provides:
 
 - **Robot**: Rainbow Robotics RBY1 + bimanual XHand
 - **Action space**: 38-DOF absolute target qpos

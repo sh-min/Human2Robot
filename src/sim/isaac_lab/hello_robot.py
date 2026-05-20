@@ -26,7 +26,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 USD_PATH = REPO / "src/isaac_lab/assets/rby1_xhand/rby1_xhand.usd"
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import mujoco
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
 XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
 XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"

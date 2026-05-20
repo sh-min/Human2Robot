@@ -10,7 +10,7 @@ outputs rollout videos and metrics.
 ## Setup
 
 ```bash
-conda env create -f src/policy/sim/mujoco_sim/environment.yml   # run from repo root
+conda env create -f src/sim/mujoco_sim/environment.yml   # run from repo root
 conda activate mujoco_sim
 ```
 
@@ -21,7 +21,7 @@ Installs (Python 3.12):
 ## Layout
 
 ```
-src/policy/sim/mujoco_sim/
+src/sim/mujoco_sim/
 ├── assets/
 │   ├── xhand_right/{xhand_right.xml, meshes/}    # right XHand MJCF + mesh symlink
 │   └── xhand_left/{xhand_left.xml, meshes/}      # left XHand MJCF + mesh symlink
@@ -65,7 +65,7 @@ side**; every other DOF (base freejoint, torso, head, other arm, hand
 fingers) is mechanically untouched by construction.
 
 ```python
-from policy.sim.mujoco_sim.ik import solve_wrist_ik
+from sim.mujoco_sim.ik import solve_wrist_ik
 q = solve_wrist_ik(model, qpos, "link_right_arm_6", [0.55, -0.08, 1.05],
                    [0.7071, 0.0, -0.7071, 0.0])  # palm-inward
 ```

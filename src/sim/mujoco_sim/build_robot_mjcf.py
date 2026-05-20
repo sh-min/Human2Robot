@@ -1,5 +1,5 @@
 """Compose RBY1 + bimanual XHand as a robot-only MJCF (no table, cube, or
-debug cameras) and write to ``src/policy/sim/isaac_lab/assets/rby1_xhand.xml``.
+debug cameras) and write to ``src/sim/isaac_lab/assets/rby1_xhand.xml``.
 
 Mirrors ``compose_rby1_xhand.py`` but strips world objects so the output is
 a clean robot definition ready to feed Isaac Lab's MjcfConverter (which
@@ -18,11 +18,11 @@ import mujoco
 
 from .compose_rby1_xhand import attach_hand
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
 XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
 XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"
-OUT = REPO / "src/policy/sim/isaac_lab/assets/rby1_xhand.xml"
+OUT = REPO / "src/sim/isaac_lab/assets/rby1_xhand.xml"
 
 
 def main():

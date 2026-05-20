@@ -7,7 +7,7 @@ top of the same scene.
 ## Setup
 
 ```bash
-conda create -y -n policy/sim/isaac_lab python=3.11 pip
+conda create -y -n isaac_lab python=3.11 pip
 conda activate isaac_lab
 
 # Isaac Sim 5.1 (pulls torch 2.7 / cuda 12.6 / numpy<2 as deps).
@@ -35,10 +35,10 @@ The first Python that imports `isaacsim` triggers the Omniverse Kit EULA. Set
 (planned — under construction)
 
 ```
-src/policy/sim/isaac_lab/
+src/sim/isaac_lab/
 ├── assets/                  # USD: RBY1 + XHand + table + cube (TBD)
 ├── envs/                    # Isaac Lab Articulation / ManagerBased envs
-├── replay_retarget.py       # mirror of policy/sim/mujoco_sim/replay_retarget.py
+├── replay_retarget.py       # mirror of sim/mujoco_sim/replay_retarget.py
 ├── environment.yml
 └── README.md
 ```

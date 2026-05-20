@@ -34,7 +34,7 @@ from .ik_arm import (
     wrist_to_arm6,
 )
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 
 
 def main():

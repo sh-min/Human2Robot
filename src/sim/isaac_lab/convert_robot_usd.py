@@ -1,4 +1,4 @@
-"""Convert the robot-only MJCF (built by ``policy.sim.mujoco_sim.build_robot_mjcf``) to
+"""Convert the robot-only MJCF (built by ``sim.mujoco_sim.build_robot_mjcf``) to
 a USD asset that Isaac Lab can load as an Articulation.
 
 Outputs ``src/isaac_lab/assets/rby1_xhand/rby1_xhand.usd`` plus any materials/
@@ -32,7 +32,7 @@ enable_extension("isaacsim.asset.importer.mjcf")
 
 from isaaclab.sim.converters import MjcfConverter, MjcfConverterCfg  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[3]
 MJCF_PATH = REPO / "src/isaac_lab/assets/rby1_xhand.xml"
 USD_DIR = REPO / "src/isaac_lab/assets/rby1_xhand"
 
@@ -40,7 +40,7 @@ USD_DIR = REPO / "src/isaac_lab/assets/rby1_xhand"
 def main():
     if not MJCF_PATH.exists():
         raise FileNotFoundError(
-            f"{MJCF_PATH} not found. Run `python -m policy.sim.mujoco_sim.build_robot_mjcf` "
+            f"{MJCF_PATH} not found. Run `python -m sim.mujoco_sim.build_robot_mjcf` "
             "first (in the mujoco_sim env)."
         )
 

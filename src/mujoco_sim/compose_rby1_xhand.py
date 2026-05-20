@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
 XHAND_R = REPO / "src/mujoco_sim/assets/xhand_right/xhand_right.xml"
 XHAND_L = REPO / "src/mujoco_sim/assets/xhand_left/xhand_left.xml"
+CUBE = REPO / "src/mujoco_sim/assets/cube/cube.xml"
 OUT = REPO / "src/mujoco_sim/scenes/rby1_xhand.xml"
 
 # RBY1's original gripper mounts at z=-0.1261 in link_*_arm_6 frame.
@@ -111,13 +112,13 @@ def main():
     )
 
     # Third-person debug camera, parented to the (static) table so it
-    # never moves when the robot's joints change during IK / sim. World
-    # pos (1.5, 0, 2.0) -> table-local (0.6, 0, 1.5). Orientation baked
-    # via xyaxes (no targetbody) so the view never drifts; look-at is the
-    # robot torso/head midpoint (0, 0, 1.0).
+    # never moves when the robot's joints change during IK / sim.
+    # World pos (1.0, 0, 1.65) -> table-local (0.1, 0, 1.15), 0.6 m
+    # along the look ray (-0.832, 0, -0.555) from the original
+    # (1.5, 0, 2.0); aimed near robot torso z~1.0.
     table.add_camera(
         name="front_view",
-        pos=[0.6, 0.0, 1.5],
+        pos=[0.10, 0.0, 1.15],
         xyaxes=[0.0, 1.0, 0.0, -0.555, 0.0, 0.832],
         fovy=65.0,
     )
@@ -139,6 +140,13 @@ def main():
         xyaxes=[1.0, 0.0, 0.0, 0.0, 0.259, 0.966],
         fovy=70.0,
     )
+
+    # 2x2 cube as a free body, initially floating ~7.5 cm above the
+    # table top so we can see whether physics actually integrates.
+    cube = mujoco.MjSpec.from_file(str(CUBE))
+    cube_frame = spec.worldbody.add_frame()
+    cube_frame.pos = [0.55, 0.0, 1.10]
+    spec.attach(cube, prefix="cube_", frame=cube_frame)
 
     # spec.attach merges specs under a single meshdir, so XHand meshes
     # (originally relative to xhand_{right,left}/) get resolved under RBY1's

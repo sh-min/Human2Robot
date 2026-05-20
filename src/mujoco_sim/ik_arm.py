@@ -124,8 +124,14 @@ def apply_frame(
     pose: dict, t: int, T_world_cam: pin.SE3,
 ) -> dict[str, tuple[float, float]]:
     """Solve IK + copy fingers for frame t. Mutates ``muj_data.qpos`` and
-    runs mj_forward. Returns per-side (pos_err, ori_err)."""
-    q = muj_data.qpos.copy()  # 39-dim, layout identical to pinocchio.
+    runs mj_forward. Returns per-side (pos_err, ori_err).
+
+    MuJoCo's qpos may carry extra DOFs that pinocchio's model doesn't see
+    (e.g. a free-joint cube). Those live past pin_model.nq; we slice to
+    the robot part for IK and merge back."""
+    robot_nq = pin_model.nq
+    q_full = muj_data.qpos.copy()
+    q = q_full[:robot_nq].copy()
     errors = {}
     for side, prefix in (("right", "rh_"), ("left", "lh_")):
         s = pose[side]
@@ -142,7 +148,8 @@ def apply_frame(
             jid = mujoco.mj_name2id(muj_model, mujoco.mjtObj.mjOBJ_JOINT, prefix + jname)
             if jid >= 0:
                 q[muj_model.jnt_qposadr[jid]] = float(qval)
-    muj_data.qpos[:] = q
+    q_full[:robot_nq] = q
+    muj_data.qpos[:] = q_full
     mujoco.mj_forward(muj_model, muj_data)
     return errors
 
@@ -156,16 +163,28 @@ def main():
     pin_data = pin_model.createData()
     muj_model = mujoco.MjModel.from_xml_path(str(SCENE))
     muj_data = mujoco.MjData(muj_model)
+    # Robot joints come first in MuJoCo's qpos; the cube's free joint +
+    # face hinge follow. Pinocchio sees only the robot (no cube), so
+    # ROBOT_NQ is the slice into MuJoCo's state corresponding to its
+    # kinematic tree.
+    ROBOT_NQ = pin_model.nq
 
-    # Home pose: zeros + head_1 = 0.6.
-    q_home = np.zeros(pin_model.nq)
+    # Home pose: MJCF defaults (incl. cube placement), override head pitch.
+    # Also bias arm joints to mid-range so the 7-DOF IK redundancy is
+    # resolved into the natural elbow-down branch rather than the
+    # elbow-inverted (out-of-range) one that zero-warm-start picks.
+    q_home = muj_model.qpos0.copy()
     hjid_muj = mujoco.mj_name2id(muj_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")
-    head_qadr = muj_model.jnt_qposadr[hjid_muj]
-    q_home[head_qadr] = 0.6
+    q_home[muj_model.jnt_qposadr[hjid_muj]] = 0.6
+    for side in ("right", "left"):
+        for i in range(7):
+            jid = mujoco.mj_name2id(muj_model, mujoco.mjtObj.mjOBJ_JOINT, f"{side}_arm_{i}")
+            lo, hi = muj_model.jnt_range[jid]
+            q_home[muj_model.jnt_qposadr[jid]] = 0.5 * (lo + hi)
     muj_data.qpos[:] = q_home
     mujoco.mj_forward(muj_model, muj_data)
 
-    T_world_cam = head_cam_world(pin_model, pin_data, q_home)
+    T_world_cam = head_cam_world(pin_model, pin_data, q_home[:ROBOT_NQ])
     print(f"head_cam world pos={T_world_cam.translation}")
 
     t = pose["T"] // 2

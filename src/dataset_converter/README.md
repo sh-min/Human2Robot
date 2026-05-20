@@ -1,8 +1,10 @@
 # Dataset Converter — Retarget PKL to LeRobot Format
 
 Converts the output of the retargeting pipeline (`final_pose.pkl` + RGB frames) into a
-[LeRobot v2](https://huggingface.co/docs/lerobot) dataset that can be directly used for
+[LeRobot v3.0](https://huggingface.co/docs/lerobot) dataset that can be directly used for
 training **Diffusion Policy** (via `lerobot-train`) or **GR00T N1** (via `gr00t_finetune.py`).
+Video frames are downscaled to 224×224 during encoding so they match the default
+Diffusion Policy image encoder.
 
 ---
 
@@ -55,7 +57,7 @@ skill2policy/
         └── ...
 ```
 
-### Output: LeRobot v2 Dataset
+### Output: LeRobot v3.0 Dataset
 
 ```
 skill2policy/
@@ -63,19 +65,21 @@ skill2policy/
     └── lerobot_xhand_dataset/        ← generated output
         ├── data/
         │   └── chunk-000/
-        │       ├── episode_000000.parquet
-        │       ├── episode_000001.parquet
+        │       ├── file-000.parquet  ← episode 0 (one file per episode)
+        │       ├── file-001.parquet
         │       └── ...
         ├── videos/
-        │   └── chunk-000/
-        │       └── observation.images.head_cam/
-        │           ├── episode_000000.mp4
+        │   └── observation.images.head_cam/
+        │       └── chunk-000/
+        │           ├── file-000.mp4  ← 224×224 @ fps
         │           └── ...
         └── meta/
-            ├── info.json             ← dataset metadata
-            ├── episodes.jsonl        ← episode list
-            ├── tasks.jsonl           ← task descriptions
-            ├── stats.json            ← normalization statistics
+            ├── info.json             ← v3.0 dataset metadata (features dict)
+            ├── tasks.parquet         ← task table
+            ├── episodes/
+            │   └── chunk-000/
+            │       └── file-000.parquet   ← per-episode metadata + stats
+            ├── stats.json            ← aggregate normalization stats
             └── modality.json         ← GR00T N1 modality config
 ```
 
@@ -136,8 +140,7 @@ pip install -e third_party/lerobot[training,diffusion]
 
 # Train
 lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
-    --dataset.repo_id=data/lerobot_xhand_dataset \
-    --dataset.local_files_only=true
+    --dataset.root=data/lerobot_xhand_dataset
 ```
 
 ### GR00T N1

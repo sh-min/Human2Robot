@@ -25,17 +25,23 @@ pip install -e third_party/lerobot[training,diffusion]
 Train:
 ```bash
 lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
-    --dataset.repo_id=data/lerobot_xhand_dataset \
-    --dataset.local_files_only=true
+    --dataset.root=data/lerobot_xhand_dataset
 ```
 
 Override hyperparameters:
 ```bash
 lerobot-train --config_path src/policy_config/diffusion_xhand.yaml \
-    --dataset.repo_id=data/lerobot_xhand_dataset \
-    --dataset.local_files_only=true \
+    --dataset.root=data/lerobot_xhand_dataset \
     --batch_size=32 \
     --steps=200000
+```
+
+Offline action-MSE evaluation against a held-out val dataset:
+```bash
+MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy_config.eval_offline \
+    --checkpoint output/train/<run>/checkpoints/last/pretrained_model \
+    --val_dataset data/lerobot_xhand_val \
+    --output_dir output/eval_offline
 ```
 
 ---

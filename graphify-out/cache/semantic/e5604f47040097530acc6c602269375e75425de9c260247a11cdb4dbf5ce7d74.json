@@ -1,0 +1,1 @@
+{"nodes": [{"id": "skill_models_build_model", "label": "build_model (models registry)", "file_type": "code", "source_file": "src/skill_classifier/models/__init__.py", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

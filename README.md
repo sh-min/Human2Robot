@@ -25,7 +25,7 @@ collaborator's.
 
 ```bash
 pip install graphifyy
-graphify install --platform claude   # registers the /graphify slash command
+graphify install --platform claude   # registers the /graphify slash command 
 ```
 
 **Build the graph** (`src/` only — skip `third_party/`):

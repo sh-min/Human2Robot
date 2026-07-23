@@ -48,7 +48,9 @@ import pyrender
 import trimesh
 from scipy.spatial.transform import Rotation
 
-from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND
+from _paths import (XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND,
+                    DEFAULT_EMBODIMENT, EMBODIMENT_NAMES,
+                    load_R_mano, load_wrist_offset, mjcf_for, urdf_for)
 T_CV2GL = np.diag([1., -1., -1.])
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -56,6 +58,54 @@ XHAND_XML = {
     "right": REPO / "src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml",
     "left":  REPO / "src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml",
 }
+
+
+def resolve_embodiment(pkl_dict, override, side):
+    """Which robot hand this pkl describes.
+
+    Retargeting stamps `embodiment` into the pkl, so the renderer normally does
+    not need telling — that stops an inspire trajectory being drawn with an
+    xhand URDF. An explicit CLI override wins; pkls written before the field
+    existed fall back to xhand.
+    """
+    if override:
+        stamped = pkl_dict.get("embodiment")
+        if stamped and stamped != override:
+            print(f"[warn] {side}: --{side}_embodiment={override} overrides "
+                  f"embodiment={stamped!r} recorded in the pkl")
+        return override
+    return pkl_dict.get("embodiment", DEFAULT_EMBODIMENT)
+
+
+def build_side_align(embodiment_of):
+    """Per-side (R_align, wrist_offset): the embodiment-specific part of placing
+    the hand root, kept out of the render loops."""
+    return {s: (load_R_mano(e, s), load_wrist_offset(e, s))
+            for s, e in embodiment_of.items()}
+
+
+def hand_root_pose(R_mano, wrist_pos, align):
+    """Hand root pose in pyrender frame.
+
+    The URDF root is put at the MANO wrist, shifted by the embodiment's wrist
+    offset (expressed in the wrist frame, hence rotated into camera frame
+    first). The offset is zero for xhand, whose root already sits near MANO's
+    wrist; inspire's root is the arm mount flange ~54 mm further out.
+    """
+    R_align, offset = align
+    R_cam_hand = R_mano @ R_align
+    t_cam = wrist_pos + R_cam_hand @ offset
+    T = np.eye(4)
+    T[:3, :3] = T_CV2GL @ R_cam_hand
+    T[:3, 3] = T_CV2GL @ t_cam
+    return T, R_cam_hand
+
+
+def load_side_urdf(embodiment, side):
+    """(joints, link_meshes) for one hand, coloured from its MJCF if it has one."""
+    mjcf = mjcf_for(embodiment, side)
+    cmap = parse_mjcf_rgba(Path(mjcf)) if mjcf else None
+    return parse_urdf(Path(urdf_for(embodiment, side)), color_map=cmap)
 
 
 def parse_mjcf_rgba(mjcf_path: Path) -> dict:
@@ -168,6 +218,7 @@ def render_robot(
     hands_data: list,    # (side, wrist_pos_cam, R_mano_cam, qpos_dict, joints_tree, link_meshes)
     camera: pyrender.IntrinsicsCamera,
     renderer: pyrender.OffscreenRenderer,
+    side_align: dict,    # side -> (R_align, wrist_offset), from build_side_align
 ):
     """Render the robot hand(s) and return (rgb (H,W,3) uint8, mask (H,W) bool)."""
     scene = pyrender.Scene(ambient_light=[0.3, 0.3, 0.3], bg_color=[0., 0., 0., 0.])
@@ -177,11 +228,7 @@ def render_robot(
     scene.add(pyrender.PointLight(color=[0.8, 0.8, 0.8], intensity=2.0), pose=pl_pose)
 
     for side, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes in hands_data:
-        R_cam_xhand = R_mano @ R_MANO_XHAND[side]
-        R_pr = T_CV2GL @ R_cam_xhand
-        t_pr = T_CV2GL @ wrist_pos
-
-        T_root = np.eye(4); T_root[:3, :3] = R_pr; T_root[:3, 3] = t_pr
+        T_root, _ = hand_root_pose(R_mano, wrist_pos, side_align[side])
         link_T = compute_fk(joints_tree, qpos_dict, T_root)
 
         for lname, items in link_meshes.items():
@@ -205,6 +252,11 @@ def main() -> None:
     ap.add_argument("--right_pkl", type=Path, required=True)
     ap.add_argument("--left_pkl",  type=Path, required=True)
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--right_embodiment", choices=EMBODIMENT_NAMES, default=None,
+                    help="Override the robot hand model for the right hand. "
+                         "Default: read from the pkl, which retargeting stamps.")
+    ap.add_argument("--left_embodiment", choices=EMBODIMENT_NAMES, default=None,
+                    help="Override the robot hand model for the left hand.")
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--mask_dilate", type=int, default=0,
                     help="Iterations of 3x3 cross dilation applied to the arm mask "
@@ -251,13 +303,17 @@ def main() -> None:
                                        znear=0.01, zfar=10.0)
     renderer = pyrender.OffscreenRenderer(img_w, img_h)
 
+    embodiment_of = {
+        "right": resolve_embodiment(qr, args.right_embodiment, "right"),
+        "left":  resolve_embodiment(ql, args.left_embodiment, "left"),
+    }
     side_cfg = {}
-    for s, urdf in (("right", XHAND_URDF_RIGHT), ("left", XHAND_URDF_LEFT)):
+    for s in ("right", "left"):
         if args.hand not in (s, "both"):
             continue
-        cmap = parse_mjcf_rgba(XHAND_XML[s])
-        side_cfg[s] = parse_urdf(Path(urdf), color_map=cmap)
-    print("URDF loaded for:", list(side_cfg.keys()))
+        side_cfg[s] = load_side_urdf(embodiment_of[s], s)
+    side_align = build_side_align(embodiment_of)
+    print("URDF loaded for:", {s: embodiment_of[s] for s in side_cfg})
 
     out_frames = list(bg_frames[:T_use])
     residual = np.zeros((T_use, img_h, img_w), dtype=bool)
@@ -289,7 +345,7 @@ def main() -> None:
         else:
             arm_t_clip = arm_t
         if hands_data:
-            rgb, robot_mask = render_robot(hands_data, camera, renderer)
+            rgb, robot_mask = render_robot(hands_data, camera, renderer, side_align)
             # Clip robot to the (optionally dilated) arm mask.
             draw = robot_mask & arm_t_clip
             out = bg_frames[t].copy()

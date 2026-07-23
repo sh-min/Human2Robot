@@ -42,8 +42,34 @@ import pyrender
 import trimesh
 from scipy.spatial.transform import Rotation
 
-from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND
-from render_xhand_overlay import compute_fk, parse_urdf, parse_mjcf_rgba, T_CV2GL, XHAND_XML
+from _paths import (XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND,
+                    EMBODIMENT_NAMES, forearm_sign)
+from render_xhand_overlay import (compute_fk, parse_urdf, parse_mjcf_rgba,
+                                  T_CV2GL, XHAND_XML, build_side_align,
+                                  hand_root_pose, load_side_urdf,
+                                  resolve_embodiment)
+from scene_lighting import (directional_light_pose, estimate_illumination,
+                            light_dir_cam)
+from traj_smooth import smooth_channels, smooth_rotvec
+
+
+def _build_light(frames, dir_cam=None):
+    """Scene-matched light rig for _render_robot_rgbd, from the video frames.
+
+    One global tint (room colour is ~constant) drives a scene-coloured key
+    light aimed along the shared LIGHT_DIR_CAM, plus warm ambient and a weak
+    fill. Returns the dict _render_robot_rgbd expects.
+    """
+    tint = estimate_illumination(frames)
+    return dict(
+        key_color=tint,
+        key_intensity=3.5,
+        key_pose=directional_light_pose(dir_cam, T_CV2GL),
+        ambient=(tint * 0.35).tolist(),
+        fill_color=(tint * 0.8),
+        fill_intensity=1.2,
+        dir_cam=light_dir_cam(dir_cam),
+    )
 
 REPO = Path(__file__).resolve().parent.parent.parent
 RBY1_ASSETS = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/assets"
@@ -94,22 +120,35 @@ def _load_lower_arm_meshes(side: str) -> dict:
     return out
 
 
-def _arm_link_poses_pyrender(side, wrist_pos_cv, R_cam_xhand):
+# Hand frame -> arm frame. The arm code assumes the wrist frame's +z runs
+# wrist->elbow, which holds for xhand. A hand whose +z runs the other way
+# (inspire) needs a 180 deg roll about x to bring it into that convention;
+# applying it to the whole rotation — not just the forearm direction — keeps
+# _ARM3_OFFSET and the arm mesh orientation consistent with it.
+_FLIP_X = np.diag([1.0, -1.0, -1.0])
+
+
+def _arm_link_poses_pyrender(side, wrist_pos_cv, R_cam_xhand, sign=+1):
     """Compute lower-arm link poses in pyrender (OpenGL) space.
 
     All coordinates start in OpenCV camera space (x-right, y-down, z-forward),
     then are converted to pyrender (T_CV2GL).
 
+    *sign* is the embodiment's forearm_sign. EE_OFFSET_Z is a property of the
+    RBY1 flange rather than of the hand, so it is shared across embodiments;
+    only the frame convention differs.
+
     Returns {link_name: 4x4 pose matrix} for arm3–arm6.
     """
-    forearm_dir_cv = R_cam_xhand[:, 2]  # +z of xhand frame = toward elbow
+    R_cam_arm = R_cam_xhand if sign > 0 else R_cam_xhand @ _FLIP_X
+    forearm_dir_cv = R_cam_arm[:, 2]  # wrist -> elbow
 
     # arm6/5/4 share the same position: wrist + EE_OFFSET along forearm
     pos_arm456_cv = wrist_pos_cv + EE_OFFSET_Z * forearm_dir_cv
     # arm3 (elbow) is further up: arm4 + _ARM3_OFFSET in arm4's local frame
-    pos_arm3_cv = pos_arm456_cv + R_cam_xhand @ _ARM3_OFFSET
+    pos_arm3_cv = pos_arm456_cv + R_cam_arm @ _ARM3_OFFSET
 
-    R_pr = T_CV2GL @ R_cam_xhand
+    R_pr = T_CV2GL @ R_cam_arm
     poses = {}
     for lname, pos_cv in [
         (f"link_{side}_arm_3", pos_arm3_cv),
@@ -124,21 +163,40 @@ def _arm_link_poses_pyrender(side, wrist_pos_cv, R_cam_xhand):
     return poses
 
 
-def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer):
-    """Return (rgb (H,W,3) uint8, depth (H,W) float32 meters, mask (H,W) bool)."""
-    scene = pyrender.Scene(ambient_light=[0.3, 0.3, 0.3], bg_color=[0., 0., 0., 0.])
-    scene.add(camera, pose=np.eye(4))
-    scene.add(pyrender.DirectionalLight(color=[1., 1., 1.], intensity=3.0), pose=np.eye(4))
-    pl_pose = np.eye(4); pl_pose[:3, 3] = [0.3, -0.3, -0.5]
-    scene.add(pyrender.PointLight(color=[0.8, 0.8, 0.8], intensity=2.0), pose=pl_pose)
+def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer, side_align,
+                       light=None):
+    """Return (rgb (H,W,3) uint8, depth (H,W) float32 meters, mask (H,W) bool).
 
-    # XHand fingers
+    *light*: None keeps the legacy neutral rig; otherwise a dict from
+    _build_light() with the scene-matched tint and direction.
+    """
+    if light is None:
+        # Legacy rig — kept so --relight none reproduces prior output exactly.
+        scene = pyrender.Scene(ambient_light=[0.3, 0.3, 0.3], bg_color=[0., 0., 0., 0.])
+        scene.add(camera, pose=np.eye(4))
+        scene.add(pyrender.DirectionalLight(color=[1., 1., 1.], intensity=3.0),
+                  pose=np.eye(4))
+        pl_pose = np.eye(4); pl_pose[:3, 3] = [0.3, -0.3, -0.5]
+        scene.add(pyrender.PointLight(color=[0.8, 0.8, 0.8], intensity=2.0),
+                  pose=pl_pose)
+    else:
+        scene = pyrender.Scene(ambient_light=light["ambient"],
+                               bg_color=[0., 0., 0., 0.])
+        scene.add(camera, pose=np.eye(4))
+        # Key light: scene-tinted, aimed along the shared LIGHT_DIR_CAM so its
+        # highlights agree with the contact shadow cast in the compositor.
+        scene.add(pyrender.DirectionalLight(color=light["key_color"],
+                                            intensity=light["key_intensity"]),
+                  pose=light["key_pose"])
+        # Weak tinted fill from the camera so shadowed sides don't go pure black.
+        pl_pose = np.eye(4); pl_pose[:3, 3] = [0.3, -0.3, -0.5]
+        scene.add(pyrender.PointLight(color=light["fill_color"],
+                                      intensity=light["fill_intensity"]),
+                  pose=pl_pose)
+
+    # Robot hand fingers
     for side, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes in hands_data:
-        R_cam_xhand = R_mano @ R_MANO_XHAND[side]
-        R_pr = T_CV2GL @ R_cam_xhand
-        t_pr = T_CV2GL @ wrist_pos
-
-        T_root = np.eye(4); T_root[:3, :3] = R_pr; T_root[:3, 3] = t_pr
+        T_root, _ = hand_root_pose(R_mano, wrist_pos, side_align[side])
         link_T = compute_fk(joints_tree, qpos_dict, T_root)
 
         for lname, items in link_meshes.items():
@@ -170,6 +228,31 @@ def main() -> None:
     ap.add_argument("--right_pkl", type=Path, required=True)
     ap.add_argument("--left_pkl",  type=Path, required=True)
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--right_embodiment", choices=EMBODIMENT_NAMES, default=None,
+                    help="Override the robot hand model for the right hand. "
+                         "Default: read from the pkl, which retargeting stamps.")
+    ap.add_argument("--left_embodiment", choices=EMBODIMENT_NAMES, default=None,
+                    help="Override the robot hand model for the left hand.")
+    ap.add_argument("--relight", choices=["auto", "none"], default="auto",
+                    help="auto: tint the robot lighting to match the scene "
+                         "(default). none: legacy neutral rig, reproduces prior "
+                         "output.")
+    ap.add_argument("--light_dir", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"),
+                    help="Override light travel direction in the camera frame "
+                         "(x-right, y-down, z-forward). Default: see "
+                         "scene_lighting.LIGHT_DIR_CAM.")
+    ap.add_argument("--smooth", dest="smooth", action="store_true", default=True,
+                    help="Temporally smooth the trajectory (fingers, wrist "
+                         "position, global orientation) before rendering "
+                         "(default on).")
+    ap.add_argument("--no_smooth", dest="smooth", action="store_false",
+                    help="Disable trajectory smoothing.")
+    ap.add_argument("--smooth_win", type=int, default=15,
+                    help="Savgol window (frames) for finger qpos. Odd.")
+    ap.add_argument("--smooth_wrist_win", type=int, default=21,
+                    help="Savgol window (frames) for wrist pos + orientation. "
+                         "Odd, larger because wrist estimation is jitterier.")
     args = ap.parse_args()
 
     ri = np.load(args.hawor_npz)
@@ -195,21 +278,56 @@ def main() -> None:
     print(f"[info] video T={T_vid}, npz T={joints_left.shape[0]}, "
           f"using T={T_use}, hand={args.hand}")
 
+    if args.smooth:
+        # Smooth exactly what the render loop consumes: finger qpos (pkl) plus
+        # wrist position joints_*[:,0] and global orientation go[h] (npz). Done
+        # per hand over the time axis, interpolating across invalid frames.
+        go = np.asarray(go, dtype=np.float64).copy()
+        joints_left = joints_left.copy()
+        joints_right = joints_right.copy()
+        for h_idx, s in ((0, "left"), (1, "right")):
+            v = np.asarray(valid[h_idx]).astype(bool)
+            data = left_data if s == "left" else right_data
+            n = min(len(data), len(v), len(go[h_idx]))
+            vv = v[:n]
+            if s == "left":
+                left_data[:n]  = smooth_channels(data[:n], vv, win=args.smooth_win)
+                joints_left[:n, 0]  = smooth_channels(joints_left[:n, 0], vv,
+                                                      win=args.smooth_wrist_win)
+            else:
+                right_data[:n] = smooth_channels(data[:n], vv, win=args.smooth_win)
+                joints_right[:n, 0] = smooth_channels(joints_right[:n, 0], vv,
+                                                      win=args.smooth_wrist_win)
+            go[h_idx, :n] = smooth_rotvec(go[h_idx, :n], vv,
+                                          win=args.smooth_wrist_win)
+        print(f"[smooth] on: finger_win={args.smooth_win}, "
+              f"wrist_win={args.smooth_wrist_win}")
+
     cx, cy = img_w / 2.0, img_h / 2.0
     camera = pyrender.IntrinsicsCamera(fx=focal, fy=focal, cx=cx, cy=cy,
                                        znear=0.01, zfar=10.0)
     renderer = pyrender.OffscreenRenderer(img_w, img_h)
 
+    embodiment_of = {
+        "right": resolve_embodiment(qr, args.right_embodiment, "right"),
+        "left":  resolve_embodiment(ql, args.left_embodiment, "left"),
+    }
     side_cfg = {}
     arm_mesh_cfg = {}
-    for s, urdf in (("right", XHAND_URDF_RIGHT), ("left", XHAND_URDF_LEFT)):
+    for s in ("right", "left"):
         if args.hand not in (s, "both"):
             continue
-        cmap = parse_mjcf_rgba(XHAND_XML[s])
-        side_cfg[s] = parse_urdf(Path(urdf), color_map=cmap)
+        side_cfg[s] = load_side_urdf(embodiment_of[s], s)
         arm_mesh_cfg[s] = _load_lower_arm_meshes(s)
-    print("URDF loaded for:", list(side_cfg.keys()))
+    side_align = build_side_align(embodiment_of)
+    print("URDF loaded for:", {s: embodiment_of[s] for s in side_cfg})
     print("Arm meshes loaded for:", list(arm_mesh_cfg.keys()))
+
+    light = None
+    if args.relight == "auto":
+        light = _build_light(bg_frames[:T_use], dir_cam=args.light_dir)
+        print(f"[relight] scene tint = {np.round(light['key_color'], 3).tolist()}, "
+              f"light_dir_cam = {np.round(light['dir_cam'], 3).tolist()}")
 
     rgb_buf   = np.zeros((T_use, img_h, img_w, 3), dtype=np.uint8)
     depth_buf = np.full((T_use, img_h, img_w), np.inf, dtype=np.float32)
@@ -233,15 +351,16 @@ def main() -> None:
             hands_data.append((s, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes))
 
             # Lower arm poses from wrist orientation
-            R_cam_xhand = R_mano @ R_MANO_XHAND[s]
-            link_poses = _arm_link_poses_pyrender(s, wrist_pos, R_cam_xhand)
+            _, R_cam_hand = hand_root_pose(R_mano, wrist_pos, side_align[s])
+            link_poses = _arm_link_poses_pyrender(
+                s, wrist_pos, R_cam_hand, sign=forearm_sign(embodiment_of[s]))
             arm_scene_data.append((link_poses, arm_mesh_cfg[s]))
 
         if not hands_data:
             continue
 
         rgb, depth, mask = _render_robot_rgbd(hands_data, arm_scene_data,
-                                              camera, renderer)
+                                              camera, renderer, side_align, light)
         rgb_buf[t] = rgb
         mask_buf[t] = mask
         depth_buf[t, mask] = depth[mask]   # leave non-robot pixels at +inf

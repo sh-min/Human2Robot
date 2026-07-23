@@ -51,6 +51,29 @@ from scipy.spatial.transform import Rotation
 from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND
 T_CV2GL = np.diag([1., -1., -1.])
 
+REPO = Path(__file__).resolve().parent.parent.parent
+XHAND_XML = {
+    "right": REPO / "src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml",
+    "left":  REPO / "src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml",
+}
+
+
+def parse_mjcf_rgba(mjcf_path: Path) -> dict:
+    """Parse an xhand MJCF XML and return {mesh_name: [r,g,b,a] uint8}."""
+    tree = ET.parse(str(mjcf_path))
+    root = tree.getroot()
+    cmap = {}
+    def _walk(elem):
+        for g in elem.findall("geom"):
+            mesh = g.get("mesh", "")
+            rgba = g.get("rgba", "")
+            if mesh and rgba:
+                cmap[mesh] = [int(float(v) * 255) for v in rgba.split()]
+        for b in elem.findall("body"):
+            _walk(b)
+    _walk(root.find("worldbody"))
+    return cmap
+
 
 def _make_T(xyz, rpy):
     T = np.eye(4)
@@ -59,9 +82,14 @@ def _make_T(xyz, rpy):
     return T
 
 
-def parse_urdf(urdf_path: Path):
+def parse_urdf(urdf_path: Path, color_map: dict | None = None):
     """Return (joints, link_meshes) from a URDF. Manual parse to avoid urdfpy
-    (incompatible with Python 3.10's collections.Mapping removal)."""
+    (incompatible with Python 3.10's collections.Mapping removal).
+
+    If *color_map* is provided ({mesh_name: [r,g,b,a]}), mesh colors are
+    looked up by the URDF link name (which matches the MJCF mesh name).
+    Falls back to mesh's embedded material if no entry is found.
+    """
     tree = ET.parse(str(urdf_path))
     root = tree.getroot()
 
@@ -82,6 +110,7 @@ def parse_urdf(urdf_path: Path):
 
     link_meshes = {}
     for lk in root.findall("link"):
+        lk_name = lk.get("name")
         items = []
         for vis in lk.findall("visual"):
             geom = vis.find("geometry")
@@ -93,7 +122,8 @@ def parse_urdf(urdf_path: Path):
             m = trimesh.load(str(mesh_path), force="mesh")
             if isinstance(m, trimesh.Scene):
                 m = trimesh.util.concatenate(list(m.geometry.values()))
-            m.visual.face_colors = [200, 170, 130, 255]  # skin tone
+            if color_map and lk_name in color_map:
+                m.visual.face_colors = color_map[lk_name]
 
             orig = vis.find("origin")
             if orig is not None:
@@ -105,7 +135,7 @@ def parse_urdf(urdf_path: Path):
                 T_vis = np.eye(4)
             items.append((m, T_vis))
         if items:
-            link_meshes[lk.get("name")] = items
+            link_meshes[lk_name] = items
 
     return joints, link_meshes
 
@@ -225,7 +255,8 @@ def main() -> None:
     for s, urdf in (("right", XHAND_URDF_RIGHT), ("left", XHAND_URDF_LEFT)):
         if args.hand not in (s, "both"):
             continue
-        side_cfg[s] = parse_urdf(Path(urdf))
+        cmap = parse_mjcf_rgba(XHAND_XML[s])
+        side_cfg[s] = parse_urdf(Path(urdf), color_map=cmap)
     print("URDF loaded for:", list(side_cfg.keys()))
 
     out_frames = list(bg_frames[:T_use])

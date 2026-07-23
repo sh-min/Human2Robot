@@ -22,14 +22,10 @@ from scipy.spatial.transform import Rotation as Rscipy
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 
-from _paths import URDF_ROOT, CONFIG_DIR, R_MANO_XHAND
+from _paths import (URDF_ROOT, DEFAULT_EMBODIMENT, EMBODIMENT_NAMES,
+                    config_path, load_R_mano, urdf_root)
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-
-# MANO canonical wrist frame -> xhand wrist link frame.
-# Loaded from assets/R_mano_xhand_{right,left}.npy (Procrustes-fit). Cast to
-# float32 to match the rest of the script's dtype.
-R_MANO_XHAND = {h: R.astype(np.float32) for h, R in R_MANO_XHAND.items()}
 
 # Map MANO joint index (skinning-weight argmax, 1..15) -> xhand finger index.
 # xhand fingers ordered as in TIP_LINK_NAMES below.
@@ -203,7 +199,8 @@ def _load_masks():
     return out
 
 
-def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
+def retarget_one_hand(data, hand, out_dir, *, embodiment=DEFAULT_EMBODIMENT,
+                       contact_dir=None, alpha=0.001,
                        normal_thr=0.3, smooth=False,
                        smooth_win=15, smooth_wrist_win=21, smooth_med_win=5):
     hand_idx = 0 if hand == "left" else 1
@@ -216,7 +213,7 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
     R_root = Rscipy.from_rotvec(root_orient).as_matrix().astype(np.float32)
     rel = joints_world - joints_world[:, 0:1, :]
     joints_canon = np.einsum("tji,tnj->tni", R_root, rel)
-    R = R_MANO_XHAND[hand]
+    R = load_R_mano(embodiment, hand).astype(np.float32)
     joints_mp = joints_canon @ R
 
     use_contact = contact_dir is not None
@@ -228,12 +225,23 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
         masks = _load_masks()[hand]   # palmar, tip, part
         mano_faces = np.load(os.path.join(ASSETS_DIR, f"mano_faces_{hand}.npy")).astype(np.int32)
 
-    cfg_path = os.path.join(CONFIG_DIR, f"xhand_{hand}_dexpilot.yml")
+    cfg_path = config_path(embodiment, hand)
+    # Global setting, and the root differs per embodiment (xhand's URDF lives in
+    # this repo, inspire's in the dex-retargeting submodule) — so it has to be
+    # set per hand rather than once in main().
+    RetargetingConfig.set_default_urdf_dir(urdf_root(embodiment))
     retargeting = RetargetingConfig.load_from_file(cfg_path).build()
     joint_names = retargeting.joint_names
     dof = len(joint_names)
     indices = retargeting.optimizer.target_link_human_indices
 
+    if use_contact and embodiment != "xhand":
+        # Stage 2 hardcodes xhand tip link names and .STL mesh paths
+        # (_tip_link_names / _build_contact_refiner).
+        raise NotImplementedError(
+            f"--contact is xhand-only; {embodiment!r} would need its own tip "
+            f"link names and fingertip meshes"
+        )
     refine_fn = _build_contact_refiner(hand, joint_names) if use_contact else None
 
     qpos_seq = np.zeros((T, dof), dtype=np.float32)
@@ -293,15 +301,16 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
     # Wrist pose in cam frame (so the pkl is a self-contained robot trajectory):
     #   wrist_pos:  joints_world[:, 0]   = actual MANO wrist position
     #   wrist_quat: mano_global_orient → quaternion (xyzw), composed with
-    #               R_MANO_XHAND so it directly represents the xhand wrist link
-    #               orientation in cam frame.
+    #               R (the MANO→robot-wrist rotation) so it directly represents
+    #               the robot wrist link orientation in cam frame.
     wrist_pos = joints_world[:, 0].astype(np.float32)             # (T, 3)
     R_cam_mano = Rscipy.from_rotvec(root_orient).as_matrix()      # (T, 3, 3)
     R_cam_xhand = R_cam_mano @ R                                  # (T, 3, 3)
     wrist_quat = Rscipy.from_matrix(R_cam_xhand).as_quat().astype(np.float32)  # (T,4) xyzw
 
     suffix = "_contact" if use_contact else ""
-    out_path = os.path.join(out_dir, f"qpos_xhand{suffix}_{hand}.pkl")
+    # For xhand this is the historical "qpos_xhand{suffix}_{hand}.pkl".
+    out_path = os.path.join(out_dir, f"qpos_{embodiment}{suffix}_{hand}.pkl")
     with open(out_path, "wb") as f:
         pickle.dump(
             dict(
@@ -313,6 +322,9 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
                 config_path=cfg_path,
                 hand=hand,
                 dof=dof,
+                # So the renderer can pick the matching URDF from the pkl alone
+                # instead of being told again on the command line.
+                embodiment=embodiment,
             ),
             f,
         )
@@ -329,7 +341,7 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
             med_win=smooth_med_win,
         )
         smooth_path = os.path.join(
-            out_dir, f"qpos_xhand{suffix}_{hand}_smooth.pkl"
+            out_dir, f"qpos_{embodiment}{suffix}_{hand}_smooth.pkl"
         )
         with open(smooth_path, "wb") as f:
             pickle.dump(
@@ -342,6 +354,7 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
                     config_path=cfg_path,
                     hand=hand,
                     dof=dof,
+                    embodiment=embodiment,
                     smoothing=dict(
                         win=smooth_win,
                         wrist_win=smooth_wrist_win,
@@ -356,8 +369,16 @@ def retarget_one_hand(data, hand, out_dir, *, contact_dir=None, alpha=0.001,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--npz", required=True)
-    ap.add_argument("--hand", default="both", choices=["right", "left", "both"])
+    ap.add_argument("--hand", default="both", choices=["right", "left", "both"],
+                    help="Which hand(s) to retarget (chirality, not embodiment).")
     ap.add_argument("--out_dir", default=None)
+    ap.add_argument("--right_embodiment", default=DEFAULT_EMBODIMENT,
+                    choices=EMBODIMENT_NAMES,
+                    help="Robot hand model for the right hand. Chosen per side, "
+                         "so the two hands need not match.")
+    ap.add_argument("--left_embodiment", default=DEFAULT_EMBODIMENT,
+                    choices=EMBODIMENT_NAMES,
+                    help="Robot hand model for the left hand.")
     ap.add_argument("--contact", action="store_true",
                     help="Enable stage-2 contact-aware refinement (Chamfer "
                          "matching of xhand fingertip mesh verts to human "
@@ -380,7 +401,8 @@ def main():
                     help="Median filter window for outlier removal (odd, default 5).")
     args = ap.parse_args()
 
-    RetargetingConfig.set_default_urdf_dir(URDF_ROOT)
+    # NB: no global set_default_urdf_dir here — retarget_one_hand sets it per
+    # hand, since right and left may use different embodiments.
     data = np.load(args.npz)
     npz_dir = os.path.dirname(os.path.abspath(args.npz))
     out_dir = args.out_dir or npz_dir
@@ -393,10 +415,12 @@ def main():
             raise FileNotFoundError(f"--contact set but {contact_dir} not found")
         print(f"contact_dir: {contact_dir}")
 
+    embodiment_of = {"right": args.right_embodiment, "left": args.left_embodiment}
     hands = ["right", "left"] if args.hand == "both" else [args.hand]
     for h in hands:
+        print(f"[{h}] embodiment: {embodiment_of[h]}")
         retarget_one_hand(
-            data, h, out_dir,
+            data, h, out_dir, embodiment=embodiment_of[h],
             contact_dir=contact_dir, alpha=args.alpha,
             smooth=args.smooth,
             smooth_win=args.smooth_win,

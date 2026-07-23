@@ -54,6 +54,10 @@ def main() -> None:
     ap.add_argument("--fps", type=float, default=None)
     ap.add_argument("--glob", default="*.jpg")
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--arm_kpts", type=Path, default=None,
+                    help="EgoDex arm_kpts_2d.npz for whole-arm SAM2 seeding. "
+                         "If omitted, looks for <input>/arm_kpts_2d.npz; absent "
+                         "→ segment_arms falls back to hand-bbox seeding.")
 
     # depth + cube layer knobs
     ap.add_argument("--encoder", default="vitl", choices=["vits", "vitb", "vitl"])
@@ -98,20 +102,39 @@ def main() -> None:
           "--processed_demo", pd,
           "--hawor_npz", args.hawor_npz])
 
-    # Stage 3: SAM2 hand seg
+    # Resolve EgoDex arm keypoints (whole-arm seeding) if available.
+    arm_kpts = args.arm_kpts
+    if arm_kpts is None and args.input.is_dir():
+        cand = args.input / "arm_kpts_2d.npz"
+        arm_kpts = cand if cand.exists() else None
+
+    # Stage 3: SAM2 hand/arm seg
     arm_npy = pd / "segmentation_processor" / "masks_arm.npy"
     if arm_npy.exists():
         print(f"\n[skip] {arm_npy} exists")
     else:
-        _run([sys.executable, str(HERE / "segment_arms.py"), "--processed_demo", pd])
+        seg_cmd = [sys.executable, str(HERE / "segment_arms.py"), "--processed_demo", pd]
+        if arm_kpts is not None:
+            seg_cmd += ["--arm_kpts", str(arm_kpts)]
+        _run(seg_cmd)
 
-    # Stage 4: legacy E2FGVI on hand mask → inpainted bg
+    # Stage 3.5: modal object seg BEFORE inpaint, so the object can be protected
+    # from removal. (run_cube_segmentation later reuses cube_mask_raw and only
+    # runs the Diffusion-VAS amodal pass.)
+    cube_raw = pd / "cube_layer" / "cube_mask_raw.npy"
+    if cube_raw.exists():
+        print(f"\n[skip] {cube_raw} exists")
+    else:
+        _run([sys.executable, str(HERE / "segment_cube.py"), "--processed_demo", pd])
+
+    # Stage 4: legacy E2FGVI on hand mask → inpainted bg (object protected)
     inp_bg = pd / "inpaint_processor" / "video_human_inpaint.mkv"
     if inp_bg.exists() and inp_bg.stat().st_size > 0:
         print(f"\n[skip] {inp_bg} exists")
     else:
         _run([sys.executable, str(HERE / "inpaint_hands.py"),
-              "--processed_demo", pd, "--mode", "legacy"])
+              "--processed_demo", pd, "--mode", "legacy",
+              "--protect_mask", str(cube_raw)])
 
     # Stage 5: pyrender robot RGBD
     robot_mask_npy = pd / "overlay_processor" / "robot_mask.npy"
@@ -140,18 +163,15 @@ def main() -> None:
     else:
         _run([sys.executable, str(HERE / "align_depth.py"), "--processed_demo", pd])
 
-    # Stages 8-9: cube segmentation (SAM2 modal → Diffusion-VAS amodal → regularize)
-    cube_clean = pd / "cube_layer" / "cube_mask_clean.npy"
-    if cube_clean.exists():
-        print(f"\n[skip] {cube_clean} exists")
+    # Stages 8-9: cube segmentation (SAM2 modal → Diffusion-VAS amodal)
+    cube_amodal = pd / "cube_layer" / "cube_mask_amodal.npy"
+    if cube_amodal.exists():
+        print(f"\n[skip] {cube_amodal} exists")
     else:
         cube_cmd = [sys.executable, str(HERE / "run_cube_segmentation.py"),
                     "--processed_demo", pd,
                     "--cube_quantile", str(args.cube_quantile),
-                    "--overlap", str(args.cube_overlap),
-                    "--sdf_sigma", str(args.sdf_sigma),
-                    "--area_mad_k", str(args.area_mad_k),
-                    "--centroid_max_jump", str(args.centroid_max_jump)]
+                    "--overlap", str(args.cube_overlap)]
         if args.no_content_completion:
             cube_cmd.append("--no_content_completion")
         _run(cube_cmd)
@@ -164,7 +184,7 @@ def main() -> None:
         _run([sys.executable, str(HERE / "composite_layered.py"),
               "--processed_demo", pd,
               "--hawor_npz", args.hawor_npz,
-              "--cube_mask_npy", "cube_layer/cube_mask_clean.npy",
+              "--cube_mask_npy", "cube_layer/cube_mask_amodal.npy",
               "--threshold_joint", str(args.threshold_joint),
               "--zmcp_sigma_t", str(args.zmcp_sigma_t),
               "--edge_sigma", str(args.edge_sigma)])

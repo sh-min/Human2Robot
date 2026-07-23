@@ -1,36 +1,41 @@
-"""Stage 8 (SAM2 variant): segment the cube across the video with SAM2,
-bootstrapped from a single depth-derived seed frame.
+"""Stage 8 (SAM2 variant): segment the manipulated object across the video
+with SAM2, bootstrapped from the hand-contact (grasp) region.
 
-Replaces the depth-quantile + per-frame center-CC isolation in
-crop_cube_layer.py. Thresholding depth on *every* frame leaks the table;
-here depth is used only to *locate* the cube on one good seed frame, then
-SAM2's video predictor tracks the object through the whole clip.
+Earlier versions located the object as the closest-`quantile` non-hand depth
+blob. That assumed a single small object nearest the camera on a table (the
+cube setup) and on egocentric, varied-object data (EgoDex) it grabs the table
+instead. Here we instead seed SAM2 from where the hand grips the object: the
+manipulated object is, by definition, at the hand-object contact.
 
-Bootstrap:
-    1. Per frame, compute the rough depth mask (non-hand pixels whose
-       aligned depth is in the closest `quantile`), keep the center-most CC.
-    2. Pick the seed frame: the rough mask with the largest distance-
-       transform peak — the most compact, solid blob, i.e. the cleanest
-       SAM2 prompt.
-    3. From that frame derive a box (mask extent) + one positive point
-       (distance-transform peak, guaranteed interior even when finger
-       bites make the blob concave).
-    4. SAM2 propagates forward + reverse from the seed; union the passes.
+Bootstrap (no depth needed):
+    1. From HaWoR 2D hand keypoints (hand_processor/hand_data_{left,right}.npz),
+       find a seed (frame, hand) where a hand is gripping — fingertip spread in
+       a sensible band (rejects open hands and fists), picking the tightest grip.
+    2. Build SAM2 prompts that target the *object*, not the hand:
+         positive points = fingertip centroid + thumb-index pinch point,
+         negative points = wrist + finger MCP knuckles (clearly hand),
+         box            = tight around the fingertip cluster.
+    3. SAM2 propagates forward + reverse from the seed; union the passes.
+
+KNOWN LIMITATION (WIP): the prompt construction in (2) is validated — forcing
+the correct (frame, hand) cleanly segments the held object. But the *automatic*
+seed selection in (1) is unreliable on two-hand scenes: keypoints alone can't
+tell the holding hand from a reaching hand, so it can latch onto a sleeve or
+the wrong hand. Robust selection needs a which-hand-when signal (HACO contact)
+or a seed-both-hands-and-pick-best scheme. Use --seed_frame/--side to override.
 
 Inputs:
     <pd>/video_L.mp4
-    <pd>/depth_processor/depth_aligned.npy
-    <pd>/segmentation_processor/masks_arm.npy
+    <pd>/hand_processor/hand_data_{left,right}.npz   (kpts_2d, hand_detected)
 
 Outputs:
-    <pd>/cube_layer/cube_mask_raw.npy       (T,H,W) bool — SAM2 cube mask
+    <pd>/cube_layer/cube_mask_raw.npy       (T,H,W) bool — SAM2 object mask
     <pd>/cube_layer/cube_cropped_raw.mp4    raw cropped to the mask (debug)
 
-Stage 9 (regularize_and_cut_cube.py) consumes cube_mask_raw.npy unchanged.
+Stage 8b (amodal_cube.py) consumes cube_mask_raw.npy unchanged.
 
 Usage:
-    python segment_cube.py --processed_demo /result/skill2policy/processed/cam0/0 \
-        --quantile 0.25
+    python segment_cube.py --processed_demo /result/skill2policy/processed/cam0/0
 """
 import argparse
 import shutil
@@ -40,10 +45,8 @@ from pathlib import Path
 import mediapy as media
 import numpy as np
 import torch
-from scipy.ndimage import distance_transform_edt
 
 from _paths import SAM2_CHECKPOINT, SAM2_CONFIG_NAME, ensure_sam2_importable
-from crop_cube_layer import _keep_center_cc
 from segment_arms import _dump_frames_as_jpegs, _segment_one_pass
 
 ensure_sam2_importable()
@@ -51,62 +54,87 @@ from sam2.build_sam import build_sam2_video_predictor  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# mediapipe-21 hand layout
+FINGERTIPS = [4, 8, 12, 16, 20]   # thumb, index, middle, ring, pinky tips
+HAND_NEG   = [0, 5, 9, 13, 17]    # wrist + finger MCP knuckles (clearly hand)
 
-def _depth_rough_masks(depth: np.ndarray, m_hand: np.ndarray,
-                       quantile: float, min_area: int) -> np.ndarray:
-    """Per-frame depth-quantile cube mask (closest-`quantile` non-hand
-    pixels, center CC). Used only to locate a SAM2 seed frame."""
-    T = depth.shape[0]
-    rough = np.zeros(depth.shape, dtype=bool)
-    for t in range(T):
-        non_hand = ~m_hand[t]
-        d_nh = depth[t][non_hand]
-        if d_nh.size == 0:
-            continue
-        thr = float(np.quantile(d_nh, quantile))
-        mt = non_hand & (depth[t] <= thr)
-        rough[t] = _keep_center_cc(mt, min_area=min_area)
-    return rough
+# Accept grips whose fingertip spread (normalized by hand bbox diagonal) is in
+# this band: too small = a fist (no object), too large = an open/relaxed hand.
+_GRIP_BAND = (0.12, 0.55)
 
 
-# Seed-frame area band, as a multiple of the median rough-mask area. The
-# cube is a small, stable blob (~median area); table-leak frames blow the
-# mask up to many times that. Candidate seed frames must fall inside this
-# band so a leaky frame is never chosen, however "solid" it looks.
-_SEED_AREA_BAND = (0.5, 2.0)
+def _grip_metrics(pts):
+    tips = pts[FINGERTIPS]
+    lo, hi = pts.min(0), pts.max(0)
+    diag = float(np.linalg.norm(hi - lo)) + 1e-6
+    spread = float(np.linalg.norm(tips - tips.mean(0), axis=1).mean()) / diag
+    return spread
 
 
-def _pick_seed(rough: np.ndarray, min_area: int):
-    """Seed = frame whose rough mask has the largest distance-transform
-    peak (most compact, solid blob), restricted to frames whose area is
-    near the median (rejects table-leak frames). Returns (seed_idx, box,
-    point) where box is (x0,y0,x1,y1) and point is (1,2); (None,)*3 if
-    no usable frame."""
-    areas = rough.reshape(rough.shape[0], -1).sum(axis=1).astype(np.float64)
-    in_dist = areas[areas >= min_area]
-    if in_dist.size == 0:
-        return None, None, None
-    med = float(np.median(in_dist))
-    lo = max(float(min_area), _SEED_AREA_BAND[0] * med)
-    hi = _SEED_AREA_BAND[1] * med
-    print(f"[info] rough-mask area median={med:.0f}px → "
-          f"seed candidates within [{lo:.0f}, {hi:.0f}]px")
+def _pick_grasp_seed(hand_npz: dict, H: int, W: int,
+                     force_frame: int = None, force_side: str = None):
+    """Find a seed (frame, hand) where a hand grips the object and return SAM2
+    prompts that target the object: positives at the grasp (from the hand pose)
+    plus negatives at BOTH hands' wrist+MCP joints, so SAM2 grabs the object
+    between the fingers and never a hand/sleeve.
 
-    best_idx, best_score, best_dt = None, -1.0, None
-    for t in range(rough.shape[0]):
-        if not (lo <= areas[t] <= hi):
-            continue
-        dt = distance_transform_edt(rough[t])
-        score = float(dt.max())
-        if score > best_score:
-            best_idx, best_score, best_dt = t, score, dt
-    if best_idx is None:
-        return None, None, None
-    ys, xs = np.where(rough[best_idx])
-    box = np.array([xs.min(), ys.min(), xs.max(), ys.max()], dtype=np.float32)
-    py, px = np.unravel_index(int(np.argmax(best_dt)), best_dt.shape)
-    point = np.array([[px, py]], dtype=np.float32)
-    return best_idx, box, point
+    Returns (seed_idx, points (P,2), labels (P,), box (4,)) or (None,)*4.
+    """
+    T = next(iter(hand_npz.values()))["kpts_2d"].shape[0]
+    # Restrict auto-seed to the middle of the clip — the ends are reach/retract
+    # where the object is not yet (or no longer) in the fingers.
+    lo_t, hi_t = int(0.15 * T), int(0.85 * T)
+
+    if force_frame is not None:
+        cands = [(_grip_metrics(d["kpts_2d"][force_frame]), side)
+                 for side, d in hand_npz.items()
+                 if d["hand_detected"][force_frame]
+                 and (force_side is None or side == force_side)]
+        if not cands:
+            return None, None, None, None
+        side = min(cands)[1]
+        seed_idx = int(force_frame)
+    else:
+        # tightest grip (fingers wrapped around something) within the mid-clip window
+        best = None  # (spread, frame, side)
+        for side, d in hand_npz.items():
+            det = d["hand_detected"].astype(bool)
+            for t in np.where(det)[0]:
+                if not (lo_t <= t <= hi_t):
+                    continue
+                spread = _grip_metrics(d["kpts_2d"][t])
+                if not (_GRIP_BAND[0] <= spread <= _GRIP_BAND[1]):
+                    continue
+                if best is None or spread < best[0]:
+                    best = (spread, int(t), side)
+        if best is None:
+            return None, None, None, None
+        _, seed_idx, side = best
+
+    pts = hand_npz[side]["kpts_2d"][seed_idx]
+    tips = pts[FINGERTIPS]
+    tip_c = tips.mean(0)
+    pinch = (pts[4] + pts[8]) / 2.0                 # thumb-index midpoint
+    pos = np.stack([tip_c, pinch])                  # object-side positives (from pose)
+
+    # Negatives: always mask out BOTH hands. Each detected hand's wrist + MCP
+    # knuckles (HAND_NEG, *not* fingertips — those sit on the object), plus
+    # samples from the M_hand mask restricted to the hand region (near hand
+    # keypoints) so the forearm part of a full-arm mask isn't included.
+    neg_list = [d["kpts_2d"][seed_idx][HAND_NEG].astype(np.float32)
+                for d in hand_npz.values() if d["hand_detected"][seed_idx]]
+    neg = np.concatenate(neg_list, axis=0) if neg_list else pts[HAND_NEG].astype(np.float32)
+
+    points = np.concatenate([pos, neg], axis=0).astype(np.float32)
+    labels = np.concatenate([np.ones(len(pos)), np.zeros(len(neg))]).astype(np.int32)
+
+    # Generous box around the grasp (the object often extends past the tips).
+    lo, hi = tips.min(0), tips.max(0)
+    margin = 1.2 * (hi - lo + 20.0)
+    x0, y0 = np.maximum([0, 0], lo - margin)
+    x1, y1 = np.minimum([W, H], hi + margin)
+    box = np.array([x0, y0, x1, y1], dtype=np.float32)
+    return seed_idx, points, labels, box
 
 
 def main() -> None:
@@ -114,11 +142,11 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed_demo", type=Path, required=True)
     ap.add_argument("--quantile", type=float, default=0.25,
-                    help="depth top-quantile for the bootstrap seed mask "
-                         "(smaller = only the very closest pixels)")
-    ap.add_argument("--min_area", type=int, default=200,
-                    help="ignore rough-mask CCs / candidate seed frames "
-                         "smaller than this many pixels")
+                    help="(deprecated, ignored) old depth-seed quantile")
+    ap.add_argument("--seed_frame", type=int, default=None,
+                    help="debug: force the SAM2 seed frame instead of auto-picking")
+    ap.add_argument("--side", choices=["left","right"], default=None,
+                    help="debug: force which hand to seed from")
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--keep_tmp", action="store_true",
                     help="keep the original_images/ JPEG dump for debugging")
@@ -131,20 +159,24 @@ def main() -> None:
 
     pd = args.processed_demo
     video_path = pd / "video_L.mp4"
-    rgb    = media.read_video(str(video_path))
-    depth  = np.load(pd / "depth_processor" / "depth_aligned.npy").astype(np.float32)
-    m_hand = np.load(pd / "segmentation_processor" / "masks_arm.npy").astype(bool)
-    Tb = min(rgb.shape[0], depth.shape[0], m_hand.shape[0])
+    rgb = media.read_video(str(video_path))
     H, W = rgb.shape[1], rgb.shape[2]
 
-    print(f"[info] depth bootstrap: rough masks over {Tb} frames (q={args.quantile})")
-    rough = _depth_rough_masks(depth[:Tb], m_hand[:Tb], args.quantile, args.min_area)
-    seed_idx, seed_box, seed_pt = _pick_seed(rough, args.min_area)
+    hand_npz = {}
+    for side in ("left", "right"):
+        p = pd / "hand_processor" / f"hand_data_{side}.npz"
+        if p.exists():
+            hand_npz[side] = np.load(p)
+    if not hand_npz:
+        sys.exit("[err] no hand_processor/hand_data_*.npz — run inject_hawor_data first")
+
+    seed_idx, seed_pts, seed_lbls, seed_box = _pick_grasp_seed(
+        hand_npz, H, W, force_frame=args.seed_frame, force_side=args.side)
     if seed_idx is None:
-        sys.exit("[err] depth bootstrap found no cube blob — try a different "
-                 "--quantile, or seed SAM2 manually.")
-    print(f"[info] seed frame={seed_idx} box={seed_box.round(1).tolist()} "
-          f"point={seed_pt[0].round(1).tolist()}")
+        sys.exit("[err] no detected hand to seed from — cannot locate the object.")
+    n_pos = int(seed_lbls.sum())
+    print(f"[info] grasp seed frame={seed_idx} box={seed_box.round(1).tolist()} "
+          f"({n_pos} positive / {len(seed_lbls) - n_pos} negative points)")
 
     frames_dir = pd / "original_images"
     n_frames = _dump_frames_as_jpegs(video_path, frames_dir)
@@ -155,13 +187,14 @@ def main() -> None:
 
     cube_mask = np.zeros((n_frames, H, W), dtype=bool)
     for reverse in (False, True):
-        out = _segment_one_pass(video_predictor, frames_dir,
-                                seed_box, seed_pt, seed_idx, reverse=reverse)
+        out = _segment_one_pass(video_predictor, frames_dir, seed_box,
+                                seed_pts, seed_idx, reverse=reverse,
+                                labels=seed_lbls)
         for idx, m in out.items():
             cube_mask[idx] |= m[0]
 
     per_frame = cube_mask.sum(axis=(1, 2))
-    print(f"[info] frames with cube mask: {(per_frame > 0).sum()}/{n_frames}, "
+    print(f"[info] frames with object mask: {(per_frame > 0).sum()}/{n_frames}, "
           f"median {int(np.median(per_frame))} px, max {per_frame.max()} px")
 
     out_dir = pd / "cube_layer"

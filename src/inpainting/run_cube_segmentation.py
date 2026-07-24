@@ -7,7 +7,7 @@
 Stage 8 is a fixed pipeline: SAM2 modal mask → Diffusion-VAS amodal
 completion (which internally uses Depth Anything V2). The amodal mask
 is post-processed in amodal_cube.py (top-percentile threshold, bbox
-clipping, morph ops, convex hull, SDF temporal smoothing).
+clipping, morph ops, largest-CC, SDF temporal smoothing).
 
 The cube layer in the final composite uses the inpainted background
 (from E2FGVI) at cube_mask pixels — no separate content completion needed.
@@ -34,8 +34,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed_demo", type=Path, required=True)
-    ap.add_argument("--diffusion_vas_env", default="diffusion_vas",
-                    help="conda env name for the Diffusion-VAS stage")
+    ap.add_argument("--diffusion_vas_python", default=sys.executable,
+                    help="Python interpreter for the Diffusion-VAS amodal stage. "
+                         "Defaults to the current interpreter (the merged uv env "
+                         "now has diffusers, so no separate conda env is needed).")
     # SAM2
     ap.add_argument("--cube_quantile", type=float, default=0.25,
                     help="non-hand depth quantile for the SAM2 seed bootstrap")
@@ -63,9 +65,8 @@ def main() -> None:
                   "--processed_demo", pd,
                   "--quantile", str(args.cube_quantile)])
 
-        # Diffusion-VAS amodal segmentation (diffusion_vas env)
-        _run(["conda", "run", "-n", args.diffusion_vas_env,
-              "--no-capture-output", "python", str(HERE / "amodal_cube.py"),
+        # Diffusion-VAS amodal segmentation (same interpreter by default)
+        _run([args.diffusion_vas_python, str(HERE / "amodal_cube.py"),
               "--processed_demo", str(pd),
               "--overlap", str(args.overlap),
               "--top_percentile", str(args.top_percentile),

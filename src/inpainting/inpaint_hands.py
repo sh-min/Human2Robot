@@ -51,15 +51,25 @@ def _read_frames(video_path: Path) -> List[Image.Image]:
 
 
 def _read_masks(mask_path: Path, size: Tuple[int, int],
-                dilate_iter: int) -> List[Image.Image]:
-    """Load masks, resize, and optionally dilate."""
-    out = []
+                dilate_iter: int, protect_path: Path = None) -> List[Image.Image]:
+    """Load masks, resize, and optionally dilate. If `protect_path` is given
+    (a manipulated-object mask), subtract it (with a small margin) from the
+    inpaint mask so E2FGVI removes the human hand/arm but leaves the object."""
     kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-    for frame in np.load(mask_path, allow_pickle=True):
+    protect = None
+    if protect_path is not None and Path(protect_path).exists():
+        protect = np.load(protect_path, allow_pickle=True)
+    out = []
+    for i, frame in enumerate(np.load(mask_path, allow_pickle=True)):
         m = Image.fromarray(frame).resize(size, Image.NEAREST)
         binary = (np.array(m.convert("L")) > 0).astype(np.uint8)
         if dilate_iter > 0:
             binary = cv2.dilate(binary, kernel, iterations=dilate_iter)
+        if protect is not None and i < len(protect):
+            pm = Image.fromarray((protect[i] > 0).astype(np.uint8) * 255).resize(size, Image.NEAREST)
+            pmb = (np.array(pm.convert("L")) > 0).astype(np.uint8)
+            pmb = cv2.dilate(pmb, kernel, iterations=2)   # protect a margin around the object
+            binary = binary & (1 - pmb)
         out.append(Image.fromarray(binary * 255))
     return out
 
@@ -183,6 +193,9 @@ def main() -> None:
                          "(default: keep original)")
     ap.add_argument("--dilate_iter", type=int, default=None,
                     help="Mask dilation iterations. Default: 4 for legacy, 1 for residual.")
+    ap.add_argument("--protect_mask", type=Path, default=None,
+                    help="Object mask (.npy, T,H,W) to subtract from the inpaint "
+                         "mask so the manipulated object is NOT removed.")
     ap.add_argument("--fps", type=int, default=15)
     args = ap.parse_args()
 
@@ -220,7 +233,9 @@ def main() -> None:
         frames = [f.resize(size) for f in frames]
         print(f"[info] resized to {size}")
     size = frames[0].size  # (w, h)
-    masks = _read_masks(mask_path, size, dilate_iter)
+    masks = _read_masks(mask_path, size, dilate_iter, protect_path=args.protect_mask)
+    if args.protect_mask is not None:
+        print(f"[info] protecting object mask {args.protect_mask} (kept out of inpaint)")
     print(f"[info] T={len(frames)}, frame size {size[0]}x{size[1]}")
 
     comp = _inpaint_video(model, device, frames, masks)

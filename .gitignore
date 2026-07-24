@@ -40,3 +40,6 @@ venv/
 slurm-*.out
 slurm-*.err
 docs/progress_slides.pdf
+
+# Sample media (data, not code)
+examples/*.mp4

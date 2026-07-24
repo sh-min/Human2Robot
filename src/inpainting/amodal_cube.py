@@ -13,7 +13,7 @@ Post-processing pipeline (applied after all windows are stitched):
     1. Per-frame top-percentile threshold on the raw RGB channel sum
     2. Union with SAM2 modal mask (never lose visible pixels)
     3. Clip to expanded modal bbox (reject far-flung noise)
-    4. Morph open/close + largest CC + convex hull
+    4. Morph open/close + largest CC
     5. SDF temporal smoothing (Gaussian along time axis)
 
 Content completion is a separate step: see content_completion.py (stage 8c).
@@ -129,7 +129,7 @@ def _infer(pipeline, cond_a, cond_b, res, generator):
 
 
 # ---------------------------------------------------------------------------
-# Post-processing: top-percentile + morph + convex hull + SDF smoothing
+# Post-processing: top-percentile + morph + largest-CC + SDF smoothing
 # ---------------------------------------------------------------------------
 
 def _smooth_amodal(rawsum: np.ndarray, modal: np.ndarray,
@@ -179,15 +179,9 @@ def _smooth_amodal(rawsum: np.ndarray, modal: np.ndarray,
             biggest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
             m = (labels == biggest).astype(np.uint8)
 
-        # Convex hull
-        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
-        if contours:
-            hull = cv2.convexHull(np.vstack(contours))
-            m_hull = np.zeros((H, W), dtype=np.uint8)
-            cv2.fillConvexPoly(m_hull, hull, 1)
-            m = m_hull
-
+        # No convex hull: Diffusion-VAS already amodal-completes the
+        # finger-occluded silhouette, so a convexity prior here would only
+        # destroy genuinely non-convex object shapes.
         smooth[t] = m.astype(bool)
 
     # SDF temporal smoothing
@@ -232,6 +226,14 @@ def main() -> None:
                     help="SDF temporal smoothing sigma in frames (0 = off)")
     ap.add_argument("--bbox_margin", type=int, default=25,
                     help="px margin around modal bbox for noise clipping")
+    # Parallel sharding across GPUs (windows are independent)
+    ap.add_argument("--shard_id", type=int, default=-1,
+                    help="if >=0, only compute windows where w %% num_shards == "
+                         "shard_id, then exit (run one process per GPU)")
+    ap.add_argument("--num_shards", type=int, default=1)
+    ap.add_argument("--assemble_only", action="store_true",
+                    help="skip inference; load all window checkpoints, aggregate "
+                         "and post-process into cube_mask_amodal.npy")
     args = ap.parse_args()
 
     if not (0 <= args.overlap < NUM_FRAMES):
@@ -255,11 +257,15 @@ def main() -> None:
           f"(stride={stride}, overlap={args.overlap})")
 
     depth_ckpt = f"{DEPTH_ANYTHING_CKPT_DIR}/depth_anything_v2_{args.depth_encoder}.pth"
-    print("[info] loading Diffusion-VAS amodal segmentation pipeline...",
-          flush=True)
-    pipe_mask = dvas.init_amodal_segmentation_model(DIFFUSION_VAS_MASK_CKPT)
-    depth_model = dvas.init_depth_model(depth_ckpt, args.depth_encoder)
-    pipe_mask.set_progress_bar_config(disable=False)
+    if args.assemble_only:
+        pipe_mask = depth_model = None
+        print("[info] assemble-only: skipping model load", flush=True)
+    else:
+        print("[info] loading Diffusion-VAS amodal segmentation pipeline...",
+              flush=True)
+        pipe_mask = dvas.init_amodal_segmentation_model(DIFFUSION_VAS_MASK_CKPT)
+        depth_model = dvas.init_depth_model(depth_ckpt, args.depth_encoder)
+        pipe_mask.set_progress_bar_config(disable=False)
 
     # -- Per-window inference with checkpointing --
     ckpt_dir = pd / "cube_layer" / "_amodal_ckpt"
@@ -267,27 +273,24 @@ def main() -> None:
     accum_rawsum = np.zeros((T, H, W), dtype=np.float32)
     count = np.zeros(T, dtype=np.int32)
 
-    # Resume from completed checkpoints
-    resume_from = 0
-    for w in range(len(starts)):
+    # Which windows does this process compute? (windows are independent)
+    if args.shard_id >= 0:
+        my_windows = [w for w in range(len(starts))
+                      if w % args.num_shards == args.shard_id]
+        print(f"[shard {args.shard_id}/{args.num_shards}] assigned windows "
+              f"{[w + 1 for w in my_windows]}", flush=True)
+    elif args.assemble_only:
+        my_windows = []
+    else:
+        my_windows = list(range(len(starts)))
+
+    for w in my_windows:
         cp = ckpt_dir / f"w{w:03d}.npy"
         if cp.exists():
-            rawsum_w = np.load(cp)
-            s = starts[w]
-            idx = list(range(s, min(s + NUM_FRAMES, T)))
-            for j, fi in enumerate(idx):
-                accum_rawsum[fi] += rawsum_w[j]
-                count[fi] += 1
-            resume_from = w + 1
-        else:
-            break
-    if resume_from > 0:
-        print(f"[resume] loaded {resume_from}/{len(starts)} window checkpoints",
-              flush=True)
-
-    for w, s in enumerate(starts):
-        if w < resume_from:
+            print(f"  [skip] window {w+1}/{len(starts)} already checkpointed",
+                  flush=True)
             continue
+        s = starts[w]
         idx = list(range(s, min(s + NUM_FRAMES, T)))
         widx = idx + [idx[-1]] * (NUM_FRAMES - len(idx))
         modal_t = _masks_to_tensor(modal[widx], res)
@@ -302,13 +305,28 @@ def main() -> None:
         rawsum_full = np.stack([cv2.resize(rs, (W, H),
                                            interpolation=cv2.INTER_LINEAR)
                                 for rs in rawsum])
-
-        # Checkpoint: save rawsum per window
-        np.save(ckpt_dir / f"w{w:03d}.npy", rawsum_full[:len(idx)])
+        np.save(cp, rawsum_full[:len(idx)])
         print(f"  [ckpt] saved window {w+1}/{len(starts)}", flush=True)
 
+    # Sharded workers stop after their windows; a separate --assemble_only run
+    # (or the non-sharded path below) aggregates once all checkpoints exist.
+    if args.shard_id >= 0:
+        done = sum((ckpt_dir / f"w{w:03d}.npy").exists()
+                   for w in range(len(starts)))
+        print(f"[shard {args.shard_id}] finished; "
+              f"{done}/{len(starts)} total checkpoints present", flush=True)
+        return
+
+    # Aggregate from ALL window checkpoints
+    missing = [w + 1 for w in range(len(starts))
+               if not (ckpt_dir / f"w{w:03d}.npy").exists()]
+    if missing:
+        sys.exit(f"[error] cannot assemble: missing window checkpoints {missing}")
+    for w, s in enumerate(starts):
+        rawsum_w = np.load(ckpt_dir / f"w{w:03d}.npy")
+        idx = list(range(s, min(s + NUM_FRAMES, T)))
         for j, fi in enumerate(idx):
-            accum_rawsum[fi] += rawsum_full[j]
+            accum_rawsum[fi] += rawsum_w[j]
             count[fi] += 1
 
     # -- Aggregate and post-process --

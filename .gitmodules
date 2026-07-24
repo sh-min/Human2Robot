@@ -25,3 +25,6 @@
 [submodule "third_party/mujoco_menagerie"]
 	path = third_party/mujoco_menagerie
 	url = https://github.com/google-deepmind/mujoco_menagerie.git
+[submodule "third_party/diffusion-vas"]
+	path = third_party/diffusion-vas
+	url = https://github.com/Kaihua-Chen/diffusion-vas.git

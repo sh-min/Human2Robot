@@ -67,7 +67,7 @@ def get_video_fps(video_path):
 
 
 def build_rgb_video(rgb_dir, frame_names, fps, out_path):
-    """Build a H.264 video from raw RGB frames using ffmpeg concat. Cached as _raw_video.mp4."""
+    """Build a left-rotated H.264 video from raw RGB frames. Cached as _raw_video.mp4."""
     import tempfile
     list_fd, list_path = tempfile.mkstemp(suffix=".txt")
     try:
@@ -79,7 +79,8 @@ def build_rgb_video(rgb_dir, frame_names, fps, out_path):
                 f.write(f"duration {duration}\n")
         ret = os.system(
             f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
-            f'-vcodec libx264 -r {fps} -crf 23 -pix_fmt yuv420p "{out_path}" -loglevel error'
+            f'-vf transpose=2 -vcodec libx264 -r {fps} -crf 23 '
+            f'-pix_fmt yuv420p "{out_path}" -loglevel error'
         )
         if ret != 0:
             raise RuntimeError(f"ffmpeg failed (exit {ret}) when building {out_path}")
@@ -511,7 +512,26 @@ PANEL_JS = """
 
 # JS run at save-button click time: reads window._lbl_segs directly (bypasses hidden textbox sync)
 SAVE_JS = "(ep_name, _segs_ignored) => [ep_name, JSON.stringify(window._lbl_segs || [])]"
-hidden_css = "#segments-hidden, #fps-hidden { display:none !important; }"
+APP_CSS = """
+#segments-hidden, #fps-hidden {
+  display: none !important;
+}
+
+/* Keep the labeling video compact and aligned to the left. */
+#video-player {
+  width: min(100%, 640px) !important;
+  max-width: 640px !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+
+#video-player video {
+  width: 100% !important;
+  max-width: 640px !important;
+  max-height: 360px !important;
+  object-fit: contain !important;
+}
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +659,7 @@ def main():
         share=False,
         allowed_paths=[str(Path(args.data_dir).resolve())],
         js=PANEL_JS,
-        css=hidden_css,
+        css=APP_CSS,
     )
 
 

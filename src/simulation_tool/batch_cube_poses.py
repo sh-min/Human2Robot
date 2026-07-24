@@ -1,4 +1,4 @@
-"""Run per-skill cube-pose optimization for every non-TRANS segment in a
+"""Run per-skill cube-pose optimization for every non-transition segment in a
 sequence, using its first frame.
 
 Reads <episode>/predictions.pt (skill-classifier output) and dispatches each
@@ -36,8 +36,8 @@ LETTER_TO_AXIS = {"R": "x", "L": "x",
 
 
 def parse_skill(name):
-    """'RCW'/'RCCW' → ('R', 'CW'/'CCW').  TRANS returns None."""
-    if name == "TRANS":
+    """Parse a cube-rotation label.  Trans returns None."""
+    if name == "Trans":
         return None
     if name.endswith("CCW"):
         return name[:-3], "CCW"

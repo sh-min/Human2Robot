@@ -45,7 +45,7 @@ src/simulation_tool/
 | `F` | right | cam +z |
 | `B` | left  | cam +z |
 
-`TRANS` segment는 건너뜀.
+`Trans` segment는 건너뜀.
 
 ## 사용법
 

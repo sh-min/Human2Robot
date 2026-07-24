@@ -36,7 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from utils.labels import ACTION_LABELS
+from utils.labels import ACTION_LABELS, TRANSITION_LABEL
 from skill_classifier.models import build_model
 from skill_classifier.skill_dataset import (
     SkillWindowDataset, load_recordings, VARIANT_VJEPA_KEY,
@@ -135,7 +135,7 @@ class BalancedClassSampler(Sampler):
 
     Every epoch, all samples from under-cap classes are included in full.
     For classes exceeding the cap, a fresh random subset is drawn — so the
-    model sees different TRANS (or other majority-class) samples each epoch.
+    model sees different transition (or other majority-class) samples each epoch.
     """
 
     def __init__(self, dataset, max_samples="mean"):
@@ -323,12 +323,12 @@ def main():
     # Filter per-token labels for include_trans
     include_trans = getattr(args, "include_trans", True)
     if not include_trans:
-        trans_idx = ACTION_LABELS.index("TRANS")
+        trans_idx = ACTION_LABELS.index(TRANSITION_LABEL)
         for rec in train_recs + val_recs:
             mask = rec["labels_per_token"] == trans_idx
             rec["labels_per_token"][mask] = -1
-        active_labels = [a for a in ACTION_LABELS if a != "TRANS"]
-        print("TRANS tokens masked out from training/eval samples.")
+        active_labels = [a for a in ACTION_LABELS if a != TRANSITION_LABEL]
+        print(f"{TRANSITION_LABEL} tokens masked out from training/eval samples.")
     else:
         active_labels = list(ACTION_LABELS)
     num_classes = len(active_labels)

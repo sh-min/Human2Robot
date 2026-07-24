@@ -423,7 +423,7 @@ def load_gt_labels(gt_path, num_frames):
     """
     Load gt_labels.json and return a per-frame label array (int).
     Frames not covered by any segment → -1.
-    Labels not in LABELS (e.g. TRANS for 12-class model) → -1.
+    Labels not in LABELS (e.g. Trans when transition labels are excluded) → -1.
     """
     with open(gt_path) as f:
         gt = json.load(f)

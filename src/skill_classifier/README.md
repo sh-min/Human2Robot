@@ -87,6 +87,5 @@ Per-episode outputs:
 
 ## Labels
 
-13 classes from [`utils/labels.py`](../utils/labels.py): 12 face×direction
-combinations (`BCW`, `BCCW`, …, `UCW`, `UCCW`) plus `TRANS` for transition
-frames between skills.
+6 classes from [`utils/labels.py`](../utils/labels.py):
+`Cup`, `Lock`, `Milk`, `Snack`, `Sweep`, and `Trans`.

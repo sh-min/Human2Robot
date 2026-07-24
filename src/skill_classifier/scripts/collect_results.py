@@ -102,7 +102,7 @@ def collect_long_horizon(exp_rows):
             r = json.load(open(f))
             sc, st, tc, tt = 0, 0, 0, 0
             for lb, s in r["per_class"].items():
-                if lb == "TRANS":
+                if lb == "Trans":
                     tc += s["correct"]; tt += s["total"]
                 else:
                     sc += s["correct"]; st += s["total"]

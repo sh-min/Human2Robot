@@ -31,6 +31,8 @@ import mediapy as media
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
+from contact_shadow import contact_shadow_alpha, fit_support_plane
+
 MCP_JOINT = 9   # default; --threshold_joint can override
 
 
@@ -60,6 +62,24 @@ def main() -> None:
     ap.add_argument("--edge_sigma", type=float, default=1.5,
                     help="Gaussian sigma (px) on each layer's binary mask, "
                          "producing soft alpha for alpha-blending. 0 = hard edges.")
+    ap.add_argument("--contact_shadow", dest="contact_shadow",
+                    action="store_true", default=True,
+                    help="Cast a geometry-grounded contact shadow of the robot "
+                         "onto the support surface (default on).")
+    ap.add_argument("--no_contact_shadow", dest="contact_shadow",
+                    action="store_false",
+                    help="Disable the contact shadow.")
+    ap.add_argument("--shadow_depth",
+                    default="depth_processor/depth_aligned.npy",
+                    help="Metric scene depth (T,H,W) for the plane fit.")
+    ap.add_argument("--shadow_opacity", type=float, default=0.6,
+                    help="Max darkening of the contact shadow, 0..1.")
+    ap.add_argument("--shadow_blur", type=float, default=6.0,
+                    help="Gaussian sigma (px) softening the shadow footprint.")
+    ap.add_argument("--light_dir", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"),
+                    help="Light travel direction in the camera frame; must "
+                         "match the render stage. Default: scene_lighting.")
     ap.add_argument("--threshold_joint", type=int, default=5,
                     help="MANO joint used as the front/behind depth threshold. "
                          "Default 5=idx-MCP (~0.28 m, ~2:1 front:behind split). "
@@ -82,6 +102,21 @@ def main() -> None:
     T = min(bg.shape[0], r_rgb.shape[0], cube_m.shape[0], joints_l.shape[0])
     bg, r_rgb, r_z, r_mask, cube_m = bg[:T], r_rgb[:T], r_z[:T], r_mask[:T], cube_m[:T]
     H, W = bg.shape[1], bg.shape[2]
+
+    # Contact shadow setup. Needs metric scene depth (stage 7); if absent we
+    # warn and skip rather than fail the whole composite over an optional cue.
+    scene_depth = None
+    if args.contact_shadow:
+        sd_path = pd / args.shadow_depth
+        if sd_path.exists():
+            scene_depth = np.load(sd_path)[:T]
+            F = float(ri["img_focal"])
+            cx_s, cy_s = W / 2.0, H / 2.0
+            print(f"[shadow] on: depth={sd_path.name}, opacity={args.shadow_opacity}, "
+                  f"blur={args.shadow_blur}px")
+        else:
+            print(f"[shadow] WARN: {sd_path} not found — skipping contact shadow")
+    plane = None
 
     z_mcp = np.full(T, np.nan, dtype=np.float32)
     for t in range(T):
@@ -129,6 +164,18 @@ def main() -> None:
         # into an alpha map (0..1), then the layer is alpha-blended over the
         # accumulating image. Order: bg → behind robot → cube → front robot.
         acc = bg[t].astype(np.float32)
+
+        # Contact shadow darkens the surface (bg) before the robot is drawn on
+        # top; the alpha is already zero under the robot mask.
+        if scene_depth is not None:
+            plane = fit_support_plane(scene_depth[t].astype(np.float32),
+                                      r_mask[t], F, cx_s, cy_s, prev=plane)
+            sh = contact_shadow_alpha(
+                scene_depth[t].astype(np.float32), r_z[t], r_mask[t], plane,
+                F, cx_s, cy_s, light_dir=args.light_dir,
+                opacity=args.shadow_opacity, blur=args.shadow_blur)
+            acc *= (1.0 - sh[..., None])
+
         for layer_mask, content in [
             (behind_robot, r_rgb[t]),
             (cube_m[t],    bg[t]),

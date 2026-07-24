@@ -48,6 +48,88 @@ XHAND_URDF_ROOT = os.path.join(RETARGET_DIR, "assets")
 XHAND_URDF_RIGHT = os.path.join(XHAND_URDF_ROOT, "xhand", "xhand_right.urdf")
 XHAND_URDF_LEFT  = os.path.join(XHAND_URDF_ROOT, "xhand", "xhand_left.urdf")
 
+# ---- Hand embodiments -------------------------------------------------
+# Render-side mirror of EMBODIMENTS in src/retargeting/_paths.py, which is the
+# source of truth — this copy holds only the fields the renderer needs. The two
+# modules are both named `_paths`, so importing one from the other would
+# collide; the pre-existing duplicate load_R_mano_xhand below follows the same
+# pattern. Keep the two tables in sync when adding an embodiment.
+#
+# forearm_sign: +1 if the wrist frame's +z runs wrist->elbow, -1 if it runs
+# wrist->fingertips. xhand and inspire are opposite; the depth renderer uses
+# this to decide which way the forearm leaves the wrist.
+DEX_URDF_ROOT = os.path.join(
+    REPO_ROOT, "third_party", "dex-retargeting", "assets", "robots", "hands"
+)
+EMBODIMENTS = {
+    "xhand": dict(
+        urdf="{root}/xhand/xhand_{hand}.urdf".format(
+            root=XHAND_URDF_ROOT, hand="{hand}"),
+        r_mano="R_mano_xhand_{hand}.npy",
+        wrist_offset="wrist_offset_xhand_{hand}.npy",
+        forearm_sign=+1,
+        mjcf="src/sim/mujoco_sim/assets/xhand_{hand}/xhand_{hand}.xml",
+    ),
+    "inspire": dict(
+        urdf="{root}/inspire_hand/inspire_hand_{hand}.urdf".format(
+            root=DEX_URDF_ROOT, hand="{hand}"),
+        r_mano="R_mano_inspire_{hand}.npy",
+        wrist_offset="wrist_offset_inspire_{hand}.npy",
+        forearm_sign=-1,
+        # inspire's .glb meshes carry their own PBR materials, so there is no
+        # MJCF colour table to apply.
+        mjcf=None,
+    ),
+}
+EMBODIMENT_NAMES = sorted(EMBODIMENTS)
+DEFAULT_EMBODIMENT = "xhand"
+
+
+def _spec(embodiment: str) -> dict:
+    try:
+        return EMBODIMENTS[embodiment]
+    except KeyError:
+        raise ValueError(
+            f"unknown embodiment {embodiment!r}; choose from {EMBODIMENT_NAMES}"
+        ) from None
+
+
+def urdf_for(embodiment: str, hand: str) -> str:
+    return _spec(embodiment)["urdf"].format(hand=hand)
+
+
+def mjcf_for(embodiment: str, hand: str):
+    """MJCF holding per-mesh colours, or None if the meshes are self-coloured."""
+    rel = _spec(embodiment)["mjcf"]
+    return None if rel is None else os.path.join(REPO_ROOT, rel.format(hand=hand))
+
+
+def forearm_sign(embodiment: str) -> int:
+    return _spec(embodiment)["forearm_sign"]
+
+
+def load_R_mano(embodiment: str, hand: str):
+    """Procrustes-fit MANO-wrist -> robot-wrist rotation. See
+    src/retargeting/compute_R_mano_xhand.py."""
+    import numpy as np
+    fallback = {
+        "right": np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]], dtype=np.float64),
+        "left":  np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]], dtype=np.float64),
+    }
+    p = os.path.join(XHAND_URDF_ROOT, _spec(embodiment)["r_mano"].format(hand=hand))
+    return np.load(p).astype(np.float64) if os.path.exists(p) else fallback[hand]
+
+
+def load_wrist_offset(embodiment: str, hand: str):
+    """Translation (3,) in the robot wrist frame moving the hand root so its
+    knuckles land on MANO's. Zero when absent — which is the xhand case, so
+    xhand renders exactly as it did before offsets existed."""
+    import numpy as np
+    p = os.path.join(
+        XHAND_URDF_ROOT, _spec(embodiment)["wrist_offset"].format(hand=hand)
+    )
+    return np.load(p).astype(np.float64) if os.path.exists(p) else np.zeros(3)
+
 
 def ensure_sam2_importable() -> None:
     """Make `import sam2` work without installing the submodule.

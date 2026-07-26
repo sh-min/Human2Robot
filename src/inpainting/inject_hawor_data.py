@@ -62,6 +62,8 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed_demo", type=Path, required=True)
     ap.add_argument("--hawor_npz", type=Path, required=True)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Rewrite video_rgb_imgs.mkv even when it exists")
     args = ap.parse_args()
 
     # Discover video dimensions
@@ -70,6 +72,7 @@ def main() -> None:
     img_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     img_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     cap.release()
     print(f"[info] video {img_w}x{img_h}, T_video={n_frames}")
 
@@ -117,11 +120,11 @@ def main() -> None:
 
     # E2FGVI's hand_inpaint stage reads video_rgb_imgs.mkv (ffv1), not video_L.mp4
     dst = args.processed_demo / "video_rgb_imgs.mkv"
-    if dst.exists():
+    if dst.exists() and not args.overwrite:
         print(f"[skip] {dst} exists")
     else:
         frames = media.read_video(str(video_path))
-        media.write_video(str(dst), frames, fps=10, codec="ffv1")
+        media.write_video(str(dst), frames, fps=fps, codec="ffv1")
         print(f"[ok] wrote {dst}")
 
 

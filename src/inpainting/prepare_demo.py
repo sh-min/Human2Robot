@@ -75,12 +75,14 @@ def main() -> None:
                          "defaults to the source's own FPS.")
     ap.add_argument("--glob", default="*.jpg",
                     help="(frames-dir mode only) glob pattern for images")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Rebuild video_L.mp4 and refresh the processed copy")
     args = ap.parse_args()
 
     raw_dir = args.data_root / args.demo_name / args.demo_num
     raw_mp4 = raw_dir / "video_L.mp4"
 
-    if raw_mp4.exists():
+    if raw_mp4.exists() and not args.overwrite:
         print(f"[skip] {raw_mp4} exists")
     elif args.input.is_dir():
         fps = args.fps if args.fps is not None else 10.0
@@ -93,8 +95,12 @@ def main() -> None:
         raise FileNotFoundError(f"--input not a dir or file: {args.input}")
 
     processed_dir = args.processed_root / args.demo_name / args.demo_num
-    if processed_dir.exists():
+    if processed_dir.exists() and not args.overwrite:
         print(f"[skip] {processed_dir} already copied")
+    elif processed_dir.exists():
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(raw_mp4, processed_dir / "video_L.mp4")
+        print(f"[ok] refreshed {processed_dir / 'video_L.mp4'}")
     else:
         processed_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(raw_dir, processed_dir)

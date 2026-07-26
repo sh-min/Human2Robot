@@ -347,6 +347,8 @@ src/inpainting/
 │   # standalone utilities
 ├── content_completion.py              #     Diffusion-VAS content completion (not in pipeline)
 ├── regularize_and_cut_cube.py         #     legacy cube mask cleanup (not in pipeline)
+├── render_rby1_xhand_full_arm.py      #     local full 7-DOF RBY1 arm + XHand overlay
+├── visualize_pipeline_grid.py         #     raw/mask/background/robot/final comparison
 │
 ├── render_xhand_overlay.py            #     shared render helpers: embodiment resolve + URDF/MJCF parse + FK (imported by render_xhand_overlay_depth)
 │

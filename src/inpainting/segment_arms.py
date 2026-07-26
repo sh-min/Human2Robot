@@ -1,4 +1,4 @@
-"""SAM2 arm/hand segmentation given precise HaWoR-derived bbox prompts.
+"""SAM2 full hand/arm segmentation from HaWoR hand prompts.
 
 Minimal port of phantom's `ArmSegmentationProcessor`, dropping:
   - Detectron2 bbox refinement (we already inject precise bboxes via
@@ -15,9 +15,11 @@ Inputs (already produced by prepare_demo.py + inject_hawor_data.py):
 Output:
     <processed_demo>/segmentation_processor/masks_arm.npy   (T, H, W) bool
 
-Per hand: SAM2 propagates from the highest-quality seed frame (max distance to
-edge), both forward and reverse. Then the two passes are unioned. Left and
-right hand masks are unioned again to produce a single bimanual mask.
+Per hand, the HaWoR wrist-to-palm direction is extrapolated onto the forearm.
+Those extra positive points keep SAM2 on the connected human limb rather than
+returning only the hand inside the original detector box. SAM2 is propagated
+forward and backward and the component connected to the hand prompts is kept.
+Left and right masks are finally unioned into a bimanual hand+arm mask.
 
 Usage:
     python segment_arms.py --processed_demo /result/cam0_inpaint/cam0/0
@@ -29,6 +31,7 @@ import sys
 from pathlib import Path
 
 import mediapy as media
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -39,6 +42,137 @@ ensure_sam2_importable()
 from sam2.build_sam import build_sam2_video_predictor  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+PALM_IDXS = (5, 9, 13, 17)
+
+
+def _augment_with_forearm_points(kpts_2d: np.ndarray,
+                                 img_h: int,
+                                 img_w: int) -> np.ndarray:
+    """Append positive prompts extending from palm through wrist into forearm.
+
+    MANO joint 0 is the wrist, while the four MCP joints provide a stable palm
+    centre.  Extrapolating wrist - palm stays on the forearm even when the arm
+    bends farther away from the hand.
+    """
+    out = []
+    for points in np.asarray(kpts_2d, dtype=np.float32):
+        wrist = points[0]
+        palm = points[list(PALM_IDXS)].mean(axis=0)
+        direction = wrist - palm
+        length = float(np.linalg.norm(direction))
+        if not np.isfinite(length) or length < 1.0:
+            extra = np.repeat(wrist[None], 3, axis=0)
+        else:
+            extra = np.stack([
+                wrist + direction * scale
+                for scale in (0.75, 1.5, 2.5)
+            ])
+        augmented = np.concatenate([points, extra], axis=0)
+        augmented[:, 0] = np.clip(augmented[:, 0], 0, img_w - 1)
+        augmented[:, 1] = np.clip(augmented[:, 1], 0, img_h - 1)
+        out.append(augmented.astype(np.float32))
+    return np.stack(out)
+
+
+def _expand_boxes_to_prompts(bboxes: np.ndarray,
+                             points: np.ndarray,
+                             img_h: int,
+                             img_w: int) -> np.ndarray:
+    """Expand each hand box just enough to include its forearm prompts."""
+    expanded = np.asarray(bboxes, dtype=np.float32).copy()
+    for i, pts in enumerate(points):
+        x1, y1, x2, y2 = expanded[i]
+        hand_size = max(float(x2 - x1), float(y2 - y1), 1.0)
+        margin = 0.12 * hand_size
+        expanded[i] = [
+            max(0.0, min(x1, float(pts[:, 0].min())) - margin),
+            max(0.0, min(y1, float(pts[:, 1].min())) - margin),
+            min(float(img_w - 1), max(x2, float(pts[:, 0].max())) + margin),
+            min(float(img_h - 1), max(y2, float(pts[:, 1].max())) + margin),
+        ]
+    return expanded
+
+
+def _component_at_prompts(mask: np.ndarray,
+                          points: np.ndarray,
+                          previous: np.ndarray | None = None) -> np.ndarray:
+    """Keep the SAM component attached to the hand/forearm prompts.
+
+    This removes disconnected table/object leaks without imposing the old hand
+    bounding-box crop, which was the reason the human forearm disappeared.
+    """
+    binary = np.asarray(mask, dtype=np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    if count <= 1:
+        return binary.astype(bool)
+
+    scores = np.zeros(count, dtype=np.float64)
+    h, w = binary.shape
+    for x, y in np.asarray(points):
+        xi = int(np.clip(round(float(x)), 0, w - 1))
+        yi = int(np.clip(round(float(y)), 0, h - 1))
+        label = labels[yi, xi]
+        if label > 0:
+            scores[label] += 1_000_000.0
+    if previous is not None and previous.any():
+        overlap_labels, overlap_counts = np.unique(labels[previous], return_counts=True)
+        for label, overlap in zip(overlap_labels, overlap_counts):
+            if label > 0:
+                scores[label] += float(overlap) * 100.0
+    scores[1:] += stats[1:, cv2.CC_STAT_AREA]
+    keep = int(np.argmax(scores[1:]) + 1)
+    selected = (labels == keep).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    selected = cv2.morphologyEx(selected, cv2.MORPH_CLOSE, kernel)
+    return selected.astype(bool)
+
+
+def _repair_temporal_mask_outliers(masks: np.ndarray,
+                                   ratio_threshold: float = 2.0,
+                                   radius: int = 3) -> tuple[np.ndarray, list[int]]:
+    """Replace isolated SAM leaks with adjacent, temporally stable masks.
+
+    A connected SAM component can occasionally jump from the arm onto the
+    similarly coloured table for exactly one frame.  Genuine arm motion is
+    gradual in this dataset, whereas those leaks make the mask area more than
+    twice the local median.  Using the union of the nearest stable neighbours
+    preserves the complete hand/arm silhouette without retaining the table.
+    """
+    repaired = np.asarray(masks, dtype=bool).copy()
+    if len(repaired) < 3:
+        return repaired, []
+
+    areas = repaired.reshape(len(repaired), -1).sum(axis=1).astype(np.float64)
+    local_median = np.array([
+        np.median(areas[max(0, idx - radius):min(len(areas), idx + radius + 1)])
+        for idx in range(len(areas))
+    ])
+    outlier = areas > ratio_threshold * np.maximum(local_median, 1.0)
+    repaired_indices: list[int] = []
+
+    for idx in np.flatnonzero(outlier):
+        previous = next(
+            (j for j in range(idx - 1, max(-1, idx - radius - 1), -1)
+             if not outlier[j]),
+            None,
+        )
+        following = next(
+            (j for j in range(idx + 1, min(len(repaired), idx + radius + 1))
+             if not outlier[j]),
+            None,
+        )
+        if previous is None and following is None:
+            continue
+        if previous is None:
+            replacement = repaired[following]
+        elif following is None:
+            replacement = repaired[previous]
+        else:
+            replacement = repaired[previous] | repaired[following]
+        repaired[idx] = replacement
+        repaired_indices.append(int(idx))
+
+    return repaired, repaired_indices
 
 
 def _dump_frames_as_jpegs(video_path: Path, dst_dir: Path) -> int:
@@ -58,29 +192,34 @@ def _dump_frames_as_jpegs(video_path: Path, dst_dir: Path) -> int:
 def _segment_one_pass(
     video_predictor,
     video_dir: Path,
-    bbox: np.ndarray,
-    kpts_2d: np.ndarray,    # (P, 2) point prompts for the seed frame
-    seed_frame_idx: int,
+    prompt_bboxes: np.ndarray,
+    prompt_kpts_2d: np.ndarray,  # (K, P, 2) point prompts
+    prompt_frame_indices: np.ndarray,
     reverse: bool,
     labels: np.ndarray = None,   # (P,) 1=positive, 0=negative; default all positive
 ) -> dict:
     """One SAM2 propagation pass (forward or backward in time) from a single
     seed frame. Returns {frame_idx: mask (1, H, W) bool}. Always reads
     forward-ordered JPEGs; `reverse` flips propagation direction in SAM2."""
-    if labels is None:
-        labels = np.ones(len(kpts_2d), dtype=np.int32)
     with torch.inference_mode(), torch.autocast(DEVICE, dtype=torch.bfloat16):
         state = video_predictor.init_state(video_path=str(video_dir),
                                            offload_video_to_cpu=True)
         video_predictor.reset_state(state)
-        video_predictor.add_new_points_or_box(
-            state,
-            frame_idx=int(seed_frame_idx),
-            obj_id=0,
-            box=np.asarray(bbox, dtype=np.float32),
-            points=np.asarray(kpts_2d, dtype=np.float32),
-            labels=np.asarray(labels, dtype=np.int32),
-        )
+        for bbox, kpts_2d, frame_idx in zip(
+            prompt_bboxes, prompt_kpts_2d, prompt_frame_indices
+        ):
+            frame_labels = (
+                np.ones(len(kpts_2d), dtype=np.int32)
+                if labels is None else np.asarray(labels, dtype=np.int32)
+            )
+            video_predictor.add_new_points_or_box(
+                state,
+                frame_idx=int(frame_idx),
+                obj_id=0,
+                box=np.asarray(bbox, dtype=np.float32),
+                points=np.asarray(kpts_2d, dtype=np.float32),
+                labels=frame_labels,
+            )
         segments = {}
         for out_frame_idx, _, out_mask_logits in video_predictor.propagate_in_video(
             state, reverse=reverse,
@@ -107,15 +246,32 @@ def _segment_hand(
         return masks
 
     seed_idx = int(np.argmax(bbox_min_dist))
-    seed_bbox = bboxes[seed_idx]
-    seed_kpts = kpts_2d[seed_idx]
-    print(f"  seed frame={seed_idx} bbox={seed_bbox.round(1).tolist()}")
+    valid_indices = np.flatnonzero(hand_detected)
+    prompt_indices = np.unique(np.concatenate([
+        valid_indices[::30],
+        np.array([seed_idx, valid_indices[-1]], dtype=np.int64),
+    ]))
+    arm_points = _augment_with_forearm_points(kpts_2d, img_h, img_w)
+    arm_boxes = _expand_boxes_to_prompts(bboxes, arm_points, img_h, img_w)
+    print(f"  seed frame={seed_idx} bbox={arm_boxes[seed_idx].round(1).tolist()} "
+          f"({len(prompt_indices)} temporal prompts)")
 
     for reverse in (False, True):
         out = _segment_one_pass(video_predictor, frames_dir,
-                                seed_bbox, seed_kpts, seed_idx, reverse=reverse)
+                                arm_boxes[prompt_indices], arm_points[prompt_indices],
+                                prompt_indices, reverse=reverse)
         for idx, m in out.items():
             masks[idx] |= m[0]
+
+    # Keep only the component attached to the hand/forearm prompts.  Crucially,
+    # do not crop to the hand bbox: that old crop amputated the forearm.
+    previous = None
+    for idx in range(n_frames):
+        prompt_idx = int(valid_indices[np.argmin(np.abs(valid_indices - idx))])
+        masks[idx] = _component_at_prompts(
+            masks[idx], arm_points[prompt_idx], previous,
+        )
+        previous = masks[idx]
     return masks
 
 
@@ -153,8 +309,10 @@ def _segment_arms_egodex(video_predictor, frames_dir: Path, arm_kpts,
     print(f"  EgoDex arm seed frame={seed}: {len(pos)} arm pts, {len(far)} bg negatives")
 
     for reverse in (False, True):
-        out = _segment_one_pass(video_predictor, frames_dir, box, pts, seed,
-                                reverse=reverse, labels=labels)
+        out = _segment_one_pass(
+            video_predictor, frames_dir, box[None], pts[None],
+            np.array([seed]), reverse=reverse, labels=labels
+        )
         for idx, m in out.items():
             masks[idx] |= m[0]
     return masks
@@ -215,6 +373,9 @@ def main() -> None:
             img_h, img_w,
         )
         masks = left_masks | right_masks
+    masks, repaired_indices = _repair_temporal_mask_outliers(masks)
+    if repaired_indices:
+        print(f"[repair] temporal SAM leak frames: {repaired_indices}")
     per_frame = masks.sum(axis=(1, 2))
     print(f"[info] frames with mask: {(per_frame > 0).sum()}/{n_frames}, "
           f"avg {per_frame.mean():.0f} px, max {per_frame.max()} px")

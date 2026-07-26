@@ -348,9 +348,9 @@ src/inpainting/
 ├── content_completion.py              #     Diffusion-VAS content completion (not in pipeline)
 ├── regularize_and_cut_cube.py         #     legacy cube mask cleanup (not in pipeline)
 │
-│   # legacy renderer + orchestrator (deprecated but kept)
-├── render_xhand_overlay.py            #     pyrender + arm-mask clip
-├── run.py                             #     legacy orchestrator
+├── render_xhand_overlay.py            #     shared render helpers: embodiment resolve + URDF/MJCF parse + FK (imported by render_xhand_overlay_depth)
+│
+│   # legacy (deprecated but kept)
 ├── crop_cube_layer.py                 #     legacy depth-only cube mask
 │
 │   # debug visualizers

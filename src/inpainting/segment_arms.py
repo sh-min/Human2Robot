@@ -47,7 +47,8 @@ PALM_IDXS = (5, 9, 13, 17)
 
 def _augment_with_forearm_points(kpts_2d: np.ndarray,
                                  img_h: int,
-                                 img_w: int) -> np.ndarray:
+                                 img_w: int,
+                                 scales: tuple[float, ...]) -> np.ndarray:
     """Append positive prompts extending from palm through wrist into forearm.
 
     MANO joint 0 is the wrist, while the four MCP joints provide a stable palm
@@ -61,11 +62,11 @@ def _augment_with_forearm_points(kpts_2d: np.ndarray,
         direction = wrist - palm
         length = float(np.linalg.norm(direction))
         if not np.isfinite(length) or length < 1.0:
-            extra = np.repeat(wrist[None], 3, axis=0)
+            extra = np.repeat(wrist[None], len(scales), axis=0)
         else:
             extra = np.stack([
                 wrist + direction * scale
-                for scale in (0.75, 1.5, 2.5)
+                for scale in scales
             ])
         augmented = np.concatenate([points, extra], axis=0)
         augmented[:, 0] = np.clip(augmented[:, 0], 0, img_w - 1)
@@ -239,6 +240,7 @@ def _segment_hand(
     kpts_2d: np.ndarray,
     img_h: int,
     img_w: int,
+    forearm_scales: tuple[float, ...],
 ) -> np.ndarray:
     """Run forward+reverse SAM2 propagation for one hand. Returns (T,H,W) bool."""
     masks = np.zeros((n_frames, img_h, img_w), dtype=bool)
@@ -251,7 +253,9 @@ def _segment_hand(
         valid_indices[::30],
         np.array([seed_idx, valid_indices[-1]], dtype=np.int64),
     ]))
-    arm_points = _augment_with_forearm_points(kpts_2d, img_h, img_w)
+    arm_points = _augment_with_forearm_points(
+        kpts_2d, img_h, img_w, forearm_scales,
+    )
     arm_boxes = _expand_boxes_to_prompts(bboxes, arm_points, img_h, img_w)
     print(f"  seed frame={seed_idx} bbox={arm_boxes[seed_idx].round(1).tolist()} "
           f"({len(prompt_indices)} temporal prompts)")
@@ -328,6 +332,14 @@ def main() -> None:
                          "falls back to hand-bbox seeding.")
     ap.add_argument("--keep_tmp", action="store_true",
                     help="Keep original_images/ and original_images_reverse/ for debugging")
+    ap.add_argument("--forearm_scales", type=float, nargs="+",
+                    default=[0.75, 1.5, 2.5],
+                    help="Wrist-minus-palm extrapolation scales used as SAM2 "
+                         "positive prompts. Use e.g. 0.75 1.5 2.5 4 6 to "
+                         "continue through a long sleeve to the frame edge.")
+    ap.add_argument("--output", type=Path, default=None,
+                    help="Output mask path. Default: "
+                         "<processed_demo>/segmentation_processor/masks_arm.npy")
     args = ap.parse_args()
 
     if not Path(SAM2_CHECKPOINT).exists():
@@ -364,13 +376,13 @@ def main() -> None:
             video_predictor, frames_dir, n_frames,
             bbox["left_bboxes"], bbox["left_bbox_min_dist_to_edge"],
             bbox["left_hand_detected"], hd_l["kpts_2d"][:n_frames],
-            img_h, img_w,
+            img_h, img_w, tuple(args.forearm_scales),
         )
         right_masks = _segment_hand(
             video_predictor, frames_dir, n_frames,
             bbox["right_bboxes"], bbox["right_bbox_min_dist_to_edge"],
             bbox["right_hand_detected"], hd_r["kpts_2d"][:n_frames],
-            img_h, img_w,
+            img_h, img_w, tuple(args.forearm_scales),
         )
         masks = left_masks | right_masks
     masks, repaired_indices = _repair_temporal_mask_outliers(masks)
@@ -382,8 +394,10 @@ def main() -> None:
 
     out_dir = pd / "segmentation_processor"
     out_dir.mkdir(parents=True, exist_ok=True)
-    np.save(out_dir / "masks_arm.npy", masks)
-    print(f"[ok] wrote {out_dir / 'masks_arm.npy'}")
+    output = args.output or (out_dir / "masks_arm.npy")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.save(output, masks)
+    print(f"[ok] wrote {output}")
 
     if not args.keep_tmp:
         shutil.rmtree(frames_dir, ignore_errors=True)

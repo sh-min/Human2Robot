@@ -60,17 +60,36 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--processed_demo", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--robot_only", type=Path, default=None,
+                    help="Override the robot-only video.")
+    ap.add_argument("--final", type=Path, default=None,
+                    help="Override the final composite video.")
     args = ap.parse_args()
 
     pd = args.processed_demo
     raw_path = pd / "video_L.mp4"
-    robot_only_path = pd / "overlay_processor_arm" / "video_robot_only.mkv"
+    robot_only_candidates = [
+        pd / "overlay_processor" / "video_robot_only.mp4",
+        pd / "overlay_processor_arm" / "video_robot_only.mkv",
+    ]
+    robot_only_path = (
+        args.robot_only
+        if args.robot_only is not None
+        else next((p for p in robot_only_candidates if p.exists()),
+                  robot_only_candidates[0])
+    )
     overlay_path = pd / "overlay_processor" / "video_overlay_raw.mkv"
     final_candidates = [
+        pd / "video_overlay_rby1_xhand.mp4",
         pd / "video_overlay_rby1_xhand.mkv",
+        pd / "video_overlay_xhand.mp4",
         pd / "video_overlay_xhand.mkv",
     ]
-    final_path = next((p for p in final_candidates if p.exists()), None)
+    final_path = (
+        args.final
+        if args.final is not None
+        else next((p for p in final_candidates if p.exists()), None)
+    )
     arm_path = pd / "segmentation_processor" / "masks_arm.npy"
     residual_path = pd / "overlay_processor" / "residual_mask.npy"
     bg_path = pd / "inpaint_processor" / "video_human_inpaint.mkv"

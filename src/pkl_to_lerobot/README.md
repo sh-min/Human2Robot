@@ -2,7 +2,8 @@
 
 Converts the output of the retargeting pipeline (`final_pose.pkl` + robot-composite video) into a
 [LeRobot v3.0](https://huggingface.co/docs/lerobot) dataset that can be directly used for
-training **Diffusion Policy** (via `lerobot-train`) or **GR00T N1** (via `gr00t_finetune.py`).
+training **Diffusion Policy** (LeRobot v3) or **GR00T N1.7** (exported
+LeRobot v2.1).
 Video frames are downscaled to 224×224 during encoding so they match the default
 Diffusion Policy image encoder.
 
@@ -31,7 +32,11 @@ PYTHONPATH=$PWD/src python -m pkl_to_lerobot.convert_batch \
     --data_root data/raw \
     --out_dir data/lerobot_xhand_dataset \
     --visual_source auto \
-    --task "manipulate rubik's cube"
+    --object_spec configs/objects/cube.yaml
+
+# Or run trajectory export, validation, v3 conversion, and v2.1 export:
+OBJECT_SPEC=configs/objects/cube.yaml \
+  bash scripts/prepare_policy_dataset.sh
 ```
 
 ---
@@ -87,8 +92,14 @@ skill2policy/
             │   └── chunk-000/
             │       └── file-000.parquet   ← per-episode metadata + stats
             ├── stats.json            ← aggregate normalization stats
-            └── modality.json         ← GR00T N1 modality config
+            ├── modality.json         ← GR00T modality mapping
+            └── object_spec.json      ← normalized object/task configuration
 ```
+
+The GR00T v2.1 output root contains `meta/episodes.jsonl`,
+`meta/tasks.jsonl`, and the official language mapping
+`annotation.human.task_description`. Large parquet/video files are
+hard-linked when both outputs share a filesystem.
 
 ---
 
@@ -125,7 +136,11 @@ When using per-hand pkl files (which lack wrist info), the wrist fields are zero
 | Mode | Formula | Use Case |
 |------|---------|----------|
 | `absolute` (default) | `action[t] = state[t+1]` | Simpler; good for Diffusion Policy |
-| `delta` | `action[t] = state[t+1] - state[t]` | GR00T N1 relative mode |
+| `delta` | `action[t] = state[t+1] - state[t]` | Legacy/custom policies only |
+
+GR00T should use the default absolute dataset. Its
+`ActionRepresentation.RELATIVE` setting performs the relative transform
+inside the official processor; pre-delta actions would apply it twice.
 
 ```bash
 # Use delta actions
@@ -150,18 +165,11 @@ lerobot-train --config_path src/policy/config/diffusion_xhand.yaml \
     --dataset.root=data/lerobot_xhand_dataset
 ```
 
-### GR00T N1
+### GR00T N1.7
 
 ```bash
-# Install Isaac-GR00T (separate repo)
-# See: https://github.com/NVIDIA/Isaac-GR00T
-
-# Train
-python gr00t_finetune.py \
-    --dataset-path data/lerobot_xhand_dataset \
-    --modality-config-path src/policy/config/groot_xhand_config.py \
-    --embodiment-tag NEW_EMBODIMENT \
-    --num-gpus 1
+bash scripts/bootstrap_groot.sh
+OBJECT_SPEC=configs/objects/cube.yaml bash scripts/train_groot_policy.sh
 ```
 
 ---
@@ -192,7 +200,7 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
 | `--fps` | `30.0` | Video frame rate |
 | `--action_mode` | `absolute` | `absolute` or `delta` |
 | `--img_glob` | `frame_*.jpg` | Glob pattern for RGB frames |
-| `--task` | `manipulate cube` | Task description string |
+| `--task` | `manipulate object` | Task description string |
 | `--visual_source` | `auto` | Prefer robot composite; `robot`, `rgb`, or a path also accepted |
 
 ### `convert_batch`
@@ -204,7 +212,9 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
 | `--fps` | `30.0` | Video frame rate |
 | `--action_mode` | `absolute` | `absolute` or `delta` |
 | `--img_glob` | `frame_*.jpg` | Glob pattern for RGB frames |
-| `--task` | `manipulate cube` | Task description string |
+| `--task` | object instruction or `manipulate object` | Task description string |
+| `--object_spec` | none | Shared object/task YAML copied into metadata |
+| `--episode_glob` | object spec or `*` | Episode directory name pattern |
 
 ---
 

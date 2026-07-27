@@ -1,0 +1,38 @@
+schema_version: 1
+object_id: cube
+
+task:
+  instruction: manipulate the cube
+
+geometry:
+  primitive: box
+  dimensions_m: [0.05, 0.05, 0.05]
+  scale: [1.0, 1.0, 1.0]
+  rgba: [0.2, 0.45, 0.9, 1.0]
+
+physics:
+  mass_kg: 0.068
+  friction: [0.8, 0.005, 0.0001]
+
+spawn:
+  position: [0.55, 0.0, 1.10]
+  quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+  randomization:
+    x_range: [0.48, 0.62]
+    y_range: [-0.15, 0.15]
+    z_range: [1.10, 1.10]
+    yaw_range_deg: [-180.0, 180.0]
+
+success:
+  type: lift
+  height_delta_m: 0.1
+  terminate_on_success: true
+
+control:
+  active_hands: [left]
+
+dataset:
+  recordings_root: ../../data/cube_dataset/26.07.24
+  episode_glob: "IMG_*"
+  lerobot_v3_root: ../../data/lerobot_cube_26_07_24
+  groot_v21_root: ../../data/groot_cube_26_07_24

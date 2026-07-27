@@ -371,7 +371,7 @@ def main():
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--action_mode", default="absolute", choices=["absolute", "delta"])
     ap.add_argument("--img_glob", default="frame_*.jpg")
-    ap.add_argument("--task", default="manipulate cube")
+    ap.add_argument("--task", default="manipulate object")
     ap.add_argument(
         "--visual_source",
         default="auto",

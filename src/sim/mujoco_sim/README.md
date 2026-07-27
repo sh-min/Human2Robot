@@ -57,6 +57,27 @@ What it produces:
 
 Model totals: nq=57, nu=50, nbody=54.
 
+## Object configuration
+
+Policy evaluation should pass an object spec. The scene builder replaces the
+legacy baked cube with the configured primitive or meshes, physics, free
+joint, spawn pose, and randomization.
+
+```bash
+OBJECT_SPEC=configs/objects/cube.yaml \
+  bash scripts/validate_object_setup.sh
+
+MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
+  --backend lerobot \
+  --checkpoint output/train/<run>/checkpoints/last/pretrained_model \
+  --object_spec configs/objects/cube.yaml \
+  --n_episodes 10 --save_video
+```
+
+Each reset samples x/y/z/yaw from `spawn.randomization`; use
+`--fixed_object_pose` for deterministic debugging. A `success.type: lift`
+spec produces sparse success reward and `success_rate` metrics.
+
 ## Inverse kinematics
 
 `solve_wrist_ik(model, qpos, "link_right_arm_6", pos, quat)` runs a damped

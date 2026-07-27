@@ -19,6 +19,7 @@ import pinocchio as pin
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation
 
+from object_config import load_object_spec
 from pkl_to_lerobot.schema import BIMANUAL_DIM, FINGER_DOF, PER_HAND_DIM
 
 from .ik_arm import (
@@ -27,6 +28,7 @@ from .ik_arm import (
     _arm_dof_idx,
     solve_arm_ik,
 )
+from .object_scene import temporary_object_scene
 
 REPO = Path(__file__).resolve().parents[3]
 SCENE = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
@@ -64,6 +66,9 @@ class EnvConfig:
     camera: str = "head_cam"
     active_hands: tuple[str, ...] = ("left",)
     home_qpos: np.ndarray | None = None
+    object_spec: str | Path | None = None
+    randomize_object: bool = True
+    reset_settle_steps: int = 100
 
 
 class RBY1XHandEnv(gym.Env):
@@ -80,9 +85,29 @@ class RBY1XHandEnv(gym.Env):
         if unknown:
             raise ValueError(f"Unknown active hands: {sorted(unknown)}")
 
-        self.model = mujoco.MjModel.from_xml_path(str(SCENE))
+        self.object_spec = (
+            load_object_spec(self.cfg.object_spec, check_assets=True)
+            if self.cfg.object_spec is not None
+            else None
+        )
+        self._temporary_scene = (
+            temporary_object_scene(self.cfg.object_spec)
+            if self.cfg.object_spec is not None
+            else None
+        )
+        scene_path = (
+            self._temporary_scene.path
+            if self._temporary_scene is not None
+            else SCENE
+        )
+        try:
+            self.model = mujoco.MjModel.from_xml_path(str(scene_path))
+            self.pin_model = pin.buildModelFromMJCF(str(scene_path))
+        except Exception:
+            if self._temporary_scene is not None:
+                self._temporary_scene.cleanup()
+            raise
         self.data = mujoco.MjData(self.model)
-        self.pin_model = pin.buildModelFromMJCF(str(SCENE))
         self.pin_data = self.pin_model.createData()
         self.renderer = mujoco.Renderer(
             self.model,
@@ -151,6 +176,23 @@ class RBY1XHandEnv(gym.Env):
         })
         self._step_count = 0
         self._last_ik_errors: dict[str, tuple[float, float]] = {}
+        self._success = False
+        self._object_initial_position: np.ndarray | None = None
+        self._object_body_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            "object_root",
+        )
+        self._object_free_qadr: int | None = None
+        if self._object_body_id >= 0:
+            joint_id = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                "object_free",
+            )
+            if joint_id < 0:
+                raise ValueError("object_root has no object_free joint")
+            self._object_free_qadr = int(self.model.jnt_qposadr[joint_id])
 
     def _actuator_id(self, name: str) -> int:
         actuator_id = mujoco.mj_name2id(
@@ -191,6 +233,82 @@ class RBY1XHandEnv(gym.Env):
                 qadr = self.model.jnt_qposadr[joint]
                 self.data.ctrl[actuator] = self.data.qpos[qadr]
 
+    def _sample_object_pose(
+        self,
+        options: dict | None,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        if self.object_spec is None or self._object_free_qadr is None:
+            return None
+        spawn = self.object_spec["spawn"]
+        position = np.asarray(spawn["position"], dtype=np.float64).copy()
+        quaternion = np.asarray(
+            spawn["quaternion_xyzw"], dtype=np.float64
+        )
+        randomization = spawn.get("randomization", {})
+        if self.cfg.randomize_object:
+            for index, key in enumerate(("x_range", "y_range", "z_range")):
+                if key in randomization:
+                    position[index] = self.np_random.uniform(
+                        *randomization[key]
+                    )
+            if "yaw_range_deg" in randomization:
+                yaw = self.np_random.uniform(*randomization["yaw_range_deg"])
+                quaternion = (
+                    Rotation.from_euler("z", yaw, degrees=True)
+                    * Rotation.from_quat(quaternion)
+                ).as_quat()
+        if options and "object_position" in options:
+            position = np.asarray(
+                options["object_position"], dtype=np.float64
+            )
+        if options and "object_quaternion_xyzw" in options:
+            quaternion = np.asarray(
+                options["object_quaternion_xyzw"], dtype=np.float64
+            )
+        if position.shape != (3,) or quaternion.shape != (4,):
+            raise ValueError("Object reset pose must be xyz + xyzw")
+        quaternion /= np.linalg.norm(quaternion)
+        return position, quaternion
+
+    def _set_object_pose(
+        self,
+        position: np.ndarray,
+        quaternion_xyzw: np.ndarray,
+    ) -> None:
+        assert self._object_free_qadr is not None
+        qadr = self._object_free_qadr
+        self.data.qpos[qadr : qadr + 3] = position
+        self.data.qpos[qadr + 3 : qadr + 7] = [
+            quaternion_xyzw[3],
+            *quaternion_xyzw[:3],
+        ]
+
+    def _object_metrics(self) -> dict:
+        if self.object_spec is None or self._object_body_id < 0:
+            return {}
+        position = self.data.xpos[self._object_body_id].copy()
+        quaternion_wxyz = self.data.xquat[self._object_body_id].copy()
+        initial = self._object_initial_position
+        height_delta = (
+            float(position[2] - initial[2])
+            if initial is not None
+            else 0.0
+        )
+        success_config = self.object_spec["success"]
+        success = False
+        if success_config["type"] == "lift":
+            success = height_delta >= success_config["height_delta_m"]
+        return {
+            "object_id": self.object_spec["object_id"],
+            "position": position.tolist(),
+            "quaternion_xyzw": [
+                *quaternion_wxyz[1:],
+                quaternion_wxyz[0],
+            ],
+            "height_delta_m": height_delta,
+            "success": success,
+        }
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
@@ -200,14 +318,30 @@ class RBY1XHandEnv(gym.Env):
             else self._default_home_qpos()
         )
         self.data.qpos[:] = home
+        sampled_pose = self._sample_object_pose(options)
+        if sampled_pose is not None:
+            self._set_object_pose(*sampled_pose)
         self._sync_ctrl_to_qpos()
         mujoco.mj_forward(self.model, self.data)
+        # Let a free object reach the support surface before defining the
+        # lift baseline. This keeps success meaningful even when a supplied
+        # spawn pose is slightly above the table.
+        if sampled_pose is not None:
+            for _ in range(max(0, int(self.cfg.reset_settle_steps))):
+                mujoco.mj_step(self.model, self.data)
+        if self._object_body_id >= 0:
+            self._object_initial_position = self.data.xpos[
+                self._object_body_id
+            ].copy()
         self._step_count = 0
         self._last_ik_errors = {}
-        return self._get_obs(), {
+        self._success = False
+        info = {
             "coordinate_frame": "rby1_base",
             "active_hands": self.cfg.active_hands,
         }
+        info.update(self._object_metrics())
+        return self._get_obs(), info
 
     def step(self, action):
         action = np.asarray(action, dtype=np.float32)
@@ -251,8 +385,15 @@ class RBY1XHandEnv(gym.Env):
         self._last_ik_errors = errors
         self._step_count += 1
         obs = self._get_obs()
-        reward = 0.0
-        terminated = False
+        object_metrics = self._object_metrics()
+        success = bool(object_metrics.get("success", False))
+        reward = float(success and not self._success)
+        self._success = self._success or success
+        terminated = bool(
+            success
+            and self.object_spec is not None
+            and self.object_spec["success"]["terminate_on_success"]
+        )
         truncated = self._step_count >= self.cfg.max_episode_steps
         info = {
             "ik_error": {
@@ -263,6 +404,7 @@ class RBY1XHandEnv(gym.Env):
                 for side, values in errors.items()
             }
         }
+        info.update(object_metrics)
         return obs, reward, terminated, truncated, info
 
     def _get_obs(self) -> dict:
@@ -300,3 +442,5 @@ class RBY1XHandEnv(gym.Env):
 
     def close(self):
         self.renderer.close()
+        if self._temporary_scene is not None:
+            self._temporary_scene.cleanup()

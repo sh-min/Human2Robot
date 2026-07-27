@@ -1,0 +1,46 @@
+# Copy this file to configs/objects/<object_id>.yaml and fill in the values.
+schema_version: 1
+object_id: replace_me
+
+task:
+  instruction: pick up the object
+
+geometry:
+  # Use either a primitive or mesh files. Primitive dimensions are full
+  # dimensions in metres (box: xyz, sphere: radius, cylinder/capsule:
+  # radius + full height).
+  primitive: box
+  dimensions_m: [0.05, 0.05, 0.05]
+  # visual_mesh: ../../assets/objects/replace_me/visual.obj
+  # collision_mesh: ../../assets/objects/replace_me/collision.obj
+  scale: [1.0, 1.0, 1.0]
+  rgba: [0.7, 0.7, 0.7, 1.0]
+
+physics:
+  mass_kg: 0.1
+  # sliding, torsional, rolling friction
+  friction: [0.8, 0.005, 0.0001]
+
+spawn:
+  position: [0.55, 0.0, 1.05]
+  # Config uses xyzw; MuJoCo conversion to wxyz is automatic.
+  quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+  randomization:
+    x_range: [0.45, 0.65]
+    y_range: [-0.2, 0.2]
+    z_range: [1.05, 1.05]
+    yaw_range_deg: [-180.0, 180.0]
+
+success:
+  type: lift
+  height_delta_m: 0.1
+  terminate_on_success: true
+
+control:
+  active_hands: [left]
+
+dataset:
+  recordings_root: ../../data/object_datasets/replace_me/recordings
+  episode_glob: "*"
+  lerobot_v3_root: ../../data/lerobot_replace_me
+  groot_v21_root: ../../data/groot_replace_me

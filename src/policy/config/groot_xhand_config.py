@@ -1,4 +1,4 @@
-"""GR00T N1 modality config for RBY1 + bimanual XHand.
+"""GR00T N1.7 modality config for RBY1 + bimanual XHand.
 
 Registers a NEW_EMBODIMENT config that maps the 38-D state/action vector
 (produced by pkl_to_lerobot) to GR00T's modality system.
@@ -12,12 +12,8 @@ State/action vector layout (matches pkl_to_lerobot.schema):
    34:38   left_wrist_quat
 
 Usage:
-    # Finetuning GR00T N1 on the converted dataset:
-    python gr00t_finetune.py \\
-        --dataset-path /path/to/lerobot_dataset \\
-        --modality-config-path src/policy/config/groot_xhand_config.py \\
-        --embodiment-tag NEW_EMBODIMENT \\
-        --num-gpus 1
+    OBJECT_SPEC=configs/objects/cube.yaml \\
+        bash scripts/train_groot_policy.sh
 
     # Inference:
     python standalone_inference_script.py \\
@@ -110,7 +106,7 @@ xhand_bimanual_config = {
     # Language: task instruction from annotation field in the dataset.
     "language": ModalityConfig(
         delta_indices=[0],
-        modality_keys=["annotation.human.action.task_description"],
+        modality_keys=["annotation.human.task_description"],
     ),
 }
 

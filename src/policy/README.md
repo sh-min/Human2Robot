@@ -46,23 +46,37 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_offline \
 
 ---
 
-## Training: GR00T N1
+## Training: GR00T N1.7
 
-Prerequisites:
+The official repository is pinned as a submodule. Create its isolated Python
+3.12/CUDA 12.8 environment once:
+
 ```bash
-# Clone and install Isaac-GR00T
-git clone https://github.com/NVIDIA/Isaac-GR00T.git
-pip install -e Isaac-GR00T
+conda install -n base -c conda-forge uv git-lfs
+bash scripts/bootstrap_groot.sh
 ```
 
-Train:
+Before the first model load, accept access for
+`nvidia/Cosmos-Reason2-2B` on Hugging Face and authenticate. Prepare the
+official LeRobot v2.1 layout and train:
+
 ```bash
-python gr00t_finetune.py \
-    --dataset-path data/lerobot_xhand_dataset \
-    --modality-config-path src/policy/config/groot_xhand_config.py \
-    --embodiment-tag NEW_EMBODIMENT \
-    --num-gpus 1
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/prepare_policy_dataset.sh
+
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/train_groot_policy.sh
 ```
+
+The single-GPU default freezes the LLM and visual backbone, tunes the
+projector and diffusion action model, and uses batch 1 with gradient
+accumulation 8. NVIDIA recommends substantially more memory than a typical
+RTX 5080 for N1.7 fine-tuning, so this conservative default does not guarantee
+the full model will fit.
+
+Before loading weights, the training script imports the custom embodiment
+config and opens episode 0 with GR00T's own loader. Incompatible metadata
+therefore fails early instead of after a multi-gigabyte model download.
 
 ---
 
@@ -75,6 +89,7 @@ Evaluate any trained checkpoint in the simulated RBY1+XHand environment:
 MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
     --backend lerobot \
     --checkpoint /path/to/checkpoint \
+    --object_spec configs/objects/<object_id>.yaml \
     --n_episodes 10 \
     --save_video \
     --output_dir output/eval
@@ -84,12 +99,13 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
     --backend groot \
     --checkpoint /path/to/checkpoint \
     --modality_config src/policy/config/groot_xhand_config.py \
+    --object_spec configs/objects/<object_id>.yaml \
     --n_episodes 10 \
     --save_video
 ```
 
 Output:
-- `output/eval/eval_metrics.json` — episode lengths, rewards
+- `output/eval/eval_metrics.json` — episode lengths, rewards, success rate
 - `output/eval/episode_*.mp4` — rollout videos (if `--save_video`)
 
 ---
@@ -109,6 +125,8 @@ The MuJoCo environment (`src/sim/mujoco_sim/env.py`) provides:
 - **Observation space**:
   - `observation.images.head_cam`: (224, 224, 3) uint8
   - `observation.state`: (38,) float32
+- **Object/task**: loaded from `configs/objects/*.yaml`; reset samples the
+  configured pose range and lift success is reported in rollout metrics
 
 The finger targets map directly to the XHand joints. Wrist targets are
 converted to joint-limited RBY1 arm targets with inverse kinematics during

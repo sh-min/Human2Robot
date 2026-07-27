@@ -1,0 +1,62 @@
+{
+  "episode": "07_27-4",
+  "num_frames": 356,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 12,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 13,
+      "end_frame": 34,
+      "label": "Snack"
+    },
+    {
+      "start_frame": 35,
+      "end_frame": 50,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 51,
+      "end_frame": 90,
+      "label": "Lock"
+    },
+    {
+      "start_frame": 91,
+      "end_frame": 106,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 107,
+      "end_frame": 144,
+      "label": "Cup"
+    },
+    {
+      "start_frame": 145,
+      "end_frame": 158,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 159,
+      "end_frame": 189,
+      "label": "Milk"
+    },
+    {
+      "start_frame": 190,
+      "end_frame": 210,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 211,
+      "end_frame": 325,
+      "label": "Sweep"
+    },
+    {
+      "start_frame": 326,
+      "end_frame": 355,
+      "label": "Trans"
+    }
+  ]
+}

@@ -32,9 +32,12 @@ OUT = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
 _NAMES = (
     "cup_green", "cup_blue", "milk_carton", "pringles",
     "lock_box_large", "lock_box_small", "sponge", "trash_bin",
+    "cup_holder",
 )
+# 3 x 3 grid, 250 mm apart in x and 200 mm in y -- wider than the biggest
+# object's half-width plus its neighbour's, so nothing starts interpenetrating.
 OBJECTS = tuple(
-    (f"assets/{n}/{n}.xml", f"{n}_", [0.55 + 0.25 * (i // 4), -0.30 + 0.20 * (i % 4), 1.0])
+    (f"assets/{n}/{n}.xml", f"{n}_", [0.55 + 0.25 * (i // 3), -0.30 + 0.20 * (i % 3), 1.0])
     for i, n in enumerate(_NAMES)
 )
 

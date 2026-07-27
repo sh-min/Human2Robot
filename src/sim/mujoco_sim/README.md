@@ -63,6 +63,11 @@ Policy evaluation should pass an object spec. The scene builder replaces the
 legacy baked cube with the configured primitive or meshes, physics, free
 joint, spawn pose, and randomization.
 
+The base scene now includes eight bundled objects for multi-object visual and
+physics checks. Passing a spec removes those baked objects and loads exactly
+one target object. Bundled standalone MJCF specs live in
+`configs/objects/{cup_blue,cup_green,milk_carton,pringles,lock_box_large,lock_box_small,sponge,trash_bin}.yaml`.
+
 ```bash
 OBJECT_SPEC=configs/objects/cube.yaml \
   bash scripts/validate_object_setup.sh

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import tempfile
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,21 @@ def _remove_body(worldbody: ET.Element, name: str) -> bool:
     return False
 
 
+def _remove_free_object_bodies(worldbody: ET.Element) -> int:
+    """Remove top-level free bodies while preserving the fixed robot/table."""
+    removed = 0
+    for body in list(worldbody.findall("body")):
+        has_freejoint = body.find("freejoint") is not None
+        has_free_joint = any(
+            joint.get("type") == "free"
+            for joint in body.findall("joint")
+        )
+        if has_freejoint or has_free_joint:
+            worldbody.remove(body)
+            removed += 1
+    return removed
+
+
 def _absolutize_assets(root: ET.Element, base_dir: Path) -> None:
     for tag in ("mesh", "texture", "hfield"):
         for element in root.findall(f".//{tag}"):
@@ -73,6 +89,79 @@ def _add_mesh_asset(
     return name
 
 
+def _add_mjcf_object(
+    root: ET.Element,
+    worldbody: ET.Element,
+    asset: ET.Element,
+    *,
+    mjcf_path: str,
+    spawn: dict,
+    physics: dict,
+) -> None:
+    """Merge one standalone MJCF object's defaults/assets/body."""
+    source_path = Path(mjcf_path).resolve()
+    source_tree = ET.parse(source_path)
+    source_root = source_tree.getroot()
+    _absolutize_assets(source_root, source_path.parent)
+
+    source_asset = source_root.find("asset")
+    if source_asset is not None:
+        for child in source_asset:
+            asset.append(deepcopy(child))
+
+    source_default = source_root.find("default")
+    if source_default is not None:
+        target_default = root.find("default")
+        if target_default is None:
+            target_default = ET.Element("default")
+            root.insert(0, target_default)
+        for child in source_default:
+            target_default.append(deepcopy(child))
+
+    source_worldbody = source_root.find("worldbody")
+    source_body = (
+        source_worldbody.find("body")
+        if source_worldbody is not None
+        else None
+    )
+    if source_body is None:
+        raise ValueError(f"{source_path} has no worldbody/body")
+    body = deepcopy(source_body)
+    body.set("name", "object_root")
+    body.set("pos", _numbers(spawn["position"]))
+    body.set(
+        "quat",
+        _numbers(
+            [
+                spawn["quaternion_xyzw"][3],
+                *spawn["quaternion_xyzw"][:3],
+            ]
+        ),
+    )
+    for element in body.iter():
+        if element is body:
+            continue
+        name = element.get("name")
+        if name:
+            element.set("name", f"object_{name}")
+    freejoint = body.find("freejoint")
+    if freejoint is None:
+        freejoint = next(
+            (
+                joint
+                for joint in body.findall("joint")
+                if joint.get("type") == "free"
+            ),
+            None,
+        )
+    if freejoint is None:
+        raise ValueError(f"{source_path} object body has no free joint")
+    freejoint.set("name", "object_free")
+    for geom in body.iter("geom"):
+        geom.set("friction", _numbers(physics["friction"]))
+    worldbody.append(body)
+
+
 def build_object_scene(
     object_spec: str | Path,
     output_path: str | Path,
@@ -91,12 +180,26 @@ def build_object_scene(
     asset = root.find("asset")
     if worldbody is None or asset is None:
         raise ValueError(f"Invalid MuJoCo scene: {base_scene}")
+    _remove_free_object_bodies(worldbody)
     _remove_body(worldbody, "cube_root")
     _remove_body(worldbody, "object_root")
 
     geometry = spec["geometry"]
     physics = spec["physics"]
     spawn = spec["spawn"]
+    if geometry.get("mjcf"):
+        _add_mjcf_object(
+            root,
+            worldbody,
+            asset,
+            mjcf_path=geometry["mjcf"],
+            spawn=spawn,
+            physics=physics,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tree.write(output_path, encoding="unicode")
+        return output_path
+
     body = ET.SubElement(
         worldbody,
         "body",

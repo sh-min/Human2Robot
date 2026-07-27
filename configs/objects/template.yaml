@@ -13,6 +13,8 @@ geometry:
   dimensions_m: [0.05, 0.05, 0.05]
   # visual_mesh: ../../assets/objects/replace_me/visual.obj
   # collision_mesh: ../../assets/objects/replace_me/collision.obj
+  # Or use a complete one-object MJCF instead of primitive/mesh fields:
+  # mjcf: ../../src/sim/mujoco_sim/assets/replace_me/replace_me.xml
   scale: [1.0, 1.0, 1.0]
   rgba: [0.7, 0.7, 0.7, 1.0]
 

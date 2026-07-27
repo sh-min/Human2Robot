@@ -102,9 +102,17 @@ def load_object_spec(
     primitive = geometry.get("primitive")
     visual_mesh = geometry.get("visual_mesh")
     collision_mesh = geometry.get("collision_mesh")
-    if primitive is None and visual_mesh is None:
+    mjcf = geometry.get("mjcf")
+    if primitive is None and visual_mesh is None and mjcf is None:
         raise ValueError(
-            "geometry requires either primitive or visual_mesh"
+            "geometry requires primitive, visual_mesh, or mjcf"
+        )
+    if mjcf is not None and any(
+        value is not None
+        for value in (primitive, visual_mesh, collision_mesh)
+    ):
+        raise ValueError(
+            "geometry.mjcf cannot be combined with primitive or mesh fields"
         )
     if primitive is not None:
         if primitive not in _PRIMITIVES:
@@ -125,7 +133,7 @@ def load_object_spec(
             raise ValueError("geometry.dimensions_m values must be positive")
         geometry["dimensions_m"] = dimensions
 
-    for key in ("visual_mesh", "collision_mesh"):
+    for key in ("visual_mesh", "collision_mesh", "mjcf"):
         if geometry.get(key):
             geometry[key] = _resolve_path(str(geometry[key]), spec_path)
             if check_assets and not Path(geometry[key]).is_file():

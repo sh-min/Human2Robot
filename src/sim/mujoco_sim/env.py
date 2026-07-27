@@ -5,6 +5,11 @@ is finger qpos (12), wrist position in the RBY1 base frame (3), and wrist
 quaternion xyzw (4).  ``step`` therefore solves joint-limited arm IK before
 driving the MuJoCo position actuators.  Observations reconstruct the same
 38-D schema from the simulated robot state.
+
+Without an object spec, each reset scatters the eight bundled tabletop
+objects inside SPAWN_X x SPAWN_Y. With a spec, only that configured object is
+loaded and its own spawn ranges are used. Pass ``reset(seed=...)`` to make
+either mode repeatable.
 """
 
 from __future__ import annotations
@@ -56,6 +61,51 @@ def _finger_joint_names(side: str) -> tuple[str, ...]:
     return tuple(
         f"{prefix}_{side}_hand_{suffix}" for suffix in _FINGER_SUFFIXES
     )
+
+
+# Region the tabletop objects' *footprints* must stay inside on reset, in
+# world coords.  The table is 1 m deep x 2 m wide centered at (0.9, 0) with
+# its top at z=1.0, so this box keeps every object clear of the edges and
+# inside the arms' reach.  Each object's center is drawn from this box
+# shrunk by its own footprint radius, so a big container never overhangs
+# the way a fixed center-region would let it.
+SPAWN_X = (0.47, 0.92)
+SPAWN_Y = (-0.55, 0.55)
+SPAWN_Z = 1.0        # table top; each object's origin is its bottom center
+SPAWN_GAP = 0.02     # clear space left between two object footprints
+SPAWN_TRIES = 400    # rejection-sampling attempts per object
+
+
+def _footprint_radius(model, body_id: int) -> float:
+    """Radius of a circle around the body's geoms seen from above, centered
+    on the body origin.  Rotation-invariant about z, so it stays valid for
+    any yaw we spawn the object at."""
+    radius = 0.0
+    for geom in range(model.ngeom):
+        if model.geom_bodyid[geom] != body_id:
+            continue
+        mat = np.zeros(9)
+        mujoco.mju_quat2Mat(mat, model.geom_quat[geom])
+        mat = mat.reshape(3, 3)
+        size, geom_type = model.geom_size[geom], model.geom_type[geom]
+        if geom_type == mujoco.mjtGeom.mjGEOM_BOX:
+            extent = np.abs(mat) @ size
+        elif geom_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+            axis = mat[:, 2]
+            extent = (
+                np.abs(axis) * size[1]
+                + size[0] * np.sqrt(np.maximum(0, 1 - axis**2))
+            )
+        elif geom_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+            extent = np.abs(mat[:, 2]) * size[1] + size[0]
+        else:
+            extent = np.full(3, model.geom_rbound[geom])
+        pos = model.geom_pos[geom]
+        radius = max(
+            radius,
+            float(np.hypot(abs(pos[0]) + extent[0], abs(pos[1]) + extent[1])),
+        )
+    return radius
 
 
 @dataclass
@@ -141,6 +191,23 @@ class RBY1XHandEnv(gym.Env):
             ])
             for side in ("right", "left")
         }
+        # Free joints belong to the tabletop objects only -- the robot's
+        # base freejoint is deleted when the scene is composed.  Biggest
+        # first: placing the bulky objects while the table is still empty
+        # is what makes rejection sampling converge.
+        self._objects = sorted(
+            (
+                (
+                    int(self.model.jnt_qposadr[joint]),
+                    _footprint_radius(
+                        self.model, int(self.model.jnt_bodyid[joint])
+                    ),
+                )
+                for joint in range(self.model.njnt)
+                if self.model.jnt_type[joint] == mujoco.mjtJoint.mjJNT_FREE
+            ),
+            key=lambda obj: -obj[1],
+        )
 
         sim_dt = float(self.model.opt.timestep)
         ctrl_dt = 1.0 / float(self.cfg.control_freq)
@@ -225,6 +292,38 @@ class RBY1XHandEnv(gym.Env):
                 )
                 qpos[self.model.jnt_qposadr[joint]] = value
         return qpos
+
+    def _randomize_objects(self, qpos: np.ndarray) -> None:
+        """Scatter the tabletop objects over SPAWN_X x SPAWN_Y, upright and
+        with random yaw.  A sample is rejected if the object's footprint
+        would come within SPAWN_GAP of an already-placed one."""
+        placed: list[tuple[float, float, float]] = []
+        for qadr, radius in self._objects:
+            for _ in range(SPAWN_TRIES):
+                x = float(self.np_random.uniform(
+                    SPAWN_X[0] + radius, SPAWN_X[1] - radius
+                ))
+                y = float(self.np_random.uniform(
+                    SPAWN_Y[0] + radius, SPAWN_Y[1] - radius
+                ))
+                if all(
+                    (x - px) ** 2 + (y - py) ** 2
+                    >= (radius + pr + SPAWN_GAP) ** 2
+                    for px, py, pr in placed
+                ):
+                    break
+            else:
+                raise RuntimeError(
+                    f"no free spot for an object of footprint radius "
+                    f"{radius:.3f} m after {SPAWN_TRIES} tries: the spawn "
+                    f"region is too small for {len(self._objects)} objects"
+                )
+            placed.append((x, y, radius))
+            yaw = float(self.np_random.uniform(-np.pi, np.pi))
+            qpos[qadr : qadr + 3] = (x, y, SPAWN_Z)
+            qpos[qadr + 3 : qadr + 7] = (
+                np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)
+            )
 
     def _sync_ctrl_to_qpos(self) -> None:
         for actuator in range(self.model.nu):
@@ -321,12 +420,14 @@ class RBY1XHandEnv(gym.Env):
         sampled_pose = self._sample_object_pose(options)
         if sampled_pose is not None:
             self._set_object_pose(*sampled_pose)
+        elif self.cfg.randomize_object and self._objects:
+            self._randomize_objects(self.data.qpos)
         self._sync_ctrl_to_qpos()
         mujoco.mj_forward(self.model, self.data)
         # Let a free object reach the support surface before defining the
         # lift baseline. This keeps success meaningful even when a supplied
         # spawn pose is slightly above the table.
-        if sampled_pose is not None:
+        if self._objects:
             for _ in range(max(0, int(self.cfg.reset_settle_steps))):
                 mujoco.mj_step(self.model, self.data)
         if self._object_body_id >= 0:

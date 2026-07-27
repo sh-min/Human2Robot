@@ -32,14 +32,82 @@
       <joint range="0 0" armature="0" damping="0"/>
       <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
     </default>
-    <default class="cube_main">
+    <default class="cup_green_main">
       <material shininess="0.5"/>
       <joint range="0 0" armature="0" damping="0"/>
       <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
-      <default class="cube_cube_geom">
+      <default class="cup_green_cup">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" density="2400" rgba="0.2 0.62 0.34 1"/>
+      </default>
+    </default>
+    <default class="cup_blue_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="cup_blue_cup">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" density="2400" rgba="0.15 0.4 0.75 1"/>
+      </default>
+    </default>
+    <default class="milk_carton_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="milk_carton_milk">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" rgba="0.96 0.96 0.94 1"/>
+      </default>
+      <default class="milk_carton_milk_print">
+        <geom contype="0" conaffinity="0" group="1"/>
+      </default>
+    </default>
+    <default class="pringles_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="pringles_pringles">
         <geom condim="4" friction="1.2 0.05 0.001" solref="0.01"/>
       </default>
-      <default class="cube_cube_sticker">
+      <default class="pringles_pringles_print">
+        <geom contype="0" conaffinity="0" group="1"/>
+      </default>
+    </default>
+    <default class="lock_box_large_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="lock_box_large_box_geom">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" density="900" rgba="0.88 0.92 0.95 1"/>
+      </default>
+      <default class="lock_box_large_box_print">
+        <geom contype="0" conaffinity="0" group="1"/>
+      </default>
+    </default>
+    <default class="lock_box_small_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="lock_box_small_box_geom">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" density="900" rgba="0.88 0.92 0.95 1"/>
+      </default>
+      <default class="lock_box_small_box_print">
+        <geom contype="0" conaffinity="0" group="1"/>
+      </default>
+    </default>
+    <default class="sponge_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="sponge_sponge">
+        <geom condim="4" friction="1.6 0.08 0.002"/>
+      </default>
+    </default>
+    <default class="trash_bin_main">
+      <material shininess="0.5"/>
+      <joint range="0 0" armature="0" damping="0"/>
+      <general ctrllimited="auto" ctrlrange="0 0" biastype="none" gainprm="1" biasprm="0 0 0"/>
+      <default class="trash_bin_box_geom">
+        <geom condim="4" friction="1.2 0.05 0.001" solref="0.01" density="900" rgba="0.95 0.95 0.95 1"/>
+      </default>
+      <default class="trash_bin_box_print">
         <geom contype="0" conaffinity="0" group="1"/>
       </default>
     </default>
@@ -525,39 +593,128 @@
       <camera name="side_left" pos="-0.4 1.6 0.75" quat="0 0 0.6087 0.793401" fovy="70"/>
       <camera name="side_right" pos="-0.4 -1.6 0.75" quat="0.793401 0.6087 0 0" fovy="70"/>
     </body>
-    <body name="cube_root" pos="0.55 0 1.1">
-      <inertial pos="0 0 -0.0125" mass="0.034" diaginertia="9e-06 9e-06 1.4e-05"/>
-      <joint name="cube_free" type="free" range="0 0" armature="0" damping="0"/>
-      <geom name="cube_bottom" class="cube_cube_geom" size="0.025 0.025 0.0125" pos="0 0 -0.0125" type="box" rgba="0.1 0.1 0.1 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 0.0125 -0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
-      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 0.0125 -0.0125" type="box" rgba="0.9 0.15 0.15 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 0.0255 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 -0.0125 -0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
-      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 -0.0125 -0.0125" type="box" rgba="0.15 0.4 1 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 -0.0255 -0.0125" type="box" rgba="1 1 1 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 0.0125 -0.0255" type="box" rgba="1 1 1 1"/>
-      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 0.0125 -0.0125" type="box" rgba="0.15 0.75 0.25 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 0.0255 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 -0.0125 -0.0255" type="box" rgba="0.15 0.4 1 1"/>
-      <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 -0.0125 -0.0125" type="box" rgba="1 0.95 0.2 1"/>
-      <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 -0.0255 -0.0125" type="box" rgba="1 0.5 0.1 1"/>
-      <body name="cube_top">
-        <inertial pos="0 0 0.0125" mass="0.034" diaginertia="9e-06 9e-06 1.4e-05"/>
-        <joint name="cube_face" pos="0 0 0" axis="0 0 1" limited="false" range="0 0" armature="0" damping="0.002" frictionloss="0.02"/>
-        <geom name="cube_top" class="cube_cube_geom" size="0.025 0.025 0.0125" pos="0 0 0.0125" type="box" rgba="0.1 0.1 0.1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 0.0125 0.0255" type="box" rgba="0.15 0.75 0.25 1"/>
-        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 0.0125 0.0125" type="box" rgba="1 1 1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 0.0255 0.0125" type="box" rgba="0.15 0.4 1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="0.0125 -0.0125 0.0255" type="box" rgba="1 0.95 0.2 1"/>
-        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="0.0255 -0.0125 0.0125" type="box" rgba="0.15 0.75 0.25 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="0.0125 -0.0255 0.0125" type="box" rgba="1 1 1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 0.0125 0.0255" type="box" rgba="0.15 0.4 1 1"/>
-        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 0.0125 0.0125" type="box" rgba="1 0.5 0.1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 0.0255 0.0125" type="box" rgba="1 1 1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.01 0.0005" pos="-0.0125 -0.0125 0.0255" type="box" rgba="1 0.95 0.2 1"/>
-        <geom class="cube_cube_sticker" size="0.0005 0.01 0.01" pos="-0.0255 -0.0125 0.0125" type="box" rgba="0.15 0.4 1 1"/>
-        <geom class="cube_cube_sticker" size="0.01 0.0005 0.01" pos="-0.0125 -0.0255 0.0125" type="box" rgba="1 1 1 1"/>
-      </body>
+    <body name="cup_green_root" pos="0.55 -0.3 1">
+      <joint name="cup_green_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="cup_green_base" class="cup_green_cup" size="0.04 0.003" pos="0 0 0.003" type="cylinder"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.038 0 0.0555" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.03671 0.00984 0.0555" quat="0.991445 0 0 0.130526" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.03291 0.019 0.0555" quat="0.965926 0 0 0.258819" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.02687 0.02687 0.0555" quat="0.92388 0 0 0.382683" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.019 0.03291 0.0555" quat="0.866025 0 0 0.5" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.00984 0.03671 0.0555" quat="0.793353 0 0 0.608761" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0 0.038 0.0555" quat="0.707107 0 0 0.707107" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.00984 0.03671 0.0555" quat="0.608761 0 0 0.793353" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.019 0.03291 0.0555" quat="0.5 0 0 0.866025" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.02687 0.02687 0.0555" quat="0.382683 0 0 0.92388" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.03291 0.019 0.0555" quat="0.258819 0 0 0.965926" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.03671 0.00984 0.0555" quat="0.130526 0 0 0.991445" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.038 0 0.0555" quat="0 0 0 1" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.03671 -0.00984 0.0555" quat="-0.130526 0 0 0.991445" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.03291 -0.019 0.0555" quat="-0.258819 0 0 0.965926" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.02687 -0.02687 0.0555" quat="-0.382683 0 0 0.92388" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.019 -0.03291 0.0555" quat="-0.5 0 0 0.866025" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="-0.00984 -0.03671 0.0555" quat="-0.608761 0 0 0.793353" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0 -0.038 0.0555" quat="-0.707107 0 0 0.707107" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.00984 -0.03671 0.0555" quat="-0.793353 0 0 0.608761" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.019 -0.03291 0.0555" quat="-0.866025 0 0 0.5" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.02687 -0.02687 0.0555" quat="-0.92388 0 0 0.382683" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.03291 -0.019 0.0555" quat="-0.965926 0 0 0.258819" type="box"/>
+      <geom class="cup_green_cup" size="0.002 0.0051 0.0495" pos="0.03671 -0.00984 0.0555" quat="-0.991445 0 0 0.130526" type="box"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624532" pos="-0.043125 0 0.02172" quat="0.634292 0 0.773093 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624038" pos="-0.05444 0 0.026405" quat="0.471564 0 0.881832 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624038" pos="-0.063095 0 0.03506" quat="0.290103 0 0.956995 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624532" pos="-0.06778 0 0.046375" quat="0.098147 0 0.995172 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624532" pos="-0.06778 0 0.058625" quat="0.098147 0 -0.995172 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624038" pos="-0.063095 0 0.06994" quat="0.290103 0 -0.956995 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624038" pos="-0.05444 0 0.078595" quat="0.471564 0 -0.881832 0" type="capsule"/>
+      <geom class="cup_green_cup" size="0.0048 0.00624532" pos="-0.043125 0 0.08328" quat="0.634292 0 -0.773093 0" type="capsule"/>
+    </body>
+    <body name="cup_blue_root" pos="0.55 -0.1 1">
+      <joint name="cup_blue_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="cup_blue_base" class="cup_blue_cup" size="0.0375 0.003" pos="0 0 0.003" type="cylinder"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.0355 0 0.0455" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.03429 0.00919 0.0455" quat="0.991445 0 0 0.130526" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.03074 0.01775 0.0455" quat="0.965926 0 0 0.258819" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.0251 0.0251 0.0455" quat="0.92388 0 0 0.382683" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.01775 0.03074 0.0455" quat="0.866025 0 0 0.5" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.00919 0.03429 0.0455" quat="0.793353 0 0 0.608761" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0 0.0355 0.0455" quat="0.707107 0 0 0.707107" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.00919 0.03429 0.0455" quat="0.608761 0 0 0.793353" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.01775 0.03074 0.0455" quat="0.5 0 0 0.866025" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.0251 0.0251 0.0455" quat="0.382683 0 0 0.92388" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.03074 0.01775 0.0455" quat="0.258819 0 0 0.965926" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.03429 0.00919 0.0455" quat="0.130526 0 0 0.991445" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.0355 0 0.0455" quat="0 0 0 1" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.03429 -0.00919 0.0455" quat="-0.130526 0 0 0.991445" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.03074 -0.01775 0.0455" quat="-0.258819 0 0 0.965926" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.0251 -0.0251 0.0455" quat="-0.382683 0 0 0.92388" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.01775 -0.03074 0.0455" quat="-0.5 0 0 0.866025" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="-0.00919 -0.03429 0.0455" quat="-0.608761 0 0 0.793353" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0 -0.0355 0.0455" quat="-0.707107 0 0 0.707107" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.00919 -0.03429 0.0455" quat="-0.793353 0 0 0.608761" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.01775 -0.03074 0.0455" quat="-0.866025 0 0 0.5" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.0251 -0.0251 0.0455" quat="-0.92388 0 0 0.382683" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.03074 -0.01775 0.0455" quat="-0.965926 0 0 0.258819" type="box"/>
+      <geom class="cup_blue_cup" size="0.002 0.00477 0.0395" pos="0.03429 -0.00919 0.0455" quat="-0.991445 0 0 0.130526" type="box"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585211" pos="-0.04024 0 0.01364" quat="0.634507 0 0.772917 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585348" pos="-0.050845 0 0.018035" quat="0.471127 0 0.882066 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585348" pos="-0.058965 0 0.026155" quat="0.290578 0 0.956851 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585211" pos="-0.06336 0 0.03676" quat="0.0978706 0 0.995199 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585211" pos="-0.06336 0 0.04824" quat="0.0978706 0 -0.995199 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585348" pos="-0.058965 0 0.058845" quat="0.290578 0 -0.956851 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585348" pos="-0.050845 0 0.066965" quat="0.471127 0 -0.882066 0" type="capsule"/>
+      <geom class="cup_blue_cup" size="0.0048 0.00585211" pos="-0.04024 0 0.07136" quat="0.634507 0 -0.772917 0" type="capsule"/>
+    </body>
+    <body name="milk_carton_root" pos="0.55 0.1 1">
+      <joint name="milk_carton_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="milk_carton_body" class="milk_carton_milk" size="0.0275 0.0275 0.044" pos="0 0 0.044" type="box" mass="0.27"/>
+      <geom class="milk_carton_milk" size="0.017 0.0275 0.0045" pos="0.0111 0 0.09436" quat="0.950983 0 0.309244 0" type="box" mass="0.005"/>
+      <geom class="milk_carton_milk" size="0.017 0.0275 0.0045" pos="-0.0111 0 0.09436" quat="0.950983 0 -0.309244 0" type="box" mass="0.005"/>
+      <geom name="milk_carton_fin" class="milk_carton_milk" size="0.0015 0.0275 0.0035" pos="0 0 0.1115" type="box" mass="0.002"/>
+      <geom class="milk_carton_milk_print" size="0.0276 0.0276 0.014" pos="0 0 0.035" type="box" mass="0" rgba="0.05 0.35 0.7 1"/>
+    </body>
+    <body name="pringles_root" pos="0.55 0.3 1">
+      <joint name="pringles_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="pringles_tube" class="pringles_pringles" size="0.0325 0.042" pos="0 0 0.042" type="cylinder" mass="0.055" rgba="0.78 0.11 0.15 1"/>
+      <geom name="pringles_lid" class="pringles_pringles" size="0.0325 0.003" pos="0 0 0.087" type="cylinder" mass="0.01" rgba="0.9 0.9 0.88 1"/>
+      <geom class="pringles_pringles_print" size="0.0326 0.008" pos="0 0 0.075" type="cylinder" mass="0" rgba="0.95 0.95 0.93 1"/>
+    </body>
+    <body name="lock_box_large_root" pos="0.8 -0.3 1">
+      <joint name="lock_box_large_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="lock_box_large_floor" class="lock_box_large_box_geom" size="0.08 0.06 0.002" pos="0 0 0.002" type="box"/>
+      <geom class="lock_box_large_box_geom" size="0.00125 0.06 0.023" pos="0.07875 0 0.027" type="box"/>
+      <geom class="lock_box_large_box_geom" size="0.00125 0.06 0.023" pos="-0.07875 0 0.027" type="box"/>
+      <geom class="lock_box_large_box_geom" size="0.0775 0.00125 0.023" pos="0 0.05875 0.027" type="box"/>
+      <geom class="lock_box_large_box_geom" size="0.0775 0.00125 0.023" pos="0 -0.05875 0.027" type="box"/>
+      <geom class="lock_box_large_box_print" size="0.00125 0.0601 0.0045" pos="0.07885 0 0.0455" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_large_box_print" size="0.00125 0.0601 0.0045" pos="-0.07885 0 0.0455" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_large_box_print" size="0.0776 0.00125 0.0045" pos="0 0.05885 0.0455" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_large_box_print" size="0.0776 0.00125 0.0045" pos="0 -0.05885 0.0455" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+    </body>
+    <body name="lock_box_small_root" pos="0.8 -0.1 1">
+      <joint name="lock_box_small_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="lock_box_small_floor" class="lock_box_small_box_geom" size="0.065 0.045 0.002" pos="0 0 0.002" type="box"/>
+      <geom class="lock_box_small_box_geom" size="0.00125 0.045 0.0255" pos="0.06375 0 0.0295" type="box"/>
+      <geom class="lock_box_small_box_geom" size="0.00125 0.045 0.0255" pos="-0.06375 0 0.0295" type="box"/>
+      <geom class="lock_box_small_box_geom" size="0.0625 0.00125 0.0255" pos="0 0.04375 0.0295" type="box"/>
+      <geom class="lock_box_small_box_geom" size="0.0625 0.00125 0.0255" pos="0 -0.04375 0.0295" type="box"/>
+      <geom class="lock_box_small_box_print" size="0.00125 0.0451 0.0045" pos="0.06385 0 0.0505" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_small_box_print" size="0.00125 0.0451 0.0045" pos="-0.06385 0 0.0505" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_small_box_print" size="0.0626 0.00125 0.0045" pos="0 0.04385 0.0505" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+      <geom class="lock_box_small_box_print" size="0.0626 0.00125 0.0045" pos="0 -0.04385 0.0505" type="box" mass="0" rgba="0.1 0.45 0.8 1"/>
+    </body>
+    <body name="sponge_root" pos="0.8 0.1 1">
+      <joint name="sponge_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="sponge_foam" class="sponge_sponge" size="0.065 0.04 0.011" pos="0 0 0.011" type="box" mass="0.012" rgba="0.98 0.85 0.25 1"/>
+      <geom name="sponge_pad" class="sponge_sponge" size="0.065 0.04 0.004" pos="0 0 0.026" type="box" mass="0.005" rgba="0.15 0.45 0.22 1"/>
+    </body>
+    <body name="trash_bin_root" pos="0.8 0.3 1">
+      <joint name="trash_bin_free" type="free" range="0 0" armature="0" damping="0"/>
+      <geom name="trash_bin_floor" class="trash_bin_box_geom" size="0.0685 0.0685 0.0015" pos="0 0 0.0015" type="box"/>
+      <geom class="trash_bin_box_geom" size="0.001 0.0685 0.097" pos="0.0675 0 0.1" type="box"/>
+      <geom class="trash_bin_box_geom" size="0.001 0.0685 0.097" pos="-0.0675 0 0.1" type="box"/>
+      <geom class="trash_bin_box_geom" size="0.0665 0.001 0.097" pos="0 0.0675 0.1" type="box"/>
+      <geom class="trash_bin_box_geom" size="0.0665 0.001 0.097" pos="0 -0.0675 0.1" type="box"/>
     </body>
   </worldbody>
 

@@ -111,6 +111,11 @@ provide the task instruction, geometry, physics, spawn/randomization,
 success condition, active hands, episode directory glob, and dataset paths.
 Mesh assets belong under `assets/objects/<object_id>/`.
 
+Geometry may be a primitive, visual/collision meshes, or a standalone MJCF.
+The MuJoCo object branch is integrated as ready-to-use specs:
+`cup_blue`, `cup_green`, `milk_carton`, `pringles`, `lock_box_large`,
+`lock_box_small`, `sponge`, and `trash_bin`.
+
 ```bash
 # Validate the spec, assets, and generated MuJoCo scene
 OBJECT_SPEC=configs/objects/<object_id>.yaml \

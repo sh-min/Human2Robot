@@ -16,6 +16,20 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.core.config import cfg, update_config
+
+# The released demo archive stores two MANO downsampling matrices separately
+# from the HACO checkpoint. This extractor only consumes the full 778-vertex
+# contact output, so provide shape-correct placeholders when the optional
+# matrices are absent. The unused 336/84-vertex outputs become zero while the
+# full-resolution prediction remains unchanged.
+for matrix_name, rows in (('V_regressor_336.npy', 336), ('V_regressor_84.npy', 84)):
+    matrix_path = os.path.join(
+        HACO_DIR, 'data', 'base_data', 'human_models', 'mano', matrix_name
+    )
+    if not os.path.exists(matrix_path):
+        os.makedirs(os.path.dirname(matrix_path), exist_ok=True)
+        np.save(matrix_path, np.zeros((rows, 778), dtype=np.float32))
+
 from lib.models.model import HACO
 from lib.utils.human_models import mano
 from lib.utils.contact_utils import get_contact_thres
@@ -94,10 +108,10 @@ def render_hand(mesh, img_res=400, flip_front_back=True):
         light_pose[:3, 3] = np.array(lp)
         scene.add(light, pose=light_pose.copy())
 
-    material = pyrender.MetallicRoughnessMaterial(
-        metallicFactor=0.0, alphaMode='OPAQUE', baseColorFactor=(1.0, 1.0, 0.9, 1.0)
-    )
-    scene.add(pyrender.Mesh.from_trimesh(centered, material=material))
+    # Keep the per-vertex colors assigned by build_contact_mesh: gray for the
+    # full hand and green for HACO contact vertices. Supplying a single
+    # material here would override those colors and hide the contact result.
+    scene.add(pyrender.Mesh.from_trimesh(centered, smooth=False))
 
     r = pyrender.OffscreenRenderer(img_res, img_res)
     color, _ = r.render(scene, flags=pyrender.RenderFlags.RGBA)
@@ -171,6 +185,12 @@ def main():
 
     update_config(backbone_type=args.backbone, exp_dir='experiments_demo_image')
 
+    # The released HACO checkpoint already contains the complete HaMeR
+    # backbone. Reuse it for the constructor's initial backbone load so the
+    # separate multi-gigabyte demo base_data archive is not required.
+    if args.backbone == 'hamer':
+        cfg.MODEL.hamer_backbone_pretrained_path = args.checkpoint
+
     model = HACO().to(device)
     model.eval()
     if args.checkpoint:
@@ -193,11 +213,13 @@ def main():
         from torchvision.transforms import Normalize
         normalize = Normalize(mean=cfg.MODEL.img_mean, std=cfg.MODEL.img_std)
 
-    for frame_file in tqdm(images):
+    for image_idx, frame_file in enumerate(tqdm(images)):
         frame_key = os.path.splitext(frame_file)[0]
-
-        frame_number = int(''.join(c for c in frame_key if c.isdigit()))
-        frame_idx = frame_number - hawor_start
+        # HaWoR indexes the sorted input sequence, not the numeric portion of
+        # the filename.  Some recordings are named 000000.jpg while others
+        # start at 000001.jpg, so parsing the stem shifts every prediction by
+        # one frame and drops the final frame for the latter recordings.
+        frame_idx = image_idx - hawor_start
 
         if frame_idx < 0 or frame_idx >= hawor_valid['left'].shape[0]:
             continue

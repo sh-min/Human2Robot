@@ -38,6 +38,21 @@ import numpy as np
 import torch
 from natsort import natsorted
 
+# HaWoR checkpoints contain OmegaConf objects in addition to tensor weights.
+# PyTorch 2.6 changed torch.load's default to weights_only=True, while the
+# upstream HaWoR loader still relies on the legacy full-checkpoint behavior.
+# Keep explicit caller choices intact and restore that behavior only when the
+# upstream code does not pass weights_only itself.
+_torch_load = torch.load
+
+
+def _torch_load_hawor_compat(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _torch_load(*args, **kwargs)
+
+
+torch.load = _torch_load_hawor_compat
+
 from scripts.scripts_test_video.detect_track_video import detect_track_video
 from scripts.scripts_test_video.hawor_video import (
     hawor_motion_estimation,

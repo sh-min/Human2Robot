@@ -19,7 +19,10 @@ Per hand, the HaWoR wrist-to-palm direction is extrapolated onto the forearm.
 Those extra positive points keep SAM2 on the connected human limb rather than
 returning only the hand inside the original detector box. SAM2 is propagated
 forward and backward and the component connected to the hand prompts is kept.
-Left and right masks are finally unioned into a bimanual hand+arm mask.
+Left and right masks are finally unioned into a bimanual hand+arm mask, then
+denoised (`_smooth_masks`, default on): detached specks removed, holes closed,
+per-pixel temporal flicker suppressed by a majority vote, and jagged edges
+rounded. Disable with --no_smooth.
 
 Usage:
     python segment_arms.py --processed_demo /result/cam0_inpaint/cam0/0
@@ -174,6 +177,82 @@ def _repair_temporal_mask_outliers(masks: np.ndarray,
         repaired_indices.append(int(idx))
 
     return repaired, repaired_indices
+
+
+def _smooth_masks(masks: np.ndarray,
+                  min_area_frac: float = 2e-4,
+                  close_ksize: int = 5,
+                  temporal_win: int = 5,
+                  boundary_sigma: float = 1.5) -> tuple[np.ndarray, int]:
+    """Denoise the SAM arm/hand masks so the silhouette is clean and stable.
+
+    SAM masks come out with three kinds of noise: small detached fragments
+    (specks near the fingers), jagged/holey boundaries, and per-pixel flicker
+    of the edge from frame to frame. This applies, in order:
+
+      1. speck removal  — drop connected components smaller than *min_area_frac*
+                          of the frame (keeps both arms; kills scattered bits).
+      2. morphological close — fill pin-holes and concave notches (*close_ksize*).
+      3. temporal majority — a pixel stays ON only if ON in a strict majority of
+                          a centred *temporal_win*-frame window; removes edge
+                          flicker while following genuine motion. Memory-safe
+                          sliding window (one (H,W) accumulator, no float volume).
+      4. boundary round  — Gaussian-blur the binary edge and re-threshold at 0.5
+                          (*boundary_sigma*) to take the staircase off the edge.
+
+    Returns (smoothed_masks, n_specks_removed). Any stage is skipped when its
+    parameter is <= its no-op value (frac<=0, ksize<=1, win<=1, sigma<=0).
+    """
+    m = np.asarray(masks, dtype=bool)
+    T, H, W = m.shape
+    min_area = int(min_area_frac * H * W) if min_area_frac > 0 else 0
+    ck = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_ksize, close_ksize))
+          if close_ksize > 1 else None)
+
+    # 1-2) per-frame: speck removal + close
+    out = np.empty_like(m)
+    n_specks = 0
+    for t in range(T):
+        b = m[t].astype(np.uint8)
+        if min_area > 0:
+            cnt, lab, st, _ = cv2.connectedComponentsWithStats(b, 8)
+            keep = np.zeros_like(b)
+            for i in range(1, cnt):
+                if st[i, cv2.CC_STAT_AREA] >= min_area:
+                    keep[lab == i] = 1
+                else:
+                    n_specks += 1
+            b = keep
+        if ck is not None:
+            b = cv2.morphologyEx(b, cv2.MORPH_CLOSE, ck)
+        out[t] = b.astype(bool)
+
+    # 3) temporal majority vote over a centred window (sliding running sum)
+    if temporal_win > 1:
+        r = temporal_win // 2
+        o8 = out.astype(np.uint8)
+        acc = np.zeros((H, W), dtype=np.int32)
+        for i in range(min(r + 1, T)):
+            acc += o8[i]
+        tmp = np.empty_like(out)
+        for t in range(T):
+            if t > 0:
+                add, rem = t + r, t - r - 1
+                if add < T:
+                    acc += o8[add]
+                if rem >= 0:
+                    acc -= o8[rem]
+            win = min(t + r, T - 1) - max(0, t - r) + 1
+            tmp[t] = (acc * 2 > win)
+        out = tmp
+
+    # 4) per-frame boundary rounding
+    if boundary_sigma > 0:
+        for t in range(T):
+            fb = cv2.GaussianBlur(out[t].astype(np.float32), (0, 0), boundary_sigma)
+            out[t] = fb >= 0.5
+
+    return out, n_specks
 
 
 def _dump_frames_as_jpegs(video_path: Path, dst_dir: Path) -> int:
@@ -340,6 +419,21 @@ def main() -> None:
     ap.add_argument("--output", type=Path, default=None,
                     help="Output mask path. Default: "
                          "<processed_demo>/segmentation_processor/masks_arm.npy")
+    # mask denoising (see _smooth_masks)
+    ap.add_argument("--smooth", dest="smooth", action="store_true", default=True,
+                    help="Denoise masks: speck removal + close + temporal-majority "
+                         "flicker removal + edge rounding (default on).")
+    ap.add_argument("--no_smooth", dest="smooth", action="store_false",
+                    help="Disable mask denoising.")
+    ap.add_argument("--smooth_min_area_frac", type=float, default=2e-4,
+                    help="Drop connected components smaller than this fraction of "
+                         "the frame (speck removal). 0 = keep all.")
+    ap.add_argument("--smooth_close", type=int, default=5,
+                    help="Morphological close kernel (px) to fill holes/notches. 1 = off.")
+    ap.add_argument("--smooth_temporal_win", type=int, default=5,
+                    help="Temporal majority window (odd frames) for flicker removal. 1 = off.")
+    ap.add_argument("--smooth_boundary_sigma", type=float, default=1.5,
+                    help="Gaussian sigma (px) to round jagged mask edges. 0 = off.")
     args = ap.parse_args()
 
     if not Path(SAM2_CHECKPOINT).exists():
@@ -388,6 +482,13 @@ def main() -> None:
     masks, repaired_indices = _repair_temporal_mask_outliers(masks)
     if repaired_indices:
         print(f"[repair] temporal SAM leak frames: {repaired_indices}")
+    if args.smooth:
+        masks, n_specks = _smooth_masks(
+            masks, args.smooth_min_area_frac, args.smooth_close,
+            args.smooth_temporal_win, args.smooth_boundary_sigma)
+        print(f"[smooth] specks removed={n_specks}, close={args.smooth_close}px, "
+              f"temporal_win={args.smooth_temporal_win}, "
+              f"boundary_sigma={args.smooth_boundary_sigma}px")
     per_frame = masks.sum(axis=(1, 2))
     print(f"[info] frames with mask: {(per_frame > 0).sum()}/{n_frames}, "
           f"avg {per_frame.mean():.0f} px, max {per_frame.max()} px")

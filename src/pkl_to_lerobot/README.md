@@ -1,6 +1,6 @@
 # Dataset Converter — Retarget PKL to LeRobot Format
 
-Converts the output of the retargeting pipeline (`final_pose.pkl` + RGB frames) into a
+Converts the output of the retargeting pipeline (`final_pose.pkl` + robot-composite video) into a
 [LeRobot v3.0](https://huggingface.co/docs/lerobot) dataset that can be directly used for
 training **Diffusion Policy** (via `lerobot-train`) or **GR00T N1** (via `gr00t_finetune.py`).
 Video frames are downscaled to 224×224 during encoding so they match the default
@@ -20,10 +20,17 @@ PYTHONPATH=$PWD/src python -m pkl_to_lerobot.convert_episode \
     --out_dir data/lerobot_xhand_dataset \
     --episode_index 0
 
-# Convert all episodes in a directory
+# Export and validate calibrated robot trajectories first.  With no episode
+# arguments, future IMG_* directories are discovered automatically.
+bash scripts/export_policy_trajectories.sh
+bash scripts/validate_policy_trajectories.sh
+
+# Convert all episodes in a directory.  "auto" prefers each episode's
+# video_overlay_rby1_xhand.mp4 and only falls back to raw RGB.
 PYTHONPATH=$PWD/src python -m pkl_to_lerobot.convert_batch \
     --data_root data/raw \
     --out_dir data/lerobot_xhand_dataset \
+    --visual_source auto \
     --task "manipulate rubik's cube"
 ```
 
@@ -105,10 +112,10 @@ When using per-hand pkl files (which lack wrist info), the wrist fields are zero
 | Index | Field | Dim | Source |
 |-------|-------|-----|--------|
 | 0:12 | `right_hand_joint` | 12 | finger joint angles (rad) |
-| 12:15 | `right_wrist_pos` | 3 | xyz position (camera frame, meters) |
+| 12:15 | `right_wrist_pos` | 3 | xyz position (calibrated RBY1 base frame, meters) |
 | 15:19 | `right_wrist_quat` | 4 | orientation quaternion (xyzw) |
 | 19:31 | `left_hand_joint` | 12 | finger joint angles (rad) |
-| 31:34 | `left_wrist_pos` | 3 | xyz position |
+| 31:34 | `left_wrist_pos` | 3 | xyz position (calibrated RBY1 base frame) |
 | 34:38 | `left_wrist_quat` | 4 | orientation quaternion (xyzw) |
 
 ---
@@ -186,6 +193,7 @@ MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
 | `--action_mode` | `absolute` | `absolute` or `delta` |
 | `--img_glob` | `frame_*.jpg` | Glob pattern for RGB frames |
 | `--task` | `manipulate cube` | Task description string |
+| `--visual_source` | `auto` | Prefer robot composite; `robot`, `rgb`, or a path also accepted |
 
 ### `convert_batch`
 

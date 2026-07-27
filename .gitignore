@@ -26,6 +26,7 @@ venv/
 /output
 /out
 /wandb
+/weights
 
 # Model / feature artifacts
 *.pt
@@ -37,6 +38,7 @@ venv/
 
 # Logs
 *.log
+wget-log
 slurm-*.out
 slurm-*.err
 docs/progress_slides.pdf

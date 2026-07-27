@@ -201,6 +201,9 @@ def convert_batch(
     action_mode: str = "absolute",
     img_glob: str = "frame_*.jpg",
     task_description: str = "manipulate cube",
+    visual_source: str = "auto",
+    allow_legacy_actions: bool = False,
+    skip_failed: bool = False,
 ) -> None:
     """Convert all episodes under ``data_root`` into a LeRobot v3 dataset."""
     episodes = _discover_episodes(data_root)
@@ -224,9 +227,13 @@ def convert_batch(
                 action_mode=action_mode,
                 img_glob=img_glob,
                 task_description=task_description,
+                visual_source=visual_source,
+                allow_legacy_actions=allow_legacy_actions,
             )
             episode_metas.append(meta)
         except (FileNotFoundError, ValueError) as e:
+            if not skip_failed:
+                raise
             print(f"  SKIPPED: {e}")
         print()
 
@@ -258,6 +265,8 @@ def convert_batch(
             "dataset_to_index": cumulative + n,
             "length": n,
             "tasks": ep_meta["tasks"],
+            "source_episode_id": ep_meta["source_episode_id"],
+            "visual_source": ep_meta["visual_source"],
             f"videos/{HEAD_CAM_KEY}/chunk_index": 0,
             f"videos/{HEAD_CAM_KEY}/file_index": ep_idx,
             f"videos/{HEAD_CAM_KEY}/from_timestamp": 0.0,
@@ -289,7 +298,7 @@ def convert_batch(
     # --- meta/info.json (v3.0) ---
     info = {
         "codebase_version": "v3.0",
-        "robot_type": None,
+        "robot_type": "rby1_xhand",
         "total_episodes": len(episode_metas),
         "total_frames": total_frames,
         "total_tasks": 1,
@@ -335,6 +344,21 @@ def main():
     ap.add_argument("--action_mode", default="absolute", choices=["absolute", "delta"])
     ap.add_argument("--img_glob", default="frame_*.jpg")
     ap.add_argument("--task", default="manipulate cube", help="Task description string")
+    ap.add_argument(
+        "--visual_source",
+        default="auto",
+        help="'auto' (prefer robot composite), 'robot', 'rgb', or a video path.",
+    )
+    ap.add_argument(
+        "--allow_legacy_actions",
+        action="store_true",
+        help="Allow camera-frame/finger-only legacy actions (not recommended).",
+    )
+    ap.add_argument(
+        "--skip_failed",
+        action="store_true",
+        help="Keep converting after a broken episode (default: fail fast).",
+    )
     args = ap.parse_args()
 
     convert_batch(
@@ -344,6 +368,9 @@ def main():
         action_mode=args.action_mode,
         img_glob=args.img_glob,
         task_description=args.task,
+        visual_source=args.visual_source,
+        allow_legacy_actions=args.allow_legacy_actions,
+        skip_failed=args.skip_failed,
     )
 
 

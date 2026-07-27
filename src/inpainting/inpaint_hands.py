@@ -196,6 +196,11 @@ def main() -> None:
     ap.add_argument("--protect_mask", type=Path, default=None,
                     help="Object mask (.npy, T,H,W) to subtract from the inpaint "
                          "mask so the manipulated object is NOT removed.")
+    ap.add_argument("--mask", type=Path, default=None,
+                    help="Override the mask input selected by --mode. Useful for "
+                         "A/B runs such as masks_arm_no_smooth.npy.")
+    ap.add_argument("--output", type=Path, default=None,
+                    help="Override the output video selected by --mode.")
     ap.add_argument("--fps", type=int, default=15)
     args = ap.parse_args()
 
@@ -207,14 +212,16 @@ def main() -> None:
     pd = args.processed_demo
     if args.mode == "legacy":
         video_path = pd / "video_rgb_imgs.mkv"
-        mask_path  = pd / "segmentation_processor" / "masks_arm.npy"
-        out_path   = pd / "inpaint_processor" / "video_human_inpaint.mkv"
+        default_mask_path = pd / "segmentation_processor" / "masks_arm.npy"
+        default_out_path = pd / "inpaint_processor" / "video_human_inpaint.mkv"
         dilate_iter = 4 if args.dilate_iter is None else args.dilate_iter
     else:  # residual
         video_path = pd / "overlay_processor" / "video_overlay_raw.mkv"
-        mask_path  = pd / "overlay_processor" / "residual_mask.npy"
-        out_path   = pd / "video_overlay_xhand.mkv"
+        default_mask_path = pd / "overlay_processor" / "residual_mask.npy"
+        default_out_path = pd / "video_overlay_xhand.mkv"
         dilate_iter = 1 if args.dilate_iter is None else args.dilate_iter
+    mask_path = args.mask or default_mask_path
+    out_path = args.output or default_out_path
     for p in (video_path, mask_path):
         if not p.exists():
             sys.exit(f"missing input: {p}")

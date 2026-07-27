@@ -5,7 +5,7 @@ Registers a NEW_EMBODIMENT config that maps the 38-D state/action vector
 
 State/action vector layout (matches pkl_to_lerobot.schema):
     0:12   right_hand_joint   (12 finger DOFs)
-   12:15   right_wrist_pos    (xyz camera-frame)
+   12:15   right_wrist_pos    (xyz calibrated RBY1 base frame)
    15:19   right_wrist_quat   (xyzw quaternion)
    19:31   left_hand_joint
    31:34   left_wrist_pos

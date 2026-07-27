@@ -99,15 +99,44 @@ Output:
 The MuJoCo environment (`src/sim/mujoco_sim/env.py`) provides:
 
 - **Robot**: Rainbow Robotics RBY1 + bimanual XHand
-- **Action space**: 38-DOF absolute target qpos
-  - Indices 0–6: right arm (7 joints)
-  - Indices 7–13: left arm (7 joints)
-  - Indices 14–25: right hand (12 finger joints)
-  - Indices 26–37: left hand (12 finger joints)
+- **Action space**: 38-D absolute finger + wrist targets
+  - Indices 0–11: right XHand finger joints
+  - Indices 12–14: right wrist xyz in the RBY1 base frame
+  - Indices 15–18: right wrist quaternion `(x, y, z, w)`
+  - Indices 19–30: left XHand finger joints
+  - Indices 31–33: left wrist xyz in the RBY1 base frame
+  - Indices 34–37: left wrist quaternion `(x, y, z, w)`
 - **Observation space**:
   - `observation.images.head_cam`: (224, 224, 3) uint8
   - `observation.state`: (38,) float32
 
-Note: The dataset's 38-D vector maps finger joints directly to the env's hand joints.
-Wrist pose from the dataset is converted to arm joint targets via inverse kinematics
-during evaluation.
+The finger targets map directly to the XHand joints. Wrist targets are
+converted to joint-limited RBY1 arm targets with inverse kinematics during
+evaluation.
+
+## Local Diffusion Policy workflow
+
+The preparation command discovers every ready `IMG_*` episode, exports the
+calibrated RBY1-base wrist trajectory, gates it with joint-limited IK, then
+uses the robot-composite video for LeRobot:
+
+```bash
+bash scripts/prepare_policy_dataset.sh
+```
+
+Train in the dedicated Python 3.12 environment:
+
+```bash
+bash scripts/train_diffusion_policy.sh
+```
+
+Useful overrides:
+
+```bash
+STEPS=1000 BATCH_SIZE=8 NUM_WORKERS=2 \
+  bash scripts/train_diffusion_policy.sh
+```
+
+The calibration profile is frozen after its first fit. Adding more episodes
+does not shift existing action coordinates. If a previously unseen hand
+appears, the exporter adds only that hand's reference to the profile.

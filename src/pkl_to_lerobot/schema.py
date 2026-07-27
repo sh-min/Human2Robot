@@ -9,7 +9,7 @@ The canonical state/action vector layout (bimanual, 38-D):
     Index  Field
     -----  -----
      0:12  right_hand_joint   (12 finger DoFs)
-    12:15  right_wrist_pos    (xyz in camera frame)
+    12:15  right_wrist_pos    (xyz in calibrated RBY1 base frame)
     15:19  right_wrist_quat   (xyzw quaternion)
     19:31  left_hand_joint    (12 finger DoFs)
     31:34  left_wrist_pos
@@ -112,14 +112,28 @@ def final_pose_to_state_action(
     -------
     states : (T, 38) float32
     actions : (T, 38) float32  (last frame's action repeats the final state)
-    valid : (T,) bool  (AND of both hands' valid masks)
+    valid : (T,) bool  (AND of the hands that are present)
     """
     T = int(final_pose["T"])
     states = np.zeros((T, BIMANUAL_DIM), dtype=np.float32)
-    valid = np.ones(T, dtype=bool)
+    side_valid = {
+        side: np.asarray(final_pose[side]["valid"]).astype(bool)
+        for side in HANDS
+        if side in final_pose
+    }
+    present = [
+        side for side in HANDS
+        if side in side_valid and bool(side_valid[side].any())
+    ]
+    if not present:
+        raise ValueError("No hand has a valid frame in final_pose")
+    # A frame is usable when every hand that is actually present in this
+    # episode is valid. An entirely absent hand is zero-filled rather than
+    # invalidating a single-hand episode.
+    valid = np.logical_and.reduce([side_valid[side] for side in present])
 
     for side in HANDS:
-        if side not in final_pose:
+        if side not in present:
             continue
         p = final_pose[side]
         offset = 0 if side == "right" else PER_HAND_DIM
@@ -132,17 +146,7 @@ def final_pose_to_state_action(
         states[:, offset : offset + FINGER_DOF] = qpos
         states[:, offset + FINGER_DOF : offset + FINGER_DOF + WRIST_POS_DIM] = wrist_pos
         states[:, offset + FINGER_DOF + WRIST_POS_DIM : offset + PER_HAND_DIM] = wrist_quat
-        valid &= np.asarray(p["valid"]).astype(bool)
-
-    if action_mode == "absolute":
-        actions = np.empty_like(states)
-        actions[:-1] = states[1:]
-        actions[-1] = states[-1]
-    else:
-        actions = np.zeros_like(states)
-        actions[:-1] = states[1:] - states[:-1]
-
-    return states, actions, valid
+    return states, states_to_actions(states, action_mode), valid
 
 
 def pkl_to_state_action(
@@ -173,10 +177,21 @@ def pkl_to_state_action(
     assert all(l == T for l in lengths), f"Hand lengths mismatch: {lengths}"
 
     states = np.zeros((T, BIMANUAL_DIM), dtype=np.float32)
-    valid = np.ones(T, dtype=bool)
+    side_valid = {
+        side: np.asarray(pkls[side]["valid"]).astype(bool)
+        for side in HANDS
+        if side in pkls
+    }
+    present = [
+        side for side in HANDS
+        if side in side_valid and bool(side_valid[side].any())
+    ]
+    if not present:
+        raise ValueError("No hand has a valid frame in retarget PKLs")
+    valid = np.logical_and.reduce([side_valid[side] for side in present])
 
     for side in HANDS:
-        if side not in pkls:
+        if side not in present:
             continue
         p = pkls[side]
         offset = 0 if side == "right" else PER_HAND_DIM
@@ -187,17 +202,27 @@ def pkl_to_state_action(
             states[:, offset + FINGER_DOF + WRIST_POS_DIM : offset + PER_HAND_DIM] = p[
                 "wrist_quat"
             ]
-        valid &= np.asarray(p["valid"]).astype(bool)
+    return states, states_to_actions(states, action_mode), valid
 
+
+def states_to_actions(
+    states: np.ndarray,
+    action_mode: Literal["absolute", "delta"] = "absolute",
+) -> np.ndarray:
+    """Build next-step actions from an already aligned state sequence."""
+    states = np.asarray(states, dtype=np.float32)
+    if states.ndim != 2 or len(states) == 0:
+        raise ValueError(f"Expected non-empty (T, D) states, got {states.shape}")
     if action_mode == "absolute":
         actions = np.empty_like(states)
         actions[:-1] = states[1:]
         actions[-1] = states[-1]
-    else:
+    elif action_mode == "delta":
         actions = np.zeros_like(states)
         actions[:-1] = states[1:] - states[:-1]
-
-    return states, actions, valid
+    else:
+        raise ValueError(f"Unknown action_mode: {action_mode!r}")
+    return actions
 
 
 def build_modality_json(

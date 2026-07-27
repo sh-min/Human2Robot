@@ -34,24 +34,44 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent.parent
 
 
-def _make_env(image_size: int = 224, max_steps: int = 300):
+def _make_env(
+    image_size: int = 224,
+    max_steps: int = 300,
+    active_hands: tuple[str, ...] = ("left",),
+):
     """Instantiate the MuJoCo sim environment."""
     from sim.mujoco_sim.env import EnvConfig, RBY1XHandEnv
 
-    cfg = EnvConfig(image_size=image_size, max_episode_steps=max_steps)
+    cfg = EnvConfig(
+        image_size=image_size,
+        max_episode_steps=max_steps,
+        active_hands=active_hands,
+    )
     return RBY1XHandEnv(cfg)
 
 
 def _load_lerobot_policy(checkpoint_path: str, device: str = "cuda"):
     """Load a LeRobot pretrained policy."""
-    from lerobot.policies.factory import make_policy
+    from lerobot.policies.factory import (
+        get_policy_class,
+        make_pre_post_processors,
+    )
     from lerobot.configs.policies import PreTrainedConfig
 
     config = PreTrainedConfig.from_pretrained(checkpoint_path)
     config.device = device
-    policy = make_policy(config)
+    config.pretrained_path = Path(checkpoint_path)
+    policy_class = get_policy_class(config.type)
+    policy = policy_class.from_pretrained(
+        checkpoint_path,
+        config=config,
+    )
     policy.eval()
-    return policy
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=config,
+        pretrained_path=checkpoint_path,
+    )
+    return policy, preprocessor, postprocessor
 
 
 def _load_groot_policy(
@@ -165,16 +185,23 @@ def evaluate(
     device: str = "cuda",
     save_video: bool = False,
     output_dir: str = "output/eval",
+    active_hands: tuple[str, ...] = ("left",),
 ):
     """Run evaluation loop."""
     if backend == "lerobot":
-        policy = _load_lerobot_policy(checkpoint, device=device)
+        policy, preprocessor, postprocessor = _load_lerobot_policy(
+            checkpoint, device=device
+        )
     elif backend == "groot":
         policy = _load_groot_policy(checkpoint, modality_config=modality_config, device=device)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
-    env = _make_env(image_size=image_size, max_steps=max_steps)
+    env = _make_env(
+        image_size=image_size,
+        max_steps=max_steps,
+        active_hands=active_hands,
+    )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -183,6 +210,8 @@ def evaluate(
 
     for ep in range(n_episodes):
         obs, info = env.reset()
+        if hasattr(policy, "reset"):
+            policy.reset()
         frames = []
         total_reward = 0.0
         step = 0
@@ -191,11 +220,12 @@ def evaluate(
         t0 = time.time()
         while not done:
             policy_input = _obs_to_policy_input(obs, backend)
-            raw_output = (
-                policy.select_action(policy_input)
-                if backend == "lerobot"
-                else policy.get_action(policy_input)
-            )
+            if backend == "lerobot":
+                policy_input = preprocessor(policy_input)
+                raw_output = policy.select_action(policy_input)
+                raw_output = postprocessor(raw_output)
+            else:
+                raw_output = policy.get_action(policy_input)
             action = _policy_output_to_action(raw_output, backend)
 
             obs, reward, terminated, truncated, info = env.step(action)
@@ -259,7 +289,18 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--save_video", action="store_true")
     ap.add_argument("--output_dir", default="output/eval")
+    ap.add_argument(
+        "--active_hands",
+        default="left",
+        choices=["left", "right", "both"],
+        help="Hands controlled by the 38-D policy schema.",
+    )
     args = ap.parse_args()
+    active_hands = (
+        ("right", "left")
+        if args.active_hands == "both"
+        else (args.active_hands,)
+    )
 
     evaluate(
         backend=args.backend,
@@ -271,6 +312,7 @@ def main():
         device=args.device,
         save_video=args.save_video,
         output_dir=args.output_dir,
+        active_hands=active_hands,
     )
 
 

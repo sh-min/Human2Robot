@@ -197,6 +197,35 @@ python composite_layered.py       --processed_demo <pd> --hawor_npz <...> \
                                   --threshold_joint 5
 ```
 
+## SAM2 smoothing A/B 재생성
+
+`segment_arms.py`의 기본 스무딩(작은 컴포넌트 제거, close, 5-frame
+temporal majority, 경계 Gaussian)을 기존 스무딩 전 결과에 적용하고,
+그 영향을 받는 인페인팅·최종 합성·비교영상만 다시 생성한다. HaWoR, HaCo,
+retargeting, robot render는 SAM2 마스크와 독립적이므로 기존 결과를 재사용한다.
+
+```bash
+# 한 영상
+bash scripts/run_sam_smoothing_refresh.sh IMG_5019
+
+# 여러 영상
+bash scripts/run_sam_smoothing_refresh.sh \
+  IMG_5019 IMG_5020 IMG_5021
+```
+
+주요 출력:
+
+```
+segmentation_processor/masks_arm.npy                    # smoothing ON
+segmentation_processor/masks_arm_no_smooth.npy          # smoothing OFF 보존본
+inpaint_processor/video_human_inpaint.mkv               # smoothing ON
+inpaint_processor/video_human_inpaint_no_smooth.mkv     # smoothing OFF 보존본
+video_overlay_rby1_xhand.mp4                            # smoothing ON 최종
+video_overlay_rby1_xhand_no_smooth.mp4                  # smoothing OFF 최종
+sam2_smoothing_comparison.mp4                           # 8-panel A/B 영상
+pipeline_required_components.mp4                       # HaWoR/HaCo 포함 ON 파이프라인
+```
+
 ## Cube segmentation 흐름 (Stage 8, `run_cube_segmentation.py`)
 
 Stage 8은 SAM2 + Depth + Diffusion-VAS를 하나의 고정 파이프라인으로 실행한다.

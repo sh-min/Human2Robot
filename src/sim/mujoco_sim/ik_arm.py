@@ -30,6 +30,7 @@ import imageio.v2 as imageio
 import mujoco
 import numpy as np
 import pinocchio as pin
+from scipy.optimize import least_squares
 
 REPO = Path(__file__).resolve().parents[3]
 SCENE = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
@@ -52,6 +53,13 @@ _T_HEAD2_CAM = pin.SE3(
 # (compose_rby1_xhand.py:30), so the IK target for link_*_arm_6 is the wrist
 # pose shifted by +0.1261 along its own local z.
 _T_WRIST_ARM6 = pin.SE3(np.eye(3), np.array([0.0, 0.0, 0.1261]))
+
+# Reachable, elbow-down configurations used only as deterministic fallback
+# starts when a warm-started nonlinear IK solve becomes trapped.
+_SAFE_ARM_QPOS = {
+    "left": np.array([-1.2, 0.4, -1.2, -1.0, 0.0, 1.2, 0.8]),
+    "right": np.array([-1.2, -0.4, 1.2, -1.0, 0.0, 1.2, -0.8]),
+}
 
 
 def _arm_dof_idx(model: pin.Model, side: str) -> np.ndarray:
@@ -89,32 +97,75 @@ def wrist_to_arm6(T_world_wrist: pin.SE3) -> pin.SE3:
 def solve_arm_ik(
     model: pin.Model, data: pin.Data, q0: np.ndarray,
     side: str, target: pin.SE3,
-    max_iters: int = 200, damping: float = 1e-2, step_scale: float = 0.5,
+    max_iters: int = 80, damping: float = 1e-2, step_scale: float = 0.5,
     tol_pos: float = 1e-3, tol_ori: float = 1e-2,
 ) -> tuple[np.ndarray, float, float]:
-    """Damped least-squares IK on the 7 arm joints of ``side``. Returns
-    (q_new, pos_err_m, ori_err_rad). Other dofs untouched."""
+    """Joint-limited IK on the 7 arm joints of ``side``.
+
+    ``damping`` and ``step_scale`` remain in the signature for compatibility
+    with earlier callers.  The bounded nonlinear solve is more reliable than
+    the old unconstrained DLS loop, which could return multi-turn, physically
+    impossible arm angles.  Other DoFs in ``q0`` are preserved.
+    """
     q = q0.copy()
     fid = model.getFrameId(f"link_{side}_arm_6")
     dof = _arm_dof_idx(model, side)
-    eye6 = np.eye(6)
-    pos_err = ori_err = float("inf")
-    for _ in range(max_iters):
+    lower = model.lowerPositionLimit[dof].astype(np.float64) + 1e-7
+    upper = model.upperPositionLimit[dof].astype(np.float64) - 1e-7
+    x0 = np.clip(q[dof], lower, upper)
+    orientation_weight = 0.12
+
+    def residual(x: np.ndarray) -> np.ndarray:
+        q[dof] = x
         pin.forwardKinematics(model, data, q)
         pin.updateFramePlacements(model, data)
-        # Twist that takes current frame to target, expressed in LOCAL frame.
-        err6 = pin.log6(data.oMf[fid].inverse() * target).vector
-        pos_err = float(np.linalg.norm(err6[:3]))
-        ori_err = float(np.linalg.norm(err6[3:]))
-        if pos_err < tol_pos and ori_err < tol_ori:
-            break
-        # LOCAL Jacobian: 6 x nv -> restrict to arm dofs.
-        J_full = pin.computeFrameJacobian(model, data, q, fid, pin.LOCAL)
-        J = J_full[:, dof]  # 6 x 7
-        dq = J.T @ np.linalg.solve(J @ J.T + (damping ** 2) * eye6, err6)
-        v = np.zeros(model.nv)
-        v[dof] = step_scale * dq
-        q = pin.integrate(model, q, v)
+        current = data.oMf[fid]
+        position = current.translation - target.translation
+        orientation = pin.log3(current.rotation.T @ target.rotation)
+        return np.concatenate([position, orientation_weight * orientation])
+
+    def run(start: np.ndarray, evaluations: int):
+        return least_squares(
+            residual,
+            np.clip(start, lower, upper),
+            bounds=(lower, upper),
+            max_nfev=evaluations,
+            xtol=1e-8,
+            ftol=1e-8,
+            gtol=1e-8,
+        )
+
+    solutions = [run(x0, max_iters)]
+    first_error = residual(solutions[0].x)
+    if (
+        np.linalg.norm(first_error[:3]) > max(tol_pos, 5e-3)
+        or np.linalg.norm(first_error[3:]) / orientation_weight
+        > max(tol_ori, np.radians(3.0))
+    ):
+        # A 7-DoF arm has multiple IK branches.  Try two fixed starts only
+        # when the temporally warm-started branch is demonstrably bad.
+        solutions.extend([
+            run(_SAFE_ARM_QPOS[side], max_iters * 2),
+            run(0.5 * (lower + upper), max_iters * 2),
+        ])
+
+    # Prefer target accuracy; use closeness to the previous frame only as a
+    # tiny tie-breaker between equivalent redundant-arm solutions.
+    def score(solution) -> float:
+        return float(
+            np.linalg.norm(residual(solution.x))
+            + 1e-7 * np.linalg.norm(solution.x - x0)
+        )
+
+    solution = min(solutions, key=score)
+    q[dof] = solution.x
+    pin.forwardKinematics(model, data, q)
+    pin.updateFramePlacements(model, data)
+    current = data.oMf[fid]
+    pos_err = float(np.linalg.norm(current.translation - target.translation))
+    ori_err = float(
+        np.linalg.norm(pin.log3(current.rotation.T @ target.rotation))
+    )
     return q, pos_err, ori_err
 
 
@@ -137,11 +188,17 @@ def apply_frame(
         s = pose[side]
         if not bool(s["valid"][t]):
             continue
-        T_wrist = cam_to_world(
-            s["wrist_pos"][t].astype(float),
-            s["wrist_rot"][t].astype(float),
-            T_world_cam,
-        )
+        if s.get("coordinate_frame", pose.get("coordinate_frame")) == "rby1_base":
+            T_wrist = pin.SE3(
+                s["wrist_rot"][t].astype(float),
+                s["wrist_pos"][t].astype(float),
+            )
+        else:
+            T_wrist = cam_to_world(
+                s["wrist_pos"][t].astype(float),
+                s["wrist_rot"][t].astype(float),
+                T_world_cam,
+            )
         q, perr, oerr = solve_arm_ik(pin_model, pin_data, q, side, wrist_to_arm6(T_wrist))
         errors[side] = (perr, oerr)
         for jname, qval in zip(s["joint_names"], s["qpos"][t]):

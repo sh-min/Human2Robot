@@ -8,13 +8,19 @@ capsules.
   pringles         O65 x 90 mm Pringles can
   cup_green        O80 x 105 mm cup with a handle
   cup_blue         O75 x 85 mm cup with a handle
-  lock_box_large   160 x 120 x 50 mm open food container
-  lock_box_small   130 x 90 x 55 mm open food container
+  lock_box_large   160 x 120 x 50 mm open food container, blue rim,
+                   14 mm rounded corners
+  lock_box_small   130 x 90 x 55 mm open food container, green rim,
+                   12 mm rounded corners
   sponge           130 x 80 x 30 mm dish sponge with a scrub pad
-  trash_bin        137 x 137 x 197 mm white open bin
+  trash_bin        137 x 137 x 197 mm white open bin, square corners
+  cup_holder       130 x 125 x 175 mm chrome wire cup/plate rack: four
+                   arches on two base rails, plus two ball-tipped hooks
 
 Cups are hollow (ring of boxes -- MuJoCo has no hollow primitive) and so
-are the containers and the bin (floor slab + four walls).
+are the containers and the bin (floor slab + walls). Rounded corners are
+quarter-arcs of the same box segments, with cylinders filling the floor's
+corners.
 
 Each object's origin is its bottom center, so placing one on a table is
 just ``pos = [x, y, table_top_z]``.
@@ -70,12 +76,18 @@ CUPS = {
 }
 
 # --- open containers -------------------------------------------------
+# ``corner`` is the radius of the rounded vertical corners, 0 for a box with
+# sharp ones. The two lock boxes are deliberately different colours so they
+# are easy to tell apart in a render or a policy rollout.
 BOXES = {
     "lock_box_large": dict(w=0.160, d=0.120, h=0.050, t=0.0025, base=0.004,
-                           rgb=(0.88, 0.92, 0.95), rim=(0.10, 0.45, 0.80)),
+                           corner=0.014,
+                           rgb=(0.86, 0.90, 0.94), rim=(0.10, 0.40, 0.78)),
     "lock_box_small": dict(w=0.130, d=0.090, h=0.055, t=0.0025, base=0.004,
-                           rgb=(0.88, 0.92, 0.95), rim=(0.10, 0.45, 0.80)),
+                           corner=0.012,
+                           rgb=(0.95, 0.93, 0.87), rim=(0.20, 0.60, 0.34)),
     "trash_bin": dict(w=0.137, d=0.137, h=0.197, t=0.002, base=0.003,
+                      corner=0.0,
                       rgb=(0.95, 0.95, 0.95), rim=None),
 }
 
@@ -83,6 +95,39 @@ BOXES = {
 SPONGE_W, SPONGE_D = 0.130, 0.080
 SPONGE_FOAM_H = 0.022
 SPONGE_PAD_H = 0.008  # -> 30 mm total
+
+# --- chrome wire cup/plate rack --------------------------------------
+# Built in layers, bottom up: two base rails -> two semicircle arches
+# standing on them -> two side bars along the rails, riding the flanks of
+# those semicircles -> two elongated arches standing on the side bars (the
+# plate slot) -> two short bars across the semicircle crowns -> a post off
+# each -> a rod -> a shepherd's-crook cup hook at each end.
+RACK_DEPTH = 0.130        # 세로: rail length
+RACK_RAIL_GAP = 0.125     # 가로: rail spacing
+RACK_H = 0.175            # 높이: crest of the crook
+# The four arches, spaced 45 / 45 / 40 mm -- exactly the 130 mm depth.
+RACK_X_SEMI = (-0.065, -0.020)
+RACK_X_ELONG = (+0.025, +0.065)
+RACK_RAIL_R = 0.0035      # 발받침대 O7 mm
+RACK_WIRE_R = 0.0015      # O3 mm wire
+RACK_BALL_R = 0.0040
+RACK_CAP_R = 0.0035       # black end cap, flush so the rail sits on z=0
+RACK_CAP_L = 0.008
+RACK_SEMI_R = RACK_RAIL_GAP / 2   # a foot on each rail -> a true semicircle
+RACK_RAIL_TOP = 2 * RACK_RAIL_R   # everything stands on top of the rails
+RACK_SIDE_T = math.radians(45)    # where the side bars ride the semicircle
+RACK_ELONG_TOP = 0.135
+RACK_MID_Y = 0.020        # the two short bars, near the centre line
+RACK_ROD_X = -0.020       # posts and rod stand over the rear semicircle
+RACK_ROD_Y = 0.062        # rod half-length before the crooks
+RACK_SEGS = 10
+# The crook leaves the rod going up, arcs forward over a crest and back
+# down, then reverses curvature and flicks up to the ball. Two arcs turning
+# opposite ways, so the whole thing is an S; the cup hangs in the descending
+# bend and the upturned tip is what keeps it there.
+RACK_CROOK_R = 0.020
+RACK_TIP_R = 0.006
+RACK_CROOK_SWEEP = math.radians(150)
 
 
 def _quat_z(rad):
@@ -124,6 +169,95 @@ def _wall_ring(w, d, z_lo, z_hi, t, cls, rgba="", outset=0.0) -> list[str]:
             f'pos="{_v(0, sy * (hd - t / 2), zc)}" '
             f'size="{_v(hw - t, t / 2, hz)}"/>'
         )
+    return out
+
+
+def _rounded_ring(w, d, z_lo, z_hi, t, r, cls, rgba="", outset=0.0,
+                  segs=4) -> list[str]:
+    """Side walls of a rounded rectangle: four straight runs, each stopping r
+    short of the ends, plus a quarter-arc of box segments at every corner.
+    Same trick as the cup's ring wall -- MuJoCo has no rounded box."""
+    hz = (z_hi - z_lo) / 2
+    zc = (z_lo + z_hi) / 2
+    hw, hd = w / 2 + outset, d / 2 + outset
+    out = []
+    for sx in (+1.0, -1.0):
+        out.append(
+            f'      <geom class="{cls}" type="box" {rgba} '
+            f'pos="{_v(sx * (hw - t / 2), 0, zc)}" '
+            f'size="{_v(t / 2, hd - r, hz)}"/>'
+        )
+    for sy in (+1.0, -1.0):
+        out.append(
+            f'      <geom class="{cls}" type="box" {rgba} '
+            f'pos="{_v(0, sy * (hd - t / 2), zc)}" '
+            f'size="{_v(hw - r, t / 2, hz)}"/>'
+        )
+
+    r_mid = r - t / 2
+    # 2% tangential overlap closes the seams without notching the rim.
+    chord = r_mid * math.tan(math.pi / (4 * segs)) * 1.02
+    for sx in (+1.0, -1.0):
+        for sy in (+1.0, -1.0):
+            cx, cy = sx * (hw - r), sy * (hd - r)
+            mid = math.atan2(sy, sx)          # +-45 or +-135 deg
+            for i in range(segs):
+                th = mid - math.pi / 4 + math.pi / 2 * (i + 0.5) / segs
+                out.append(
+                    f'      <geom class="{cls}" type="box" {rgba} '
+                    f'pos="{_v(cx + r_mid * math.cos(th), cy + r_mid * math.sin(th), zc)}" '
+                    f'quat="{_q(_quat_z(th))}" '
+                    f'size="{_v(t / 2, chord, hz)}"/>'
+                )
+    return out
+
+
+def _capsule(a, b, r, cls) -> str:
+    return (f'      <geom class="{cls}" type="capsule" '
+            f'fromto="{_v(*a, *b)}" size="{r:.5f}"/>')
+
+
+def _wire_chain(pts, r, cls) -> list[str]:
+    """Capsules through pts, skipping coincident pairs -- an arc often starts
+    exactly on the endpoint of the segment feeding it."""
+    return [_capsule(a, b, r, cls) for a, b in zip(pts, pts[1:])
+            if math.dist(a, b) > 1e-6]
+
+
+def _bend(start, heading, r, sweep, sign, segs):
+    """Circular arc in the x-z plane at constant y, starting at ``start`` and
+    travelling along ``heading``. ``sign`` is +1 to curve left of heading, -1
+    to curve right. Returns the points after ``start``, plus the heading you
+    leave on."""
+    cx = start[0] - sign * r * math.sin(heading)
+    cz = start[2] + sign * r * math.cos(heading)
+    a0 = math.atan2(start[2] - cz, start[0] - cx)
+    pts = [(cx + r * math.cos(a0 + sign * sweep * i / segs), start[1],
+            cz + r * math.sin(a0 + sign * sweep * i / segs))
+           for i in range(1, segs + 1)]
+    return pts, heading + sign * sweep
+
+
+def _rounded_slab(w, d, z_lo, z_hi, r, cls) -> list[str]:
+    """Rounded-rectangle slab: a cross of two boxes plus a cylinder at each
+    corner. The pieces overlap inside, which is what you want for a solid
+    floor."""
+    hz = (z_hi - z_lo) / 2
+    zc = (z_lo + z_hi) / 2
+    hw, hd = w / 2, d / 2
+    out = [
+        f'      <geom class="{cls}" type="box" '
+        f'pos="{_v(0, 0, zc)}" size="{_v(hw, hd - r, hz)}"/>',
+        f'      <geom class="{cls}" type="box" '
+        f'pos="{_v(0, 0, zc)}" size="{_v(hw - r, hd, hz)}"/>',
+    ]
+    for sx in (+1.0, -1.0):
+        for sy in (+1.0, -1.0):
+            out.append(
+                f'      <geom class="{cls}" type="cylinder" '
+                f'pos="{_v(sx * (hw - r), sy * (hd - r), zc)}" '
+                f'size="{_v(r, hz)}"/>'
+            )
     return out
 
 
@@ -283,19 +417,34 @@ def build_cup(name, *, r, h, arc, rod, rgb) -> str:
 """
 
 
-def build_open_box(name, *, w, d, h, t, base, rgb, rim) -> str:
-    walls = _wall_ring(w, d, base, h, t, "box_geom")
+def build_open_box(name, *, w, d, h, t, base, rgb, rim, corner=0.0) -> str:
+    if corner > 0:
+        floor = _rounded_slab(w, d, 0.0, base, corner, "box_geom")
+        walls = _rounded_ring(w, d, base, h, t, corner, "box_geom")
+    else:
+        floor = [
+            f'      <geom name="floor" class="box_geom" type="box" '
+            f'pos="{_v(0, 0, base / 2)}" size="{_v(w / 2, d / 2, base / 2)}"/>'
+        ]
+        walls = _wall_ring(w, d, base, h, t, "box_geom")
+
     rim_lines = []
     if rim is not None:
-        rim_lines = _wall_ring(
-            w, d, h - 0.009, h, t, "box_print", _rgba(rim), outset=0.0001
+        ring = (
+            _rounded_ring(w, d, h - 0.009, h, t, corner, "box_print",
+                          _rgba(rim), outset=0.0001)
+            if corner > 0 else
+            _wall_ring(w, d, h - 0.009, h, t, "box_print", _rgba(rim),
+                       outset=0.0001)
         )
-        rim_lines = ["", "      <!-- Coloured rim (visual only). -->"] + rim_lines
+        rim_lines = ["", "      <!-- Coloured rim (visual only). -->"] + ring
 
+    shape = (f"{corner*1000:.0f} mm rounded corners"
+             if corner > 0 else "square corners")
     return f"""<mujoco model="{name}">
   <!-- AUTO-GENERATED by build_objects.py. Do not edit by hand.
-       {w*1000:.0f} x {d*1000:.0f} x {h*1000:.0f} mm open container: floor slab plus four
-       {t*1000:.1f} mm walls. Origin at bottom center. -->
+       {w*1000:.0f} x {d*1000:.0f} x {h*1000:.0f} mm open container with {shape}:
+       floor slab plus {t*1000:.1f} mm walls. Origin at bottom center. -->
 
   <default>
     <default class="box_geom">
@@ -309,8 +458,8 @@ def build_open_box(name, *, w, d, h, t, base, rgb, rim) -> str:
   <worldbody>
     <body name="root">
       <freejoint name="free"/>
-      <geom name="floor" class="box_geom" type="box"
-            pos="{_v(0, 0, base / 2)}" size="{_v(w / 2, d / 2, base / 2)}"/>
+      <!-- Floor. -->
+{chr(10).join(floor)}
 
       <!-- Side walls. -->
 {chr(10).join(walls)}{chr(10).join(rim_lines)}
@@ -352,10 +501,118 @@ def build_sponge() -> str:
 """
 
 
+def build_cup_holder() -> str:
+    half = RACK_SEMI_R
+    side_y = half * math.cos(RACK_SIDE_T)
+    side_z = RACK_RAIL_TOP + half * math.sin(RACK_SIDE_T)
+    elong_shoulder = RACK_ELONG_TOP - side_y
+    # The crest of the crook is the highest thing on the rack, so the rod
+    # height falls out of the target 175 mm.
+    rod_z = RACK_H - RACK_WIRE_R - RACK_CROOK_R
+
+    out = ["      <!-- 1. Base rails with black end caps. -->"]
+    for sy in (-1.0, +1.0):
+        y = sy * half
+        out.append(_capsule((-RACK_DEPTH / 2 + RACK_CAP_L, y, RACK_RAIL_R),
+                            (+RACK_DEPTH / 2 - RACK_CAP_L, y, RACK_RAIL_R),
+                            RACK_RAIL_R, "rack_rail"))
+        for sx in (-1.0, +1.0):
+            out.append(_capsule(
+                (sx * (RACK_DEPTH / 2 - RACK_CAP_L), y, RACK_RAIL_R),
+                (sx * (RACK_DEPTH / 2 - RACK_CAP_R), y, RACK_RAIL_R),
+                RACK_CAP_R, "rack_cap"))
+
+    out += ["", "      <!-- 2. Semicircle arches on the rails. -->"]
+    for x in RACK_X_SEMI:
+        out += _wire_chain(
+            [(x, half * math.cos(t), RACK_RAIL_TOP + half * math.sin(t))
+             for t in (math.pi * i / 18 for i in range(19))],
+            RACK_WIRE_R, "rack")
+
+    out += ["", "      <!-- 3. Side bars along the rails, on the "
+                "semicircles' flanks. -->"]
+    for sy in (-1.0, +1.0):
+        out.append(_capsule((RACK_X_SEMI[0], sy * side_y, side_z),
+                            (RACK_X_ELONG[-1], sy * side_y, side_z),
+                            RACK_WIRE_R, "rack"))
+
+    out += ["", "      <!-- 4. Elongated arches on the side bars: the plate "
+                "slot. -->"]
+    for x in RACK_X_ELONG:
+        pts = [(x, -side_y, side_z), (x, -side_y, elong_shoulder)]
+        for i in range(15):
+            t = math.pi - math.pi * i / 14
+            pts.append((x, side_y * math.cos(t),
+                        elong_shoulder + side_y * math.sin(t)))
+        pts += [(x, +side_y, elong_shoulder), (x, +side_y, side_z)]
+        out += _wire_chain(pts, RACK_WIRE_R, "rack")
+
+    out += ["", "      <!-- 5. Two short bars across the semicircle crowns, "
+                "and a post off each. -->"]
+    mid_z = RACK_RAIL_TOP + math.sqrt(half**2 - RACK_MID_Y**2)
+    for sy in (-1.0, +1.0):
+        y = sy * RACK_MID_Y
+        out.append(_capsule((RACK_X_SEMI[0], y, mid_z),
+                            (RACK_X_SEMI[-1], y, mid_z), RACK_WIRE_R, "rack"))
+        out.append(_capsule((RACK_ROD_X, y, mid_z), (RACK_ROD_X, y, rod_z),
+                            RACK_WIRE_R, "rack"))
+
+    out += ["", "      <!-- 6-7. Rod, and a shepherd's-crook cup hook at "
+                "each end. -->"]
+    out.append(_capsule((RACK_ROD_X, -RACK_ROD_Y, rod_z),
+                        (RACK_ROD_X, +RACK_ROD_Y, rod_z), RACK_WIRE_R, "rack"))
+    for sy in (-1.0, +1.0):
+        start = (RACK_ROD_X, sy * RACK_ROD_Y, rod_z)
+        over, heading = _bend(start, math.pi / 2, RACK_CROOK_R,
+                              RACK_CROOK_SWEEP, +1, RACK_SEGS)
+        flick, _ = _bend(over[-1], heading, RACK_TIP_R, RACK_CROOK_SWEEP,
+                         -1, RACK_SEGS)
+        out += _wire_chain([start] + over + flick, RACK_WIRE_R, "rack")
+        out.append(f'      <geom class="rack" type="sphere" '
+                   f'pos="{_v(*flick[-1])}" size="{RACK_BALL_R:.5f}"/>')
+
+    return f"""<mujoco model="cup_holder">
+  <!-- AUTO-GENERATED by build_objects.py. Do not edit by hand.
+       Chrome wire cup/plate rack, {RACK_DEPTH*1000:.0f} mm (세로) footprint x {RACK_RAIL_GAP*1000:.0f} mm
+       (가로) rail spacing x {RACK_H*1000:.0f} mm (높이). Four arches -- two semicircles
+       then two elongated ones forming the plate slot -- spaced 45 / 45 / 40
+       mm along the rails. Ball-tipped shepherd's crooks hang the cups.
+       Origin at bottom center. -->
+
+  <asset>
+    <material name="chrome" rgba="0.56 0.59 0.63 1"
+              specular="1" shininess="1" reflectance="0.7"/>
+    <material name="rack_endcap" rgba="0.10 0.10 0.11 1"
+              specular="0.3" shininess="0.3"/>
+  </asset>
+
+  <default>
+    <default class="rack">
+      <geom {CONTACT} material="chrome" density="7800"/>
+    </default>
+    <default class="rack_rail">
+      <geom {CONTACT} material="chrome" density="2000"/>
+    </default>
+    <default class="rack_cap">
+      <geom {CONTACT} material="rack_endcap" density="1100"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="root">
+      <freejoint name="free"/>
+{chr(10).join(out)}
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
 BUILDERS = {
     "milk_carton": build_milk_carton,
     "pringles": build_pringles,
     "sponge": build_sponge,
+    "cup_holder": build_cup_holder,
     **{n: partial(build_cup, n, **p) for n, p in CUPS.items()},
     **{n: partial(build_open_box, n, **p) for n, p in BOXES.items()},
 }

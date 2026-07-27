@@ -254,7 +254,9 @@ def apply_overrides(cfg, overrides):
         if "=" not in item:
             raise ValueError(f"Override must be key=value format, got: {item!r}")
         k, v = item.split("=", 1)
-        if "," in v:
+        if k.endswith("recording_glob"):
+            cfg[k] = v
+        elif "," in v:
             cfg[k] = [cast(x) for x in v.split(",")]
         else:
             cfg[k] = cast(v)

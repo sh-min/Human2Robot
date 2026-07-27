@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import cv2
 from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,21 +54,38 @@ VJEPA_STD = torch.tensor([0.229, 0.224, 0.225]) * 255.0
 
 # ---------- V-JEPA ----------
 
-def extract_vjepa(image_dir, feat_extractor, device, crop_size, num_frames, batch_size):
-    """Run V-JEPA over PNG frames in `image_dir`, return [T, D] features (T=F//tubelet)."""
-    frame_files = sorted([f.name for f in Path(image_dir).glob("*.png")])
-    nf = len(frame_files)
+def extract_vjepa(source, feat_extractor, device, crop_size, num_frames, batch_size):
+    """Run V-JEPA over a frame directory or video, return [T, D]."""
+    source = Path(source)
+    frames_np = []
+    if source.is_dir():
+        frame_paths = sorted(
+            p for p in source.iterdir()
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        )
+        for path in frame_paths:
+            img = Image.open(path).convert("RGB")
+            img = img.resize((crop_size, crop_size), Image.BILINEAR)
+            frames_np.append(np.array(img))
+    elif source.is_file():
+        cap = cv2.VideoCapture(str(source))
+        while True:
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            rgb = cv2.resize(rgb, (crop_size, crop_size),
+                             interpolation=cv2.INTER_LINEAR)
+            frames_np.append(rgb)
+        cap.release()
+
+    nf = len(frames_np)
     if nf == 0:
         return None
     num_tokens = nf // TUBELET
 
     # Load + normalize
-    frames = []
-    for f in frame_files:
-        img = Image.open(os.path.join(image_dir, f)).convert("RGB")
-        img = img.resize((crop_size, crop_size), Image.BILINEAR)
-        frames.append(np.array(img))
-    frames = torch.from_numpy(np.stack(frames)).float().permute(0, 3, 1, 2)  # [F, 3, H, W]
+    frames = torch.from_numpy(np.stack(frames_np)).float().permute(0, 3, 1, 2)
     frames = (frames - VJEPA_MEAN[None, :, None, None]) / VJEPA_STD[None, :, None, None]
 
     # Pad to multiple of clip_len
@@ -102,9 +120,24 @@ def extract_mano(rec_dir, num_frames):
     """Read result.json and return [num_frames, 96] axis-angle features."""
     json_path = rec_dir / "result.json"
     if not json_path.exists():
-        return None
+        # Current HaWoR pipeline writes axis-angle parameters directly.
+        npz_path = rec_dir / "rgb_hawor" / "retarget_input.npz"
+        if not npz_path.exists():
+            return None
+        data = np.load(npz_path)
+        n = min(num_frames, data["mano_global_orient"].shape[1])
+        feat = np.zeros((num_frames, 2, 48), dtype=np.float32)
+        for side in range(2):
+            feat[:n, side, :3] = data["mano_global_orient"][side, :n]
+            feat[:n, side, 3:] = data["mano_hand_pose"][side, :n].reshape(n, 45)
+            valid = data["valid"][side, :n].astype(bool)
+            feat[:n, side][~valid] = 0
+        return feat.reshape(num_frames, -1)
     rgb_dir = rec_dir / "rgb"
-    frame_names = sorted([f.stem for f in rgb_dir.glob("*.png")])
+    frame_names = sorted(
+        f.stem for f in rgb_dir.iterdir()
+        if f.suffix.lower() in {".png", ".jpg", ".jpeg"}
+    )
     feat = np.zeros((num_frames, 2, 48), dtype=np.float32)
     with open(json_path) as f:
         data = json.load(f)
@@ -179,7 +212,13 @@ def main():
     feat_extractor = VJEPAFeatureExtractor(encoder, pool="none").to(device)
 
     data_root = Path(args.data_root)
-    recordings = sorted([d for d in data_root.glob(args.recording_glob) if d.is_dir()])
+    patterns = [p.strip() for p in args.recording_glob.split(",") if p.strip()]
+    recordings = sorted({
+        d
+        for pattern in patterns
+        for d in data_root.glob(pattern)
+        if d.is_dir()
+    })
     print(f"Found {len(recordings)} recordings under {data_root}")
 
     for ri, rec in enumerate(recordings):
@@ -217,6 +256,22 @@ def main():
             if res2 is not None:
                 vjepa_masked, _ = res2
                 bundle["vjepa_orig_masked"] = vjepa_masked
+
+        # 2b. V-JEPA on the completed robot-hand replacement video.
+        robot_root = rec / "inpainting_processed" / rec.name / "0"
+        robot_candidates = [
+            robot_root / "video_overlay_rby1_xhand.mp4",
+            robot_root / "video_overlay_xhand.mp4",
+        ]
+        robot_video = next((p for p in robot_candidates if p.is_file()), None)
+        if robot_video is not None:
+            res_robot = extract_vjepa(
+                robot_video, feat_extractor, device,
+                args.crop_size, args.num_frames, args.batch_size,
+            )
+            if res_robot is not None:
+                vjepa_robot, _ = res_robot
+                bundle["vjepa_robot"] = vjepa_robot
 
         # 3. MANO from result.json (frame-rate → token-rate)
         mano_frames = extract_mano(rec, num_frames)

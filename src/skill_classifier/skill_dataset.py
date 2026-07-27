@@ -20,12 +20,18 @@ VARIANT_VJEPA_KEY = {
     "mano_only": None,
     "vjepa_orig": "vjepa_orig",
     "masked_vjepa_orig": "vjepa_orig_masked",
+    "vjepa_robot": "vjepa_robot",
 }
 
 
 def load_recordings(data_root, recording_glob="*"):
     """Load all recording bundles under {data_root}/{recording_glob}/features.pt."""
-    paths = sorted(Path(data_root).glob(f"{recording_glob}/features.pt"))
+    patterns = [p.strip() for p in recording_glob.split(",") if p.strip()]
+    paths = sorted({
+        path
+        for pattern in patterns
+        for path in Path(data_root).glob(f"{pattern}/features.pt")
+    })
     return [torch.load(p, map_location="cpu", weights_only=False) for p in paths]
 
 

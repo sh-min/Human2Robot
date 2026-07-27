@@ -1,0 +1,62 @@
+{
+  "episode": "07_27-20(1)",
+  "num_frames": 555,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 8,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 9,
+      "end_frame": 44,
+      "label": "Milk"
+    },
+    {
+      "start_frame": 45,
+      "end_frame": 94,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 95,
+      "end_frame": 148,
+      "label": "Snack"
+    },
+    {
+      "start_frame": 149,
+      "end_frame": 191,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 192,
+      "end_frame": 248,
+      "label": "Cup"
+    },
+    {
+      "start_frame": 249,
+      "end_frame": 277,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 278,
+      "end_frame": 330,
+      "label": "Lock"
+    },
+    {
+      "start_frame": 331,
+      "end_frame": 366,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 367,
+      "end_frame": 504,
+      "label": "Sweep"
+    },
+    {
+      "start_frame": 505,
+      "end_frame": 554,
+      "label": "Trans"
+    }
+  ]
+}

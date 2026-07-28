@@ -6,9 +6,9 @@ set -euo pipefail
 #   -> complete RBY1 arm + XHand render -> unclipped final composite
 #
 # Usage:
-#   bash scripts/run_all_rby1_xhand_overlay.sh              # IMG_5019 only
+#   bash scripts/run_all_rby1_xhand_overlay.sh              # first episode only
 #   FORCE=1 bash scripts/run_all_rby1_xhand_overlay.sh IMG_5019 IMG_5020
-#   ALL=1 FORCE=1 bash scripts/run_all_rby1_xhand_overlay.sh # explicit all
+#   DATA=/path/to/data ALL=1 bash scripts/run_all_rby1_xhand_overlay.sh
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -27,17 +27,42 @@ if [ "$#" -gt 0 ]; then
     EPISODE_IDS=("$@")
 elif [ "$ALL" = "1" ]; then
     EPISODE_IDS=()
-    for EP in "$DATA"/IMG_*; do
+    for EP in "$DATA"/*; do
+        [ -d "$EP" ] || continue
         EPISODE_IDS+=("$(basename "$EP")")
     done
 else
-    EPISODE_IDS=("IMG_5019")
+    EPISODE_IDS=()
+    for EP in "$DATA"/*; do
+        [ -d "$EP" ] || continue
+        EPISODE_IDS+=("$(basename "$EP")")
+        break
+    done
+fi
+
+if [ "${#EPISODE_IDS[@]}" -eq 0 ]; then
+    echo "처리할 episode가 없습니다: $DATA" >&2
+    exit 1
 fi
 
 for ID in "${EPISODE_IDS[@]}"; do
     EP="$DATA/$ID"
     RGB="$EP/rgb"
-    MOV="$EP/$ID.MOV"
+    VIDEO=""
+    for CANDIDATE in \
+      "$EP/$ID.MOV" \
+      "$EP/$ID.mov" \
+      "$EP/$ID.MP4" \
+      "$EP/$ID.mp4"; do
+        if [ -s "$CANDIDATE" ]; then
+            VIDEO="$CANDIDATE"
+            break
+        fi
+    done
+    if [ -z "$VIDEO" ]; then
+        echo "[$ID] 원본 MOV/MP4를 찾지 못했습니다: $EP" >&2
+        exit 1
+    fi
     HAWOR="$EP/rgb_hawor"
     NPZ="$HAWOR/retarget_input.npz"
 
@@ -58,18 +83,17 @@ for ID in "${EPISODE_IDS[@]}"; do
     echo "처리: $ID"
     echo "========================================"
 
-    test -s "$MOV"
     mkdir -p "$RGB"
-    MOV_FRAMES=$(ffprobe -v error -select_streams v:0 -count_frames \
-      -show_entries stream=nb_read_frames -of default=nw=1:nk=1 "$MOV")
+    VIDEO_FRAMES=$(ffprobe -v error -select_streams v:0 -count_frames \
+      -show_entries stream=nb_read_frames -of default=nw=1:nk=1 "$VIDEO")
     RGB_FRAMES=$(find "$RGB" -maxdepth 1 -type f -name '*.jpg' | wc -l)
-    if [ "$RGB_FRAMES" -ne "$MOV_FRAMES" ]; then
-        echo "[$ID] RGB 재추출: ${RGB_FRAMES} -> ${MOV_FRAMES}프레임"
+    if [ "$RGB_FRAMES" -ne "$VIDEO_FRAMES" ]; then
+        echo "[$ID] RGB 재추출: ${RGB_FRAMES} -> ${VIDEO_FRAMES}프레임"
         ffmpeg -nostdin -y -hide_banner -loglevel error \
-          -i "$MOV" -q:v 2 "$RGB/%06d.jpg"
+          -i "$VIDEO" -q:v 2 "$RGB/%06d.jpg"
         RGB_FRAMES=$(find "$RGB" -maxdepth 1 -type f -name '*.jpg' | wc -l)
     fi
-    test "$RGB_FRAMES" -eq "$MOV_FRAMES"
+    test "$RGB_FRAMES" -eq "$VIDEO_FRAMES"
 
     NPZ_FRAMES=0
     if [ -s "$NPZ" ]; then
@@ -184,6 +208,7 @@ for ID in "${EPISODE_IDS[@]}"; do
             --right_pkl "$RIGHT_PKL" \
             --left_pkl "$LEFT_PKL" \
             --hand both \
+            --require_smoothed \
             --fps 30
         )
     else

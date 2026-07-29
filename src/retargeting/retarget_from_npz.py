@@ -388,10 +388,12 @@ def main():
                          "<npz parent>/../contact")
     ap.add_argument("--alpha", type=float, default=0.001,
                     help="Anchor weight on ||q - q_stage1|| in stage-2 loss.")
-    ap.add_argument("--smooth", action="store_true",
-                    help="Also save a smoothed pkl (median + savgol). Pipeline: "
-                         "invalid-frame interp -> median(med_win) -> savgol(win,3); "
-                         "quaternion gets antipodal-unwrap + savgol + renorm.")
+    ap.add_argument("--smooth", dest="smooth", action="store_true", default=True,
+                    help="Also save a smoothed pkl (median + savgol; default on). "
+                         "Pipeline: invalid-frame interp -> median(med_win) -> "
+                         "savgol(win,3); quaternion gets antipodal-unwrap + savgol + renorm.")
+    ap.add_argument("--no_smooth", dest="smooth", action="store_false",
+                    help="Disable the smoothed-pkl output.")
     ap.add_argument("--smooth_win", type=int, default=15,
                     help="Savgol window for finger qpos (odd, default 15).")
     ap.add_argument("--smooth_wrist_win", type=int, default=21,

@@ -320,8 +320,17 @@ def _segment_hand(
     img_h: int,
     img_w: int,
     forearm_scales: tuple[float, ...],
+    seed_stride: int = 20,
+    reanchor_rounds: int = 2,
+    collapse_frac: float = 0.15,
 ) -> np.ndarray:
-    """Run forward+reverse SAM2 propagation for one hand. Returns (T,H,W) bool."""
+    """Run forward+reverse SAM2 propagation for one hand. Returns (T,H,W) bool.
+
+    Seeds every `seed_stride`-th detected frame, then re-anchors: any detected
+    frame whose propagated mask collapsed to < collapse_frac of the median area
+    (drift / lost track) is re-prompted with its own hand keypoints and
+    re-propagated, recovering frames the single-direction track dropped.
+    """
     masks = np.zeros((n_frames, img_h, img_w), dtype=bool)
     if not hand_detected.any() or bbox_min_dist.max() == 0:
         return masks
@@ -329,7 +338,7 @@ def _segment_hand(
     seed_idx = int(np.argmax(bbox_min_dist))
     valid_indices = np.flatnonzero(hand_detected)
     prompt_indices = np.unique(np.concatenate([
-        valid_indices[::30],
+        valid_indices[::max(1, seed_stride)],
         np.array([seed_idx, valid_indices[-1]], dtype=np.int64),
     ]))
     arm_points = _augment_with_forearm_points(
@@ -339,12 +348,29 @@ def _segment_hand(
     print(f"  seed frame={seed_idx} bbox={arm_boxes[seed_idx].round(1).tolist()} "
           f"({len(prompt_indices)} temporal prompts)")
 
-    for reverse in (False, True):
-        out = _segment_one_pass(video_predictor, frames_dir,
-                                arm_boxes[prompt_indices], arm_points[prompt_indices],
-                                prompt_indices, reverse=reverse)
-        for idx, m in out.items():
-            masks[idx] |= m[0]
+    def _fwd_rev(pidx):
+        acc = np.zeros((n_frames, img_h, img_w), dtype=bool)
+        for reverse in (False, True):
+            out = _segment_one_pass(video_predictor, frames_dir,
+                                    arm_boxes[pidx], arm_points[pidx], pidx, reverse=reverse)
+            for idx, m in out.items():
+                acc[idx] |= m[0]
+        return acc
+
+    masks |= _fwd_rev(prompt_indices)
+    for _ in range(max(0, reanchor_rounds)):
+        areas = masks.reshape(n_frames, -1).sum(1)
+        va = areas[valid_indices]
+        med = np.median(va[va > 0]) if (va > 0).any() else 0.0
+        collapsed = valid_indices[areas[valid_indices] < collapse_frac * med]
+        collapsed = np.setdiff1d(collapsed, prompt_indices)
+        if med <= 0 or len(collapsed) == 0:
+            break
+        add = collapsed[::max(1, len(collapsed) // 20)]   # cap ~20 new seeds/round
+        prompt_indices = np.unique(np.concatenate([prompt_indices, add]))
+        masks |= _fwd_rev(add)
+        print(f"  [reanchor] +{len(add)} seeds for collapsed frames "
+              f"(area<{collapse_frac:.2f}x median)")
 
     # Keep only the component attached to the hand/forearm prompts.  Crucially,
     # do not crop to the hand bbox: that old crop amputated the forearm.

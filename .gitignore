@@ -45,3 +45,7 @@ docs/progress_slides.pdf
 
 # Sample media (data, not code)
 examples/*.mp4
+
+# OMC operational state (never commit)
+.omc/
+**/.omc/

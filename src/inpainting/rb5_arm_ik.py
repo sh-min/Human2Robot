@@ -16,8 +16,14 @@ import numpy as np
 import pinocchio as pin
 from scipy.signal import savgol_filter
 
+# Drive IK with the physical flange (link6) as the end effector, NOT "tcp". tcp is a
+# virtual tool point 9.67cm beyond the flange (tcp_joint xyz="0 -0.0967 0"), so the
+# visible flange plate sits at link6's -y end (measured mesh y in [-0.097, -0.061]).
+# rb5_build_overlay_input.py builds the link6 target so the flange face mates flush
+# with the xhand mount plate (see its FLANGE_TCP mate construction); we solve for
+# link6 directly so that mate is exact.
 RB5_URDF = str(Path(__file__).resolve().parents[2] / "third_party" / "rb5_850e" / "rb5_850e.urdf")
-EE_FRAME = "tcp"
+EE_FRAME = "link6"
 JOINT_NAMES = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
 
 
@@ -40,30 +46,70 @@ def reach_radius(model, data, fid) -> float:
     return best
 
 
-def _R_cam_base() -> np.ndarray:
-    """Base mounted vertically: base-Z along scene-up (-y_cam)."""
-    x = np.array([1.0, 0.0, 0.0]); z = np.array([0.0, -1.0, 0.0])
+def _R_cam_base(mount: str = "floor") -> np.ndarray:
+    """Base-Z (the mount/joint-0 axis). floor: points scene-up (-y_cam), arm
+    rises from below. ceiling: points down (+y_cam), arm hangs from above."""
+    x = np.array([1.0, 0.0, 0.0])
+    z = np.array([0.0, -1.0, 0.0]) if mount == "floor" else np.array([0.0, 1.0, 0.0])
     y = np.cross(z, x)
     return np.column_stack([x, y, z])
 
 
 def auto_fit_base(wrist_pos_cam: np.ndarray, model, data, fid,
-                  frac: float = 0.7, override=None) -> pin.SE3:
-    """T_cam_base placing the base below+behind the wrist centroid so the whole
-    trajectory sits within `frac` of the reach radius. `override` (4x4) wins.
+                  frac: float = 0.7, override=None, shift=(0.0, 0.0, 0.0),
+                  mount: str = "floor") -> pin.SE3:
+    """T_cam_base placing the base `frac`*reach from the wrist centroid so the
+    whole trajectory is reachable. mount="floor" puts the base below (arm rises
+    from the bottom); mount="ceiling" puts it above (arm hangs from the top).
+    `override` (4x4) wins; `shift` (x,y,z, CV cam frame) nudges the base.
     """
     if override is not None:
         return pin.SE3(np.asarray(override)[:3, :3], np.asarray(override)[:3, 3])
-    R = _R_cam_base()
+    R = _R_cam_base(mount)
     c = np.mean(wrist_pos_cam, axis=0)
     reach = reach_radius(model, data, fid)
-    # target distance from base to the farthest wrist = frac*reach; mount along
-    # scene-up (-y_cam => base sits +y i.e. below the wrists) plus a little +z (back).
-    up_cam = np.array([0.0, 1.0, 0.0])   # +y = down in cam => base below wrists
-    dmax = float(np.max(np.linalg.norm(wrist_pos_cam - c, axis=1)))
-    d = max(0.15, frac * reach)          # base ~d below centroid
-    base_pos = c + up_cam * d + np.array([0.0, 0.0, 0.10])
+    # offset from centroid to base: +y (down) for floor => base below wrists;
+    # -y (up) for ceiling => base above wrists. Plus a little +z (further away).
+    off = np.array([0.0, 1.0, 0.0]) if mount == "floor" else np.array([0.0, -1.0, 0.0])
+    d = max(0.15, frac * reach)
+    base_pos = c + off * d + np.array([0.0, 0.0, 0.10]) + np.asarray(shift, float)
     return pin.SE3(R, base_pos)
+
+
+def optimize_base(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
+                  w_ori=1.0, n_sub=120, mount="floor", verbose=True):
+    """Search base placements and return the T_cam_base that reaches the wrist
+    trajectory with the least position error + jitter (orientation-weighted by
+    w_ori). Sweeps a lateral(x)/depth(z)/distance(frac) grid on a subsampled
+    trajectory. Returns (T_cam_base, info dict)."""
+    vi = np.flatnonzero(valid)
+    sub = vi[:: max(1, len(vi) // n_sub)]
+    sub_fl = flange_poses[sub]
+    sub_valid = np.ones(len(sub), bool)
+    reach = reach_radius(model, data, fid) * 0.99
+    best = None
+    for frac in (0.5, 0.6, 0.7):
+        for dx in np.linspace(-0.10, 0.30, 5):
+            for dz in np.linspace(-0.15, 0.25, 5):
+                Tcb = auto_fit_base(wrist_pos_cam[valid], model, data, fid,
+                                    frac=frac, shift=(dx, 0.0, dz), mount=mount)
+                q, perr, rok = solve_sequence(sub_fl, sub_valid, Tcb, model, data, fid,
+                                              w_ori=w_ori, smooth_win=0)
+                if rok.mean() < 0.99:
+                    continue
+                p90 = float(np.nanpercentile(perr, 90))
+                jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
+                cost = p90 * 1000.0 + 25.0 * jit    # mm + jitter%
+                if best is None or cost < best["cost"]:
+                    best = dict(cost=cost, Tcb=Tcb, frac=frac, dx=float(dx), dz=float(dz),
+                                p90_mm=p90 * 1000, jitter=jit)
+    if best is None:   # nothing fully reachable -> plain auto-fit
+        return auto_fit_base(wrist_pos_cam[valid], model, data, fid, mount=mount), {"note": "no reachable base found"}
+    if verbose:
+        print(f"[opt-base] frac={best['frac']} dx={best['dx']:.3f} dz={best['dz']:.3f} "
+              f"-> p90-err {best['p90_mm']:.1f}mm jitter {best['jitter']*100:.1f}% "
+              f"base(cam)={best['Tcb'].translation.round(3)}")
+    return best["Tcb"], best
 
 
 def solve_ik(model, data, fid, q0, target: pin.SE3, *, w_ori=0.0,

@@ -1,0 +1,28 @@
+schema_version: 1
+object_id: lock_box_large
+task:
+  instruction: pick up the large lock box
+geometry:
+  mjcf: ../../src/sim/mujoco_sim/assets/lock_box_large/lock_box_large.xml
+physics:
+  mass_kg: 0.126045
+  friction: [1.2, 0.05, 0.001]
+spawn:
+  position: [0.65, 0.0, 1.0]
+  quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+  randomization:
+    x_range: [0.570, 0.820]
+    y_range: [-0.450, 0.450]
+    z_range: [1.0, 1.0]
+    yaw_range_deg: [-180.0, 180.0]
+success:
+  type: lift
+  height_delta_m: 0.1
+  terminate_on_success: true
+control:
+  active_hands: [left]
+dataset:
+  recordings_root: ../../data/object_datasets/lock_box_large/recordings
+  episode_glob: "*"
+  lerobot_v3_root: ../../data/lerobot_lock_box_large
+  groot_v21_root: ../../data/groot_lock_box_large

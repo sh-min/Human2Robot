@@ -42,25 +42,40 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from object_config import load_object_spec, public_object_spec
+
 from .convert_episode import HEAD_CAM_KEY, TARGET_IMG_SIZE, convert_episode
 from .schema import BIMANUAL_DIM, write_modality_json
 
 
-def _discover_episodes(data_root: str) -> list[str]:
+def _discover_episodes(
+    data_root: str,
+    episode_glob: str = "*",
+) -> list[str]:
     """Find sub-directories that look like retargeted episodes.
 
     An episode directory must contain ``rgb/`` and ``rgb_hawor/``.
     """
     episodes = []
-    for name in sorted(os.listdir(data_root)):
-        d = os.path.join(data_root, name)
-        if not os.path.isdir(d):
+    for path in sorted(Path(data_root).glob(episode_glob)):
+        if not path.is_dir():
             continue
-        has_rgb = os.path.isdir(os.path.join(d, "rgb"))
-        has_hawor = os.path.isdir(os.path.join(d, "rgb_hawor"))
+        has_rgb = (path / "rgb").is_dir()
+        has_hawor = (path / "rgb_hawor").is_dir()
         if has_rgb and has_hawor:
-            episodes.append(d)
+            episodes.append(str(path))
     return episodes
+
+
+def _object_pose_metadata(episode_dir: str) -> dict | None:
+    """Load optional episode-level object pose metadata."""
+    path = Path(episode_dir) / "object_pose.json"
+    if not path.is_file():
+        return None
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
 
 
 def _episode_stats(df: pd.DataFrame) -> dict[str, dict[str, list]]:
@@ -200,13 +215,32 @@ def convert_batch(
     fps: float = 30.0,
     action_mode: str = "absolute",
     img_glob: str = "frame_*.jpg",
-    task_description: str = "manipulate cube",
+    task_description: str | None = None,
     visual_source: str = "auto",
     allow_legacy_actions: bool = False,
     skip_failed: bool = False,
+    object_spec_path: str | None = None,
+    episode_glob: str | None = None,
 ) -> None:
     """Convert all episodes under ``data_root`` into a LeRobot v3 dataset."""
-    episodes = _discover_episodes(data_root)
+    object_spec = (
+        load_object_spec(object_spec_path, check_assets=False)
+        if object_spec_path is not None
+        else None
+    )
+    if task_description is None:
+        task_description = (
+            object_spec["task"]["instruction"]
+            if object_spec is not None
+            else "manipulate object"
+        )
+    if episode_glob is None:
+        episode_glob = (
+            object_spec["dataset"]["episode_glob"]
+            if object_spec is not None
+            else "*"
+        )
+    episodes = _discover_episodes(data_root, episode_glob)
     if not episodes:
         raise FileNotFoundError(
             f"No episode directories found in {data_root}. "
@@ -267,6 +301,12 @@ def convert_batch(
             "tasks": ep_meta["tasks"],
             "source_episode_id": ep_meta["source_episode_id"],
             "visual_source": ep_meta["visual_source"],
+            "object_pose_json": json.dumps(
+                _object_pose_metadata(
+                    str(Path(data_root) / ep_meta["source_episode_id"])
+                ),
+                separators=(",", ":"),
+            ),
             f"videos/{HEAD_CAM_KEY}/chunk_index": 0,
             f"videos/{HEAD_CAM_KEY}/file_index": ep_idx,
             f"videos/{HEAD_CAM_KEY}/from_timestamp": 0.0,
@@ -299,6 +339,9 @@ def convert_batch(
     info = {
         "codebase_version": "v3.0",
         "robot_type": "rby1_xhand",
+        "object_id": (
+            object_spec["object_id"] if object_spec is not None else None
+        ),
         "total_episodes": len(episode_metas),
         "total_frames": total_frames,
         "total_tasks": 1,
@@ -317,11 +360,17 @@ def convert_batch(
 
     # modality.json (GR00T) — still useful for GR00T finetune side.
     write_modality_json(out_dir)
+    if object_spec is not None:
+        with open(meta_dir / "object_spec.json", "w") as f:
+            json.dump(public_object_spec(object_spec), f, indent=2)
+            f.write("\n")
 
     print(f"Dataset complete: {out_dir}")
     print(f"  episodes: {len(episode_metas)}")
     print(f"  total frames: {total_frames}")
     print(f"  action_mode: {action_mode}")
+    if object_spec is not None:
+        print(f"  object_id: {object_spec['object_id']}")
 
 
 def _state_names() -> list[str]:
@@ -343,7 +392,21 @@ def main():
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--action_mode", default="absolute", choices=["absolute", "delta"])
     ap.add_argument("--img_glob", default="frame_*.jpg")
-    ap.add_argument("--task", default="manipulate cube", help="Task description string")
+    ap.add_argument(
+        "--task",
+        default=None,
+        help="Task description. Defaults to object spec instruction.",
+    )
+    ap.add_argument(
+        "--object_spec",
+        default=None,
+        help="Validated object/task YAML copied into dataset metadata.",
+    )
+    ap.add_argument(
+        "--episode_glob",
+        default=None,
+        help="Episode directory glob; defaults to object spec or '*'.",
+    )
     ap.add_argument(
         "--visual_source",
         default="auto",
@@ -371,6 +434,8 @@ def main():
         visual_source=args.visual_source,
         allow_legacy_actions=args.allow_legacy_actions,
         skip_failed=args.skip_failed,
+        object_spec_path=args.object_spec,
+        episode_glob=args.episode_glob,
     )
 
 

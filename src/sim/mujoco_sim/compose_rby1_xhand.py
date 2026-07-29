@@ -23,8 +23,23 @@ REPO = Path(__file__).resolve().parents[3]
 RBY1_SCENE = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1/scene_rby1m_1.2_no_gripper.xml"
 XHAND_R = REPO / "src/sim/mujoco_sim/assets/xhand_right/xhand_right.xml"
 XHAND_L = REPO / "src/sim/mujoco_sim/assets/xhand_left/xhand_left.xml"
-CUBE = REPO / "src/sim/mujoco_sim/assets/cube/cube.xml"
 OUT = REPO / "src/sim/mujoco_sim/scenes/rby1_xhand.xml"
+
+# Tabletop objects: (asset path, attach prefix, world position). Each
+# object's MJCF origin is its bottom center, so z = 1.0 (the table top)
+# means "resting on the table". These are only the baked-in starting
+# poses; RBY1XHandEnv.reset() scatters them over the table every episode.
+_NAMES = (
+    "cup_green", "cup_blue", "milk_carton", "pringles",
+    "lock_box_large", "lock_box_small", "sponge", "trash_bin",
+    "cup_holder",
+)
+# 3 x 3 grid, 250 mm apart in x and 200 mm in y -- wider than the biggest
+# object's half-width plus its neighbour's, so nothing starts interpenetrating.
+OBJECTS = tuple(
+    (f"assets/{n}/{n}.xml", f"{n}_", [0.55 + 0.25 * (i // 3), -0.30 + 0.20 * (i % 3), 1.0])
+    for i, n in enumerate(_NAMES)
+)
 
 # RBY1's original gripper mounts at z=-0.1261 in link_*_arm_6 frame.
 EE_OFFSET = [0.0, 0.0, -0.1261]
@@ -141,12 +156,12 @@ def main():
         fovy=70.0,
     )
 
-    # 2x2 cube as a free body, initially floating ~7.5 cm above the
-    # table top so we can see whether physics actually integrates.
-    cube = mujoco.MjSpec.from_file(str(CUBE))
-    cube_frame = spec.worldbody.add_frame()
-    cube_frame.pos = [0.55, 0.0, 1.10]
-    spec.attach(cube, prefix="cube_", frame=cube_frame)
+    # Tabletop objects, each a free body resting on the table top.
+    for rel_path, prefix, pos in OBJECTS:
+        obj = mujoco.MjSpec.from_file(str(REPO / "src/sim/mujoco_sim" / rel_path))
+        frame = spec.worldbody.add_frame()
+        frame.pos = pos
+        spec.attach(obj, prefix=prefix, frame=frame)
 
     # spec.attach merges specs under a single meshdir, so XHand meshes
     # (originally relative to xhand_{right,left}/) get resolved under RBY1's

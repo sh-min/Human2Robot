@@ -16,19 +16,20 @@ ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 DATA="${DATA:-$ROOT/data/cube_dataset/26.07.24}"
 FORCE="${FORCE:-0}"
 CALIBRATION="${CALIBRATION:-$DATA/workspace_calibration_rby1.json}"
+EPISODE_GLOB="${EPISODE_GLOB:-IMG_*}"
 
 if [ "$#" -gt 0 ]; then
     EPISODE_IDS=("$@")
 else
     EPISODE_IDS=()
-    for EP in "$DATA"/IMG_*; do
+    for EP in "$DATA"/$EPISODE_GLOB; do
         [ -d "$EP" ] || continue
         EPISODE_IDS+=("$(basename "$EP")")
     done
 fi
 
 if [ "${#EPISODE_IDS[@]}" -eq 0 ]; then
-    echo "No IMG_* episodes found under $DATA" >&2
+    echo "No $EPISODE_GLOB episodes found under $DATA" >&2
     exit 1
 fi
 
@@ -42,6 +43,7 @@ PYTHONPATH="$ROOT/src" \
 conda run -n RFM_retarget --no-capture-output \
   python "$ROOT/src/retargeting/fit_workspace_calibration.py" \
     --data_root "$DATA" \
+    --episode_glob "$EPISODE_GLOB" \
     --out "$CALIBRATION"
 
 for ID in "${EPISODE_IDS[@]}"; do

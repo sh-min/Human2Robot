@@ -28,3 +28,6 @@
 [submodule "third_party/diffusion-vas"]
 	path = third_party/diffusion-vas
 	url = https://github.com/Kaihua-Chen/diffusion-vas.git
+[submodule "third_party/Isaac-GR00T"]
+	path = third_party/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git

@@ -41,11 +41,15 @@ CAMERA_AXES_TO_WORLD = [
 ]
 
 
-def _discover_hand_samples(data_root: Path, hand: str):
+def _discover_hand_samples(
+    data_root: Path,
+    hand: str,
+    episode_glob: str,
+):
     positions: list[np.ndarray] = []
     rotations: list[np.ndarray] = []
     episodes: list[str] = []
-    pattern = f"IMG_*/rgb_hawor/qpos_xhand_{hand}_smooth.pkl"
+    pattern = f"{episode_glob}/rgb_hawor/qpos_xhand_{hand}_smooth.pkl"
     for path in sorted(data_root.glob(pattern)):
         with path.open("rb") as handle:
             data = pickle.load(handle)
@@ -97,6 +101,7 @@ def fit_or_extend(
     position_scale: float,
     orientation_scale: float,
     force: bool,
+    episode_glob: str = "IMG_*",
 ) -> dict:
     if out_path.exists() and not force:
         profile = load_calibration(out_path)
@@ -115,7 +120,7 @@ def fit_or_extend(
 
     added = []
     for hand in ("right", "left"):
-        samples = _discover_hand_samples(data_root, hand)
+        samples = _discover_hand_samples(data_root, hand, episode_glob)
         if samples is None:
             print(f"  {hand}: no valid samples; leaving profile unchanged")
             continue
@@ -155,6 +160,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--position_scale", type=float, default=0.3)
     parser.add_argument("--orientation_scale", type=float, default=0.5)
+    parser.add_argument("--episode_glob", default="IMG_*")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -167,6 +173,7 @@ def main() -> None:
         position_scale=args.position_scale,
         orientation_scale=args.orientation_scale,
         force=args.force,
+        episode_glob=args.episode_glob,
     )
 
 

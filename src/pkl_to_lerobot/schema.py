@@ -246,6 +246,11 @@ def build_modality_json(
         "state": state_spec,
         "action": action_spec,
         "video": video_spec,
+        "annotation": {
+            "human.task_description": {
+                "original_key": "task_index",
+            }
+        },
     }
 
 

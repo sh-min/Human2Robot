@@ -15,6 +15,8 @@ Experiment output:
 """
 
 import argparse
+import csv
+import json
 import math
 import os
 import sys
@@ -101,6 +103,52 @@ def plot_confusion_matrix(all_labels, all_preds, class_names, save_path, title="
     plt.savefig(save_path, dpi=150)
     plt.close(fig)
     return fig
+
+
+def save_training_history(history, save_dir):
+    """Persist per-epoch metrics and a compact learning-curve dashboard."""
+    csv_path = os.path.join(save_dir, "training_history.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(history[0]))
+        writer.writeheader()
+        writer.writerows(history)
+
+    epochs = [row["epoch"] for row in history]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    axes[0].plot(epochs, [row["train_acc"] for row in history], label="Train")
+    axes[0].plot(epochs, [row["val_acc"] for row in history], label="Validation")
+    axes[0].set_title("Accuracy")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylim(0, 1)
+    axes[0].grid(alpha=0.25)
+    axes[0].legend()
+
+    axes[1].plot(epochs, [row["train_loss"] for row in history], label="Train")
+    axes[1].plot(epochs, [row["val_loss"] for row in history], label="Validation")
+    axes[1].set_title("Loss")
+    axes[1].set_xlabel("Epoch")
+    axes[1].grid(alpha=0.25)
+    axes[1].legend()
+
+    axes[2].plot(epochs, [row["val_f1_macro"] for row in history], label="Macro F1")
+    axes[2].plot(epochs, [row["val_f1_weighted"] for row in history], label="Weighted F1")
+    axes[2].set_title("Validation F1")
+    axes[2].set_xlabel("Epoch")
+    axes[2].set_ylim(0, 1)
+    axes[2].grid(alpha=0.25)
+    axes[2].legend()
+
+    best = max(history, key=lambda row: row["val_acc"])
+    fig.suptitle(
+        f"Skill classifier learning curves — best validation accuracy "
+        f"{best['val_acc']:.3f} at epoch {best['epoch']}"
+    )
+    plt.tight_layout()
+    curve_path = os.path.join(save_dir, "learning_curves.png")
+    plt.savefig(curve_path, dpi=160)
+    plt.close(fig)
+    return csv_path, curve_path
 
 
 def compute_class_weights(dataset, num_classes, strategy="inverse"):
@@ -424,6 +472,7 @@ def main():
 
     # Train
     best_val_acc = 0.0
+    history = []
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(
@@ -447,6 +496,16 @@ def main():
             "val/f1_weighted": val_f1_weighted,
             "lr": cur_lr,
         }
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "train_acc": train_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
+            "val_f1_macro": val_f1_macro,
+            "val_f1_weighted": val_f1_weighted,
+            "lr": cur_lr,
+        })
         if not args.no_wandb:
             wandb.log(log_dict)
 
@@ -499,9 +558,57 @@ def main():
         "args": vars(args),
     }, os.path.join(save_dir, f"last_{args.model}.pt"))
 
+    history_path, curves_path = save_training_history(history, save_dir)
+
+    # Re-evaluate the selected checkpoint so the final report and confusion
+    # matrix always describe the model handed to downstream inference.
+    best_path = os.path.join(save_dir, f"best_{args.model}.pt")
+    best_ckpt = torch.load(best_path, map_location=device, weights_only=False)
+    model.load_state_dict(best_ckpt["model"])
+    best_loss, best_acc, best_f1_macro, best_f1_weighted, best_preds, best_labels = evaluate(
+        model, val_loader, criterion, device, num_classes=num_classes,
+    )
+    best_cm_path = os.path.join(save_dir, "confusion_matrix_best.png")
+    plot_confusion_matrix(
+        best_labels, best_preds, active_labels, best_cm_path,
+        title=f"Best checkpoint (epoch {best_ckpt['epoch']})",
+    )
+
+    class_metrics = {}
+    labels_np = np.asarray(best_labels)
+    preds_np = np.asarray(best_preds)
+    for class_idx, class_name in enumerate(active_labels):
+        class_mask = labels_np == class_idx
+        class_metrics[class_name] = {
+            "support": int(class_mask.sum()),
+            "accuracy": float((preds_np[class_mask] == class_idx).mean())
+            if class_mask.any() else None,
+        }
+    summary = {
+        "experiment": exp_id,
+        "variant": variant,
+        "train_recordings": len(train_recs),
+        "validation_recordings": len(val_recs),
+        "train_samples": len(train_ds),
+        "validation_samples": len(val_ds),
+        "best_epoch": int(best_ckpt["epoch"]),
+        "validation_loss": float(best_loss),
+        "validation_accuracy": float(best_acc),
+        "validation_f1_macro": float(best_f1_macro),
+        "validation_f1_weighted": float(best_f1_weighted),
+        "per_class": class_metrics,
+    }
+    summary_path = os.path.join(save_dir, "evaluation_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
     print(f"\nBest val acc: {best_val_acc:.3f}")
     print(f"Experiment: {exp_id}")
     print(f"Checkpoints saved to {save_dir}/")
+    print(f"Training history: {history_path}")
+    print(f"Learning curves: {curves_path}")
+    print(f"Best confusion matrix: {best_cm_path}")
+    print(f"Evaluation summary: {summary_path}")
 
     if not args.no_wandb:
         wandb.finish()

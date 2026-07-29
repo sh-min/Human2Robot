@@ -8,15 +8,29 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DATA="${DATA:-$ROOT/data/cube_dataset/26.07.24}"
-OUT="${OUT:-$ROOT/data/lerobot_cube_26_07_24}"
 CONVERTER_ENV="${CONVERTER_ENV:-vjepa2-312}"
-TASK="${TASK:-manipulate cube}"
+OBJECT_SPEC="${OBJECT_SPEC:-$ROOT/configs/objects/cube.yaml}"
+
+spec_get() {
+    PYTHONPATH="$ROOT/src" conda run -n "$CONVERTER_ENV" \
+      python -m object_config get "$OBJECT_SPEC" "$1"
+}
+
+PYTHONPATH="$ROOT/src" conda run -n "$CONVERTER_ENV" \
+  python -m object_config validate "$OBJECT_SPEC" --check-assets
+
+DATA="${DATA:-$(spec_get dataset.recordings_root)}"
+OUT="${OUT:-$(spec_get dataset.lerobot_v3_root)}"
+GROOT_OUT="${GROOT_OUT:-$(spec_get dataset.groot_v21_root)}"
+TASK="${TASK:-$(spec_get task.instruction)}"
+EPISODE_GLOB="${EPISODE_GLOB:-$(spec_get dataset.episode_glob)}"
 
 cd "$ROOT"
 
-DATA="$DATA" bash scripts/export_policy_trajectories.sh
-DATA="$DATA" bash scripts/validate_policy_trajectories.sh
+DATA="$DATA" EPISODE_GLOB="$EPISODE_GLOB" \
+  bash scripts/export_policy_trajectories.sh
+DATA="$DATA" EPISODE_GLOB="$EPISODE_GLOB" \
+  bash scripts/validate_policy_trajectories.sh
 
 conda run -n "$CONVERTER_ENV" python -c \
   'import numpy, pandas, pyarrow, scipy'
@@ -27,6 +41,18 @@ conda run -n "$CONVERTER_ENV" --no-capture-output \
     --data_root "$DATA" \
     --out_dir "$OUT" \
     --visual_source robot \
-    --task "$TASK"
+    --task "$TASK" \
+    --object_spec "$OBJECT_SPEC" \
+    --episode_glob "$EPISODE_GLOB"
 
 echo "Policy dataset ready: $OUT"
+
+PYTHONPATH="$ROOT/src" \
+conda run -n "$CONVERTER_ENV" --no-capture-output \
+  python -m pkl_to_lerobot.export_groot_v21 \
+    --source "$OUT" \
+    --out "$GROOT_OUT" \
+    --object_spec "$OBJECT_SPEC" \
+    --overwrite
+
+echo "GR00T v2.1 dataset ready: $GROOT_OUT"

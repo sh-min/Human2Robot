@@ -91,6 +91,7 @@ git submodule update --init --recursive
 | `lerobot` | https://github.com/huggingface/lerobot | robot policy training infra |
 | `sam2` | https://github.com/facebookresearch/sam2 | hand/arm segmentation for inpainting |
 | `E2FGVI` | https://github.com/MCG-NKU/E2FGVI | flow-guided video inpainting |
+| `Isaac-GR00T` | https://github.com/NVIDIA/Isaac-GR00T | GR00T N1.7 VLA fine-tuning |
 
 ### Updating submodules
 
@@ -99,6 +100,50 @@ To pull the latest commits from all submodules:
 ```bash
 git submodule update --remote --recursive
 ```
+
+---
+
+## Object-ready policy setup
+
+Object-dependent values are centralized in one YAML file. Copy
+`configs/objects/template.yaml` to `configs/objects/<object_id>.yaml`, then
+provide the task instruction, geometry, physics, spawn/randomization,
+success condition, active hands, episode directory glob, and dataset paths.
+Mesh assets belong under `assets/objects/<object_id>/`.
+
+Geometry may be a primitive, visual/collision meshes, or a standalone MJCF.
+The MuJoCo object branch is integrated as ready-to-use specs:
+`cup_blue`, `cup_green`, `milk_carton`, `pringles`, `lock_box_large`,
+`lock_box_small`, `sponge`, and `trash_bin`.
+
+```bash
+# Validate the spec, assets, and generated MuJoCo scene
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/validate_object_setup.sh
+
+# Export trajectories and build LeRobot v3 + GR00T v2.1 datasets
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/prepare_policy_dataset.sh
+
+# Train either backend
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/train_diffusion_policy.sh
+
+bash scripts/bootstrap_groot.sh
+OBJECT_SPEC=configs/objects/<object_id>.yaml \
+  bash scripts/train_groot_policy.sh
+```
+
+Future ready episodes are discovered automatically instead of using a fixed
+recording list. The included `cube.yaml` preserves the current dataset as a
+working example. A new object does not require policy-code changes, but still
+requires demonstration recordings, calibrated trajectories, and realistic
+geometry/physics values for closed-loop evaluation.
+
+`spawn.randomization` randomizes MuJoCo evaluation; it does not invent new
+training images. Object-position generalization therefore depends on
+recordings that actually cover the intended workspace (and on the object
+remaining visible in the robot-replacement observation).
 
 ---
 

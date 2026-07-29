@@ -25,6 +25,7 @@ Usage:
         --hand both
 """
 import argparse
+import json
 import os
 import pickle
 import xml.etree.ElementTree as ET
@@ -40,7 +41,7 @@ import pyrender
 import trimesh
 from scipy.spatial.transform import Rotation
 
-from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND
+from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT
 
 REPO = Path(__file__).resolve().parent.parent.parent
 RBY1_ROOT = REPO / "third_party/mujoco_menagerie/rainbow_robotics_rby1"
@@ -261,8 +262,7 @@ def render_robot(
     scene.add(pyrender.PointLight(color=[0.8, 0.8, 0.8], intensity=2.0), pose=pl_pose)
 
     # Hands
-    for side, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes in hands_data:
-        R_cam_xhand = R_mano @ R_MANO_XHAND[side]
+    for side, wrist_pos, R_cam_xhand, qpos_dict, joints_tree, link_meshes in hands_data:
         R_pr = T_CV2GL @ R_cam_xhand
         t_pr = T_CV2GL @ wrist_pos
         T_root = np.eye(4); T_root[:3, :3] = R_pr; T_root[:3, 3] = t_pr
@@ -305,24 +305,53 @@ def main() -> None:
     ap.add_argument("--output", type=Path, default=None,
                     help="Composite output. Default: "
                          "<processed_demo>/video_overlay_rby1_xhand.mkv")
+    ap.add_argument("--aux_output_dir", type=Path, default=None,
+                    help="Robot-only video, mask, and render metadata directory. "
+                         "Default: <processed_demo>/overlay_processor_arm")
+    ap.add_argument("--require_smoothed", action="store_true",
+                    help="Fail unless both PKLs contain smoothed finger qpos, "
+                         "wrist position, and wrist orientation metadata.")
     ap.add_argument("--head_pitch", type=float, default=0.6)
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
     # --- Load HaWoR data ---
     ri = np.load(args.hawor_npz)
-    joints_left  = ri["joints_left"].astype(np.float64)
-    joints_right = ri["joints_right"].astype(np.float64)
-    go    = ri["mano_global_orient"]
-    valid = ri["valid"]
     focal_source = float(ri["img_focal"])
 
     qr = pickle.load(open(args.right_pkl, "rb"))
     ql = pickle.load(open(args.left_pkl,  "rb"))
+    for side, pkl_path, trajectory in (
+        ("right", args.right_pkl, qr),
+        ("left", args.left_pkl, ql),
+    ):
+        required = {"data", "wrist_pos", "wrist_quat", "valid", "joint_names"}
+        missing = sorted(required - set(trajectory))
+        if missing:
+            raise KeyError(f"{side} trajectory {pkl_path} missing keys: {missing}")
+        if args.require_smoothed and "smoothing" not in trajectory:
+            raise ValueError(
+                f"{side} trajectory is not marked as smoothed: {pkl_path}"
+            )
+
     right_data  = np.asarray(qr["data"])
     left_data   = np.asarray(ql["data"])
+    right_wrist_pos = np.asarray(qr["wrist_pos"], dtype=np.float64)
+    left_wrist_pos = np.asarray(ql["wrist_pos"], dtype=np.float64)
+    right_wrist_rot = Rotation.from_quat(
+        np.asarray(qr["wrist_quat"], dtype=np.float64)
+    ).as_matrix()
+    left_wrist_rot = Rotation.from_quat(
+        np.asarray(ql["wrist_quat"], dtype=np.float64)
+    ).as_matrix()
+    right_valid = np.asarray(qr["valid"], dtype=bool)
+    left_valid = np.asarray(ql["valid"], dtype=bool)
     right_jname = qr["joint_names"]
     left_jname  = ql["joint_names"]
+    print(
+        "[trajectory] right smoothing="
+        f"{qr.get('smoothing', 'none')}, left smoothing={ql.get('smoothing', 'none')}"
+    )
 
     # --- Load the already inpainted background.  The robot is composited only
     # after human hand+arm removal, and is never clipped by that removal mask.
@@ -354,10 +383,14 @@ def main() -> None:
     focal = focal_source * (scale_x + scale_y) / 2.0
     T_use = min(
         T_vid,
-        joints_left.shape[0],
-        joints_right.shape[0],
         left_data.shape[0],
         right_data.shape[0],
+        left_wrist_pos.shape[0],
+        right_wrist_pos.shape[0],
+        left_wrist_rot.shape[0],
+        right_wrist_rot.shape[0],
+        left_valid.shape[0],
+        right_valid.shape[0],
     )
     print(f"[info] T={T_use}, hand={args.hand}, render={img_w}x{img_h}, "
           f"focal={focal:.1f} (source={focal_source:.1f})")
@@ -409,23 +442,30 @@ def main() -> None:
         for s in ("right", "left"):
             if s not in side_cfg:
                 continue
-            h_idx = 1 if s == "right" else 0
-            if not valid[h_idx, t]:
+            side_valid = right_valid if s == "right" else left_valid
+            if not side_valid[t]:
                 continue
 
-            # Hand data
+            # Hand data.  The smooth PKL is the single source of truth for
+            # finger qpos, wrist translation, and robot-wrist orientation.
             joints_tree, link_meshes = side_cfg[s]
             jnames = right_jname if s == "right" else left_jname
             qdata  = right_data[t] if s == "right" else left_data[t]
             qpos_dict = {jn: float(qdata[i]) for i, jn in enumerate(jnames)}
-            wrist_pos = (joints_right if s == "right" else joints_left)[t, 0, :]
-            R_mano = Rotation.from_rotvec(go[h_idx, t]).as_matrix()
-            hands_data.append((s, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes))
+            wrist_pos = (
+                right_wrist_pos[t] if s == "right" else left_wrist_pos[t]
+            )
+            R_cam_xhand = (
+                right_wrist_rot[t] if s == "right" else left_wrist_rot[t]
+            )
+            hands_data.append(
+                (s, wrist_pos, R_cam_xhand, qpos_dict, joints_tree, link_meshes)
+            )
 
             # Arm IK: wrist pose in camera space → world space → IK → FK
             T_world_wrist = cam_to_world(
                 wrist_pos.astype(np.float64),
-                (R_mano @ R_MANO_XHAND[s]).astype(np.float64),
+                R_cam_xhand.astype(np.float64),
                 T_world_cam,
             )
             T_world_arm6 = T_world_wrist * _T_WRIST_ARM6
@@ -467,7 +507,11 @@ def main() -> None:
 
     pr_renderer.delete()
 
-    out_dir = args.processed_demo / "overlay_processor_arm"
+    out_dir = (
+        args.aux_output_dir
+        if args.aux_output_dir is not None
+        else args.processed_demo / "overlay_processor_arm"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     output = args.output or (args.processed_demo / "video_overlay_rby1_xhand.mkv")
     robot_only_path = out_dir / "video_robot_only.mkv"
@@ -476,11 +520,31 @@ def main() -> None:
     media.write_video(str(robot_only_path), np.stack(robot_only_frames),
                       fps=args.fps, codec="ffv1")
     np.savez_compressed(robot_mask_path, mask=np.stack(robot_masks))
+    metadata_path = out_dir / "render_metadata.json"
+    metadata_path.write_text(json.dumps({
+        "right_pkl": str(args.right_pkl.resolve()),
+        "left_pkl": str(args.left_pkl.resolve()),
+        "right_smoothing": qr.get("smoothing"),
+        "left_smoothing": ql.get("smoothing"),
+        "smoothed_finger_qpos": (
+            "smoothing" in qr and "smoothing" in ql
+        ),
+        "smoothed_wrist_position": (
+            "smoothing" in qr and "smoothing" in ql
+        ),
+        "smoothed_wrist_orientation": (
+            "smoothing" in qr and "smoothing" in ql
+        ),
+        "arm_ik_uses_smoothed_wrist_pose": True,
+        "frames": int(T_use),
+        "fps": args.fps,
+    }, indent=2))
     coverage = np.stack(robot_masks).sum(axis=(1, 2))
     print(f"[ok] wrote {output}")
     print(f"[ok] wrote {robot_only_path}")
     print(f"[ok] wrote {robot_mask_path} "
           f"(robot avg {coverage.mean():.0f} px / max {coverage.max()} px)")
+    print(f"[ok] wrote {metadata_path}")
 
 
 if __name__ == "__main__":

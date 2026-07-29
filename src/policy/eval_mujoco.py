@@ -2,7 +2,7 @@
 
 Supports two policy backends:
   1. LeRobot (Diffusion Policy, ACT, etc.) -- loaded via PreTrainedPolicy
-  2. GR00T N1 -- loaded via Gr00tPolicy
+  2. GR00T N1.7 -- loaded via Gr00tPolicy
 
 The evaluation loop renders episodes, computes metrics (episode length,
 total reward), and optionally saves rollout videos.
@@ -15,7 +15,7 @@ Usage:
         --n_episodes 10 \\
         --save_video
 
-    # GR00T N1:
+    # GR00T N1.7:
     MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \\
         --backend groot \\
         --checkpoint /path/to/groot_checkpoint \\
@@ -38,6 +38,8 @@ def _make_env(
     image_size: int = 224,
     max_steps: int = 300,
     active_hands: tuple[str, ...] = ("left",),
+    object_spec: str | None = None,
+    randomize_object: bool = True,
 ):
     """Instantiate the MuJoCo sim environment."""
     from sim.mujoco_sim.env import EnvConfig, RBY1XHandEnv
@@ -46,6 +48,8 @@ def _make_env(
         image_size=image_size,
         max_episode_steps=max_steps,
         active_hands=active_hands,
+        object_spec=object_spec,
+        randomize_object=randomize_object,
     )
     return RBY1XHandEnv(cfg)
 
@@ -79,7 +83,7 @@ def _load_groot_policy(
     modality_config: str | None = None,
     device: str = "cuda",
 ):
-    """Load a GR00T N1 policy."""
+    """Load a GR00T N1.7 policy."""
     if modality_config:
         import importlib.util
 
@@ -98,7 +102,11 @@ def _load_groot_policy(
     return policy
 
 
-def _obs_to_policy_input(obs: dict, backend: str) -> dict:
+def _obs_to_policy_input(
+    obs: dict,
+    backend: str,
+    instruction: str | None = None,
+) -> dict:
     """Convert MuJoCo env observation to the format expected by the policy."""
     import torch
 
@@ -113,9 +121,24 @@ def _obs_to_policy_input(obs: dict, backend: str) -> dict:
             ),
         }
     else:
+        instruction = instruction or "manipulate object"
+        # GR00T N1.7 expects explicit modality dictionaries and B,T leading
+        # dimensions, rather than the flattened keys used by older releases.
         return {
-            "video.observation.images.head_cam": np.expand_dims(image, axis=0),
-            "state": np.expand_dims(state, axis=0),
+            "video": {
+                "observation.images.head_cam": image[None, None, ...],
+            },
+            "state": {
+                "right_hand_joint": state[None, None, 0:12],
+                "right_wrist_pos": state[None, None, 12:15],
+                "right_wrist_quat": state[None, None, 15:19],
+                "left_hand_joint": state[None, None, 19:31],
+                "left_wrist_pos": state[None, None, 31:34],
+                "left_wrist_quat": state[None, None, 34:38],
+            },
+            "language": {
+                "annotation.human.task_description": [[instruction]],
+            },
         }
 
 
@@ -136,15 +159,32 @@ def _policy_output_to_action(output, backend: str) -> np.ndarray:
             action = action[0]
         return action.astype(np.float32)
     else:
-        if isinstance(output, dict) and "action" in output:
-            action = np.asarray(output["action"])
-        else:
-            action = np.asarray(output)
-        if action.ndim == 3:
-            action = action[0, 0]
-        elif action.ndim == 2:
-            action = action[0]
-        return action.astype(np.float32)
+        if isinstance(output, tuple):
+            output = output[0]
+        if not isinstance(output, dict):
+            raise TypeError(
+                f"GR00T N1.7 output must be a modality dict, got {type(output)}"
+            )
+        keys = (
+            "right_hand_joint",
+            "right_wrist_pos",
+            "right_wrist_quat",
+            "left_hand_joint",
+            "left_wrist_pos",
+            "left_wrist_quat",
+        )
+        missing = [key for key in keys if key not in output]
+        if missing:
+            raise KeyError(f"GR00T output is missing modalities: {missing}")
+        chunks = []
+        for key in keys:
+            value = np.asarray(output[key])
+            if value.ndim == 3:
+                value = value[0, 0]
+            elif value.ndim == 2:
+                value = value[0]
+            chunks.append(value.reshape(-1))
+        return np.concatenate(chunks).astype(np.float32)
 
 
 def _save_rollout_video(frames: list[np.ndarray], path: Path, fps: int = 30):
@@ -185,9 +225,23 @@ def evaluate(
     device: str = "cuda",
     save_video: bool = False,
     output_dir: str = "output/eval",
-    active_hands: tuple[str, ...] = ("left",),
+    active_hands: tuple[str, ...] | None = None,
+    object_spec: str | None = None,
+    randomize_object: bool = True,
+    instruction: str | None = None,
 ):
     """Run evaluation loop."""
+    if object_spec and (instruction is None or active_hands is None):
+        from object_config import load_object_spec
+
+        loaded_spec = load_object_spec(object_spec)
+        if instruction is None:
+            instruction = loaded_spec["task"]["instruction"]
+        if active_hands is None:
+            active_hands = tuple(loaded_spec["control"]["active_hands"])
+    if active_hands is None:
+        active_hands = ("left",)
+
     if backend == "lerobot":
         policy, preprocessor, postprocessor = _load_lerobot_policy(
             checkpoint, device=device
@@ -201,12 +255,15 @@ def evaluate(
         image_size=image_size,
         max_steps=max_steps,
         active_hands=active_hands,
+        object_spec=object_spec,
+        randomize_object=randomize_object,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     episode_lengths = []
     episode_rewards = []
+    episode_successes = []
 
     for ep in range(n_episodes):
         obs, info = env.reset()
@@ -219,7 +276,9 @@ def evaluate(
 
         t0 = time.time()
         while not done:
-            policy_input = _obs_to_policy_input(obs, backend)
+            policy_input = _obs_to_policy_input(
+                obs, backend, instruction=instruction
+            )
             if backend == "lerobot":
                 policy_input = preprocessor(policy_input)
                 raw_output = policy.select_action(policy_input)
@@ -239,8 +298,10 @@ def evaluate(
         elapsed = time.time() - t0
         episode_lengths.append(step)
         episode_rewards.append(total_reward)
+        episode_successes.append(bool(info.get("success", False)))
         print(
             f"Episode {ep:3d}: steps={step:4d}  reward={total_reward:.2f}  "
+            f"success={episode_successes[-1]}  "
             f"time={elapsed:.1f}s  ({step/elapsed:.1f} fps)"
         )
 
@@ -251,10 +312,12 @@ def evaluate(
 
     avg_len = np.mean(episode_lengths)
     avg_rew = np.mean(episode_rewards)
+    success_rate = np.mean(episode_successes)
     print(f"\n{'='*50}")
     print(f"Results over {n_episodes} episodes:")
     print(f"  avg length: {avg_len:.1f}")
     print(f"  avg reward: {avg_rew:.3f}")
+    print(f"  success rate: {success_rate:.1%}")
     print(f"{'='*50}")
 
     import json
@@ -263,8 +326,12 @@ def evaluate(
         "n_episodes": n_episodes,
         "avg_length": float(avg_len),
         "avg_reward": float(avg_rew),
+        "success_rate": float(success_rate),
         "episode_lengths": episode_lengths,
         "episode_rewards": episode_rewards,
+        "episode_successes": episode_successes,
+        "object_spec": object_spec,
+        "instruction": instruction,
     }
     metrics_path = out_dir / "eval_metrics.json"
     with open(metrics_path, "w") as f:
@@ -276,7 +343,7 @@ def main():
     ap = argparse.ArgumentParser(description="Evaluate trained policy in MuJoCo.")
     ap.add_argument(
         "--backend", required=True, choices=["lerobot", "groot"],
-        help="Policy backend: 'lerobot' for Diffusion/ACT, 'groot' for GR00T N1",
+        help="Policy backend: 'lerobot' for Diffusion/ACT, 'groot' for GR00T N1.7",
     )
     ap.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
     ap.add_argument(
@@ -291,16 +358,31 @@ def main():
     ap.add_argument("--output_dir", default="output/eval")
     ap.add_argument(
         "--active_hands",
-        default="left",
-        choices=["left", "right", "both"],
-        help="Hands controlled by the 38-D policy schema.",
+        default="spec",
+        choices=["spec", "left", "right", "both"],
+        help="Controlled hands; 'spec' reads control.active_hands.",
+    )
+    ap.add_argument(
+        "--object_spec",
+        default=None,
+        help="Object YAML. Enables object randomization and success metrics.",
+    )
+    ap.add_argument(
+        "--fixed_object_pose",
+        action="store_true",
+        help="Use the object spec's nominal pose instead of randomization.",
+    )
+    ap.add_argument(
+        "--instruction",
+        default=None,
+        help="Language instruction passed to the GR00T backend.",
     )
     args = ap.parse_args()
-    active_hands = (
-        ("right", "left")
-        if args.active_hands == "both"
-        else (args.active_hands,)
-    )
+    active_hands = None
+    if args.active_hands == "both":
+        active_hands = ("right", "left")
+    elif args.active_hands != "spec":
+        active_hands = (args.active_hands,)
 
     evaluate(
         backend=args.backend,
@@ -313,6 +395,9 @@ def main():
         save_video=args.save_video,
         output_dir=args.output_dir,
         active_hands=active_hands,
+        object_spec=args.object_spec,
+        randomize_object=not args.fixed_object_pose,
+        instruction=args.instruction,
     )
 
 

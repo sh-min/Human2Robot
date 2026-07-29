@@ -106,6 +106,7 @@ def main() -> None:
     parser.add_argument("--data_root", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--episode_glob", default="IMG_*")
     parser.add_argument("--max_position_p95_mm", type=float, default=10.0)
     parser.add_argument("--max_position_max_mm", type=float, default=30.0)
     parser.add_argument("--max_orientation_p95_deg", type=float, default=5.0)
@@ -114,9 +115,14 @@ def main() -> None:
         parser.error("--stride must be >= 1")
 
     data_root = args.data_root.resolve()
-    paths = sorted(data_root.glob("IMG_*/rgb_hawor/final_pose.pkl"))
+    paths = sorted(
+        data_root.glob(f"{args.episode_glob}/rgb_hawor/final_pose.pkl")
+    )
     if not paths:
-        raise FileNotFoundError(f"No IMG_*/rgb_hawor/final_pose.pkl in {data_root}")
+        raise FileNotFoundError(
+            f"No {args.episode_glob}/rgb_hawor/final_pose.pkl "
+            f"in {data_root}"
+        )
 
     pin_model = pin.buildModelFromMJCF(str(SCENE))
     pin_data = pin_model.createData()

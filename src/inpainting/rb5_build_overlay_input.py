@@ -32,20 +32,23 @@ def main():
     ap.add_argument("--side", default="right", choices=["right", "left"])
     ap.add_argument("--out", default="/result/skill2policy/rb5_overlay_input.npz")
     ap.add_argument("--base_override", default=None,
-                    help="path to a 4x4 .npy base->cam transform (else auto-fit)")
+                    help="path to a 4x4 .npy base->cam transform (wins over every auto mode)")
     ap.add_argument("--base_shift", default="0,0,0",
-                    help="x,y,z (m, CV cam frame) nudge on the auto-fit base; "
-                         "+x = right, +y = down, +z = away.")
+                    help="x,y,z (m, CV cam frame) nudge; non-zero => plain floor auto-fit "
+                         "+ shift instead of the default bottom-right placement.")
     ap.add_argument("--optimize_base", action="store_true",
                     help="search base placements for the lowest reach-error + jitter "
-                         "(overrides --base_shift auto-fit).")
+                         "anywhere (instead of the default bottom-right placement).")
+    ap.add_argument("--img_w", type=int, default=1920)
+    ap.add_argument("--img_h", type=int, default=1080,
+                    help="image size for projecting the default bottom-right base placement.")
     ap.add_argument("--mount", choices=["floor", "ceiling"], default="floor",
                     help="floor: base below, arm rises from the bottom. "
                          "ceiling: base above, arm hangs from the top.")
     ap.add_argument("--w_ori", type=float, default=1.0,
                     help="orientation-tracking weight (0=position-only smooth arm; "
                          "1=follow the wrist orientation, more jitter near singularities).")
-    ap.add_argument("--smooth_win", type=int, default=15,
+    ap.add_argument("--smooth_win", type=int, default=21,
                     help="savgol window (odd) on the joint trajectory; larger tames jitter.")
     args = ap.parse_args()
 
@@ -89,14 +92,20 @@ def main():
         flange[t, :3, 3] = wrist_pos[t] + FLANGE_TCP * y
 
     model, data, fid = ik.load_model()
-    override = np.load(args.base_override) if args.base_override else None
-    if args.optimize_base and override is None:
+    shift = tuple(float(x) for x in args.base_shift.split(","))
+    if args.base_override:                       # explicit 4x4 wins
+        override = np.load(args.base_override)
+        T_cam_base = ik.auto_fit_base(wrist_pos[valid], model, data, fid, override=override)
+    elif args.optimize_base:                     # lowest-error placement anywhere
         T_cam_base, _ = ik.optimize_base(flange, wrist_pos, valid, model, data, fid,
                                          w_ori=args.w_ori, mount=args.mount)
-    else:
-        shift = tuple(float(x) for x in args.base_shift.split(","))
-        T_cam_base = ik.auto_fit_base(wrist_pos[valid], model, data, fid, override=override,
+    elif any(s != 0.0 for s in shift):           # manual floor auto-fit + nudge
+        T_cam_base = ik.auto_fit_base(wrist_pos[valid], model, data, fid,
                                       shift=shift, mount=args.mount)
+    else:                                        # default: bottom-right, generalised
+        T_cam_base = ik.place_bottom_right(flange, wrist_pos, valid, model, data, fid,
+                                           focal=focal, img_w=args.img_w, img_h=args.img_h,
+                                           w_ori=args.w_ori, mount=args.mount)
     q, perr, reach = ik.solve_sequence(flange, valid, T_cam_base, model, data, fid,
                                        w_ori=args.w_ori, smooth_win=args.smooth_win)
     dq = np.abs(np.diff(q[valid], axis=0)).sum(1)

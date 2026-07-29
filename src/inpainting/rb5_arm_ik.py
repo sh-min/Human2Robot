@@ -112,6 +112,55 @@ def optimize_base(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
     return best["Tcb"], best
 
 
+def place_bottom_right(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
+                       focal, img_w=1920, img_h=1080, w_ori=1.0, mount="floor",
+                       n_sub=100, verbose=True):
+    """Place the base at the bottom-right of the image, generalised from the wrist
+    trajectory. Searches a right(+x)/down(+y)/deeper(+z) grid of base positions, keeps
+    those that (a) project into the bottom-right image region and (b) reach the whole
+    trajectory, and returns the lowest reach-error+jitter one. The base sits a bit
+    deeper (larger z) so the arm can span the distance while the flange still approaches
+    the hand from above. Falls back to a plain floor auto-fit if nothing in the region
+    is reachable. Returns T_cam_base."""
+    vi = np.flatnonzero(valid)
+    sub = vi[:: max(1, len(vi) // n_sub)]
+    sub_fl = flange_poses[sub]; sub_valid = np.ones(len(sub), bool)
+    R = _R_cam_base(mount)
+    c = np.mean(wrist_pos_cam[valid], axis=0)
+    u_lo, u_hi = 0.75 * img_w, 0.98 * img_w   # bottom-right image box
+    v_lo, v_hi = 0.78 * img_h, 1.0 * img_h
+    best = None
+    for dx in np.linspace(0.2, 0.7, 6):         # right of the wrists
+        for dy in np.linspace(0.2, 0.5, 4):     # below the wrists
+            for dz in np.linspace(0.3, 1.1, 6): # deeper, so the arm can span
+                bp = c + np.array([dx, dy, dz])
+                if bp[2] <= 1e-3:
+                    continue
+                u, v = focal * bp[0] / bp[2] + img_w / 2, focal * bp[1] / bp[2] + img_h / 2
+                if not (u_lo < u < u_hi and v_lo < v < v_hi):
+                    continue
+                Tcb = pin.SE3(R, bp)
+                q, perr, rok = solve_sequence(sub_fl, sub_valid, Tcb, model, data, fid,
+                                              w_ori=w_ori, smooth_win=0)
+                if rok.mean() < 0.99:
+                    continue
+                p90 = float(np.nanpercentile(perr, 90))
+                jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
+                # reward depth: a deeper base reads as a slimmer arm from farther back
+                # (ties broken by reach-error + jitter, so we never pick a jittery base).
+                cost = p90 * 1000.0 + 25.0 * jit - 15.0 * float(bp[2])
+                if best is None or cost < best[0]:
+                    best = (cost, Tcb, bp, (u, v), p90 * 1000, jit)
+    if best is None:
+        if verbose:
+            print("[place-br] no reachable bottom-right base; falling back to floor auto-fit")
+        return auto_fit_base(wrist_pos_cam[valid], model, data, fid, mount=mount)
+    if verbose:
+        print(f"[place-br] base(cam)={best[2].round(3)} px=({best[3][0]:.0f},{best[3][1]:.0f}) "
+              f"p90-err {best[4]:.1f}mm jitter {best[5] * 100:.1f}%")
+    return best[1]
+
+
 def solve_ik(model, data, fid, q0, target: pin.SE3, *, w_ori=0.0,
              iters=120, damping=5e-2, step=0.4, tol_p=1e-3, tol_o=3e-2):
     """DLS IK with joint-limit clamping. w_ori weights orientation error

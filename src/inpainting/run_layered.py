@@ -1,19 +1,22 @@
 """End-to-end orchestrator for the locked-in layered overlay pipeline.
 
-Stages (each skips itself if its primary output already exists):
+Stages (each skips itself if its primary output already exists). By DEFAULT the
+pipeline runs 1,2,3,4,5,10 with the Isaac robot renderer and NO object layer.
+Stages marked [cube] only run when --cube_layer is passed.
 
     1. prepare_demo.py                      rgb/video → video_L.mp4 (demo layout)
     2. inject_hawor_data.py                 HaWoR → bbox + hand_data + video_rgb_imgs.mkv
     3. segment_arms.py                      SAM2 → segmentation_processor/masks_arm.npy
+  3.5. segment_cube.py            [cube]    SAM2 object mask → cube_mask_raw.npy
     4. inpaint_hands.py --mode legacy       E2FGVI → inpaint_processor/video_human_inpaint.mkv
-    5. render_xhand_overlay_depth.py        pyrender → overlay_processor/robot_{rgb,depth,mask}.npy
-    6. estimate_depth.py                    Depth Anything V2 → depth_processor/depth_raw.npy
-    7. align_depth.py                       HaWoR Z anchors → depth_processor/depth_aligned.npy
-  8-9. run_cube_segmentation.py             cube segmentation orchestrator:
-         8a. segment_cube.py                  SAM2 (depth-seeded)  → cube_mask_raw.npy
-         8b. amodal_cube.py                   Diffusion-VAS amodal → cube_mask_amodal.npy
-         9.  regularize_and_cut_cube.py       open/CC/close/SDF    → cube_mask_clean.npy
-   10. composite_layered.py                 4-layer alpha-blend →
+    5. robot RGBD → overlay_processor/robot_{rgb,depth,mask}.npy
+         isaac (default): isaac_stage5.sh → RB5-850 arm + xhand hand (Isaac Sim)
+         pyrender (--render_backend pyrender): render_xhand_overlay_depth.py (xhand + RBY1 arm)
+    6. estimate_depth.py          [cube]    Depth Anything V2 → depth_processor/depth_raw.npy
+    7. align_depth.py             [cube]    HaWoR Z anchors → depth_processor/depth_aligned.npy
+  8-9. run_cube_segmentation.py   [cube]    SAM2 modal → Diffusion-VAS amodal → cube_mask_amodal.npy
+   10. composite_layered.py                 alpha-blend robot over inpainted bg (+ object
+                                            layer when --cube_layer) →
                                                             overlay_processor_layered/video_overlay.mp4
 
 Usage:
@@ -59,7 +62,17 @@ def main() -> None:
                          "If omitted, looks for <input>/arm_kpts_2d.npz; absent "
                          "→ segment_arms falls back to hand-bbox seeding.")
 
-    # depth + cube layer knobs
+    ap.add_argument("--render_backend", choices=["isaac", "pyrender"], default="isaac",
+                    help="Stage 5 robot renderer. isaac (default) = RB5-850 arm + xhand "
+                         "hand in Isaac Sim (via isaac_stage5.sh). pyrender = legacy "
+                         "xhand + RBY1 arm.")
+    ap.add_argument("--cube_layer", action="store_true",
+                    help="enable the object/cube layer: segment_cube (SAM2, stage 3.5) "
+                         "+ depth (6,7) + Diffusion-VAS amodal (8,9), composited over the "
+                         "robot. OFF by default — the object layer and its stages are "
+                         "skipped entirely.")
+
+    # depth + cube layer knobs (only used when --cube_layer is set)
     ap.add_argument("--encoder", default="vitl", choices=["vits", "vitb", "vitl"])
     ap.add_argument("--cube_quantile", type=float, default=0.25,
                     help="non-hand depth quantile for the SAM2 seed-frame bootstrap")
@@ -120,26 +133,34 @@ def main() -> None:
 
     # Stage 3.5: modal object seg BEFORE inpaint, so the object can be protected
     # from removal. (run_cube_segmentation later reuses cube_mask_raw and only
-    # runs the Diffusion-VAS amodal pass.)
+    # runs the Diffusion-VAS amodal pass.) Only runs when the cube layer is enabled.
     cube_raw = pd / "cube_layer" / "cube_mask_raw.npy"
-    if cube_raw.exists():
-        print(f"\n[skip] {cube_raw} exists")
-    else:
-        _run([sys.executable, str(HERE / "segment_cube.py"), "--processed_demo", pd])
+    if args.cube_layer:
+        if cube_raw.exists():
+            print(f"\n[skip] {cube_raw} exists")
+        else:
+            _run([sys.executable, str(HERE / "segment_cube.py"), "--processed_demo", pd])
 
     # Stage 4: legacy E2FGVI on hand mask → inpainted bg (object protected)
     inp_bg = pd / "inpaint_processor" / "video_human_inpaint.mkv"
     if inp_bg.exists() and inp_bg.stat().st_size > 0:
         print(f"\n[skip] {inp_bg} exists")
     else:
-        _run([sys.executable, str(HERE / "inpaint_hands.py"),
-              "--processed_demo", pd, "--mode", "legacy",
-              "--protect_mask", str(cube_raw)])
+        inpaint_cmd = [sys.executable, str(HERE / "inpaint_hands.py"),
+                       "--processed_demo", pd, "--mode", "legacy"]
+        if args.cube_layer:
+            inpaint_cmd += ["--protect_mask", str(cube_raw)]
+        _run(inpaint_cmd)
 
-    # Stage 5: pyrender robot RGBD
+    # Stage 5: robot RGBD. Default = Isaac (RB5-850 arm + xhand hand) via the
+    # cross-env wrapper; pyrender (xhand + RBY1 arm) is the legacy fallback.
     robot_mask_npy = pd / "overlay_processor" / "robot_mask.npy"
     if robot_mask_npy.exists():
         print(f"\n[skip] {robot_mask_npy} exists")
+    elif args.render_backend == "isaac":
+        _run(["bash", str(HERE / "isaac_stage5.sh"),
+              str(pd), str(args.hawor_npz),
+              str(args.right_pkl), str(args.left_pkl), args.hand])
     else:
         _run([sys.executable, "-u", str(HERE / "render_xhand_overlay_depth.py"),
               "--processed_demo", pd,
@@ -148,46 +169,53 @@ def main() -> None:
               "--left_pkl",  args.left_pkl,
               "--hand", args.hand])
 
-    # Stage 6: depth estimation (raw video)
-    depth_raw = pd / "depth_processor" / "depth_raw.npy"
-    if depth_raw.exists():
-        print(f"\n[skip] {depth_raw} exists")
-    else:
-        _run([sys.executable, str(HERE / "estimate_depth.py"),
-              "--processed_demo", pd, "--encoder", args.encoder])
+    # Stages 6-9 only exist to build the object/cube layer (depth drives the
+    # cube's contact shadow + front/behind ordering; 8-9 are the amodal object
+    # mask). Skipped entirely unless --cube_layer is set.
+    if args.cube_layer:
+        # Stage 6: depth estimation (raw video)
+        depth_raw = pd / "depth_processor" / "depth_raw.npy"
+        if depth_raw.exists():
+            print(f"\n[skip] {depth_raw} exists")
+        else:
+            _run([sys.executable, str(HERE / "estimate_depth.py"),
+                  "--processed_demo", pd, "--encoder", args.encoder])
 
-    # Stage 7: metric alignment
-    depth_aligned = pd / "depth_processor" / "depth_aligned.npy"
-    if depth_aligned.exists():
-        print(f"\n[skip] {depth_aligned} exists")
-    else:
-        _run([sys.executable, str(HERE / "align_depth.py"), "--processed_demo", pd])
+        # Stage 7: metric alignment
+        depth_aligned = pd / "depth_processor" / "depth_aligned.npy"
+        if depth_aligned.exists():
+            print(f"\n[skip] {depth_aligned} exists")
+        else:
+            _run([sys.executable, str(HERE / "align_depth.py"), "--processed_demo", pd])
 
-    # Stages 8-9: cube segmentation (SAM2 modal → Diffusion-VAS amodal)
-    cube_amodal = pd / "cube_layer" / "cube_mask_amodal.npy"
-    if cube_amodal.exists():
-        print(f"\n[skip] {cube_amodal} exists")
-    else:
-        cube_cmd = [sys.executable, str(HERE / "run_cube_segmentation.py"),
-                    "--processed_demo", pd,
-                    "--cube_quantile", str(args.cube_quantile),
-                    "--overlap", str(args.cube_overlap)]
-        if args.no_content_completion:
-            cube_cmd.append("--no_content_completion")
-        _run(cube_cmd)
+        # Stages 8-9: cube segmentation (SAM2 modal → Diffusion-VAS amodal)
+        cube_amodal = pd / "cube_layer" / "cube_mask_amodal.npy"
+        if cube_amodal.exists():
+            print(f"\n[skip] {cube_amodal} exists")
+        else:
+            cube_cmd = [sys.executable, str(HERE / "run_cube_segmentation.py"),
+                        "--processed_demo", pd,
+                        "--cube_quantile", str(args.cube_quantile),
+                        "--overlap", str(args.cube_overlap)]
+            if args.no_content_completion:
+                cube_cmd.append("--no_content_completion")
+            _run(cube_cmd)
 
     # Stage 10: final layered composite
     final_mp4 = pd / "overlay_processor_layered" / "video_overlay.mp4"
     if final_mp4.exists():
         print(f"\n[skip] {final_mp4} exists")
     else:
-        _run([sys.executable, str(HERE / "composite_layered.py"),
-              "--processed_demo", pd,
-              "--hawor_npz", args.hawor_npz,
-              "--cube_mask_npy", "cube_layer/cube_mask_amodal.npy",
-              "--threshold_joint", str(args.threshold_joint),
-              "--zmcp_sigma_t", str(args.zmcp_sigma_t),
-              "--edge_sigma", str(args.edge_sigma)])
+        composite_cmd = [sys.executable, str(HERE / "composite_layered.py"),
+                         "--processed_demo", pd,
+                         "--hawor_npz", args.hawor_npz,
+                         "--cube_mask_npy", "cube_layer/cube_mask_amodal.npy",
+                         "--threshold_joint", str(args.threshold_joint),
+                         "--zmcp_sigma_t", str(args.zmcp_sigma_t),
+                         "--edge_sigma", str(args.edge_sigma)]
+        if not args.cube_layer:
+            composite_cmd.append("--no_cube")
+        _run(composite_cmd)
 
     print(f"\n[done] final layered overlay: {final_mp4}")
 

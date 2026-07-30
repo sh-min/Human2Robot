@@ -54,6 +54,9 @@ def main() -> None:
     ap.add_argument("--bg_video", default="inpaint_processor/video_human_inpaint.mkv")
     ap.add_argument("--cube_mask_npy",
                     default="cube_layer/cube_mask_amodal.npy")
+    ap.add_argument("--no_cube", action="store_true",
+                    help="skip the object/cube layer (composite robot over bg only). "
+                         "Also implied when the cube mask file is absent.")
     ap.add_argument("--debug", action="store_true",
                     help="also emit a 4-up debug video showing each layer")
     ap.add_argument("--zmcp_sigma_t", type=float, default=8.0,
@@ -92,7 +95,12 @@ def main() -> None:
     r_rgb  = np.load(pd / "overlay_processor" / "robot_rgb.npy")
     r_z    = np.load(pd / "overlay_processor" / "robot_depth.npy").astype(np.float32)
     r_mask = np.load(pd / "overlay_processor" / "robot_mask.npy").astype(bool)
-    cube_m = np.load(pd / args.cube_mask_npy).astype(bool)
+    cube_path = pd / args.cube_mask_npy
+    if args.no_cube or not cube_path.exists():
+        cube_m = np.zeros((bg.shape[0], bg.shape[1], bg.shape[2]), dtype=bool)
+        print("[info] no cube layer — compositing robot over inpainted bg only")
+    else:
+        cube_m = np.load(cube_path).astype(bool)
 
     ri = np.load(args.hawor_npz)
     joints_l = ri["joints_left"].astype(np.float64)

@@ -21,6 +21,7 @@ Usage:
 """
 import argparse
 import gc
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -42,7 +43,7 @@ from core.utils import to_tensors  # noqa: E402
 REF_LENGTH = 20
 NUM_REF = -1
 NEIGHBOR_STRIDE = 5
-BATCH_SIZE = 10
+BATCH_SIZE = int(os.environ.get("INPAINT_BATCH_SIZE", "10"))  # lower to cut peak GPU memory
 MOD_H, MOD_W = 60, 108
 
 
@@ -246,6 +247,13 @@ def main() -> None:
     print(f"[info] T={len(frames)}, frame size {size[0]}x{size[1]}")
 
     comp = _inpaint_video(model, device, frames, masks)
+
+    # If we inpainted at a reduced resolution to save GPU memory, upscale the result
+    # back to native res so downstream layers (robot render, cube mask) stay aligned.
+    # comp is a list of (h, w, 3) frames.
+    if args.output_resolution and (comp[0].shape[0] != h0 or comp[0].shape[1] != w0):
+        comp = [cv2.resize(f, (w0, h0), interpolation=cv2.INTER_LINEAR) for f in comp]
+        print(f"[info] upscaled inpaint back to {w0}x{h0}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     media.write_video(str(out_path), comp, fps=args.fps, codec="ffv1")

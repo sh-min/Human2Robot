@@ -186,9 +186,14 @@ def main() -> None:
                                                  device=DEVICE)
 
     cube_mask = np.zeros((n_frames, H, W), dtype=bool)
+    # _segment_one_pass expects batched prompts (K boxes / K point-sets / K frame
+    # indices); the grasp seed is a single frame, so add the K=1 batch dim.
+    seed_box_b = np.asarray(seed_box)[None]         # (1, 4)
+    seed_pts_b = np.asarray(seed_pts)[None]         # (1, P, 2)
+    seed_idx_b = np.asarray([seed_idx])             # (1,)
     for reverse in (False, True):
-        out = _segment_one_pass(video_predictor, frames_dir, seed_box,
-                                seed_pts, seed_idx, reverse=reverse,
+        out = _segment_one_pass(video_predictor, frames_dir, seed_box_b,
+                                seed_pts_b, seed_idx_b, reverse=reverse,
                                 labels=seed_lbls)
         for idx, m in out.items():
             cube_mask[idx] |= m[0]

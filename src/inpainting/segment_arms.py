@@ -381,6 +381,20 @@ def _segment_hand(
             masks[idx], arm_points[prompt_idx], previous,
         )
         previous = masks[idx]
+
+    # Continuity guarantee: any frame the propagation left empty or badly collapsed
+    # is filled from its nearest well-covered neighbour, so the hand/arm mask is
+    # present across the ENTIRE clip (no dropout holes that leak the human hand into
+    # the inpaint). This is what makes the mask "propagate throughout".
+    areas = masks.reshape(n_frames, -1).sum(1)
+    med = float(np.median(areas[areas > 0])) if (areas > 0).any() else 0.0
+    good = areas > max(1.0, collapse_frac * med)
+    if good.any() and not good.all():
+        gi = np.flatnonzero(good)
+        for idx in np.flatnonzero(~good):
+            masks[idx] = masks[gi[np.argmin(np.abs(gi - idx))]]
+        print(f"  [fill] filled {int((~good).sum())} empty/collapsed frames "
+              f"from nearest covered frame (mask now continuous over {n_frames})")
     return masks
 
 

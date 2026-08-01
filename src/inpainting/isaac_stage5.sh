@@ -18,8 +18,8 @@ source ~/miniconda3/etc/profile.d/conda.sh
 cd "$REPO/src/inpainting"
 
 # render resolution = source video resolution (matches HaWoR/focal projection)
-read W Hh < <(ffprobe -v error -select_streams v -show_entries stream=width,height \
-                      -of csv=p=0:s=' ' "$PD/video_L.mp4")
+WH="$("$UVPY" -c "import cv2; c=cv2.VideoCapture('$PD/video_L.mp4'); print(int(c.get(3)), int(c.get(4)))")"
+W="${WH% *}"; Hh="${WH#* }"
 echo "[isaac5] resolution ${W}x${Hh}  hand=$HAND  gpu=$CUDA_VISIBLE_DEVICES"
 
 case "$HAND" in
@@ -37,9 +37,13 @@ for SIDE in $SIDES; do
 
   echo "[isaac5] adapter side=$SIDE  pkl=$(basename "$PKL")"
   conda activate RFM_retarget
+  # Default (RB5_BASE_PLACE unset) = the adapter's fixed per-hand off-frame base;
+  # set RB5_BASE_PLACE=bottomright|... to opt into the corner search instead.
+  BASE_ARG=(); [ -n "$RB5_BASE_PLACE" ] && BASE_ARG=(--base_place "$RB5_BASE_PLACE")
   # the adapter aborts on a side with no valid frames; tolerate that for `both`
   if ! python rb5_build_overlay_input.py --hawor_npz "$HAWOR_NPZ" --pkl "$PKL" \
-        --side "$SIDE" --img_w "$W" --img_h "$Hh" --out "$NPZ"; then
+        --side "$SIDE" --img_w "$W" --img_h "$Hh" \
+        "${BASE_ARG[@]}" --out "$NPZ"; then
     echo "[isaac5] side=$SIDE has no valid trajectory — skipping"; continue
   fi
 
@@ -64,17 +68,30 @@ for s in sides:
     d = np.load(f"{o}/robot_depth.npy").astype(np.float32)
     m = np.load(f"{o}/robot_mask.npy")
     dd = np.where(m, d, np.inf)
+    # per-finger semantic labels (added by the semantic render); optional for old renders
+    fl_path = f"{o}/robot_finger_labels.npy"
+    fl = np.load(fl_path) if os.path.exists(fl_path) else None
     if rgb is None:
         rgb, dep, msk = r.copy(), dd.astype(np.float32), m.copy()
+        flab = fl.copy() if fl is not None else None
     else:
         nearer = m & (dd < dep)
         rgb[nearer] = r[nearer]; dep[nearer] = dd[nearer]; msk |= m
+        if fl is not None and flab is not None:
+            flab[nearer] = fl[nearer]   # nearer side's finger label wins
     del r, d, m
 dep[~np.isfinite(dep)] = 0.0
 out = f"{pd}/overlay_processor"; os.makedirs(out, exist_ok=True)
 np.save(f"{out}/robot_rgb.npy", rgb)
 np.save(f"{out}/robot_depth.npy", dep.astype(np.float16))
 np.save(f"{out}/robot_mask.npy", msk)
+if flab is not None:
+    np.save(f"{out}/robot_finger_labels.npy", flab)
+    np.save(f"{out}/robot_finger_mask.npy", flab > 0)
+    import shutil
+    man = f"{pd}/_rb5_{sides[0]}/overlay_processor/manifest.json"
+    if os.path.exists(man):
+        shutil.copy2(man, f"{out}/manifest.json")
 print(f"[isaac5] merged {len(sides)} side(s) -> {out}")
 PY
 echo "ISAAC5_DONE"

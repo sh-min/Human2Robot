@@ -112,28 +112,40 @@ def optimize_base(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
     return best["Tcb"], best
 
 
-def place_bottom_right(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
-                       focal, img_w=1920, img_h=1080, w_ori=1.0, mount="floor",
-                       n_sub=100, verbose=True):
-    """Place the base at the bottom-right of the image, generalised from the wrist
-    trajectory. Searches a right(+x)/down(+y)/deeper(+z) grid of base positions, keeps
-    those that (a) project into the bottom-right image region and (b) reach the whole
-    trajectory, and returns the lowest reach-error+jitter one. The base sits a bit
-    deeper (larger z) so the arm can span the distance while the flange still approaches
-    the hand from above. Falls back to a plain floor auto-fit if nothing in the region
-    is reachable. Returns T_cam_base."""
+# which image corner -> (x-sign, y-sign, base mount). Bottom corners rise from a
+# floor base; top corners hang from a ceiling base.
+_CORNER = {
+    "bottomright": (+1, +1, "floor"),
+    "bottomleft":  (-1, +1, "floor"),
+    "topright":    (+1, -1, "ceiling"),
+    "topleft":     (-1, -1, "ceiling"),
+}
+
+
+def place_corner(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
+                 corner="bottomright", focal, img_w=1920, img_h=1080,
+                 w_ori=1.0, n_sub=100, verbose=True):
+    """Place the base so it PROJECTS into the given image `corner`, generalised from the
+    wrist trajectory. Searches an x/y/deeper-z grid biased toward that corner, keeps
+    placements that (a) project into the corner box and (b) reach the whole trajectory,
+    and returns the deepest reachable (slimmer arm) with the lowest reach-error+jitter.
+    Mount is floor for bottom corners (arm rises), ceiling for top corners (arm hangs).
+    Falls back to a plain auto-fit if nothing in the corner is reachable."""
+    if corner not in _CORNER:
+        raise ValueError(f"corner must be one of {list(_CORNER)}")
+    sx, sy, mount = _CORNER[corner]
     vi = np.flatnonzero(valid)
     sub = vi[:: max(1, len(vi) // n_sub)]
     sub_fl = flange_poses[sub]; sub_valid = np.ones(len(sub), bool)
     R = _R_cam_base(mount)
     c = np.mean(wrist_pos_cam[valid], axis=0)
-    u_lo, u_hi = 0.75 * img_w, 0.98 * img_w   # bottom-right image box
-    v_lo, v_hi = 0.78 * img_h, 1.0 * img_h
+    u_lo, u_hi = (0.75 * img_w, 0.98 * img_w) if sx > 0 else (0.02 * img_w, 0.25 * img_w)
+    v_lo, v_hi = (0.78 * img_h, 1.00 * img_h) if sy > 0 else (0.02 * img_h, 0.30 * img_h)
     best = None
-    for dx in np.linspace(0.2, 0.7, 6):         # right of the wrists
-        for dy in np.linspace(0.2, 0.5, 4):     # below the wrists
-            for dz in np.linspace(0.3, 1.1, 6): # deeper, so the arm can span
-                bp = c + np.array([dx, dy, dz])
+    for adx in np.linspace(0.2, 0.7, 6):
+        for ady in np.linspace(0.2, 0.5, 4):
+            for dz in np.linspace(0.3, 1.1, 6):  # deeper, so the arm can span
+                bp = c + np.array([sx * adx, sy * ady, dz])
                 if bp[2] <= 1e-3:
                     continue
                 u, v = focal * bp[0] / bp[2] + img_w / 2, focal * bp[1] / bp[2] + img_h / 2
@@ -146,17 +158,16 @@ def place_bottom_right(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
                     continue
                 p90 = float(np.nanpercentile(perr, 90))
                 jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
-                # reward depth: a deeper base reads as a slimmer arm from farther back
-                # (ties broken by reach-error + jitter, so we never pick a jittery base).
+                # reward depth: a deeper base reads as a slimmer arm from farther back.
                 cost = p90 * 1000.0 + 25.0 * jit - 15.0 * float(bp[2])
                 if best is None or cost < best[0]:
                     best = (cost, Tcb, bp, (u, v), p90 * 1000, jit)
     if best is None:
         if verbose:
-            print("[place-br] no reachable bottom-right base; falling back to floor auto-fit")
+            print(f"[place-{corner}] no reachable base in corner; auto-fit fallback")
         return auto_fit_base(wrist_pos_cam[valid], model, data, fid, mount=mount)
     if verbose:
-        print(f"[place-br] base(cam)={best[2].round(3)} px=({best[3][0]:.0f},{best[3][1]:.0f}) "
+        print(f"[place-{corner}] base(cam)={best[2].round(3)} px=({best[3][0]:.0f},{best[3][1]:.0f}) "
               f"p90-err {best[4]:.1f}mm jitter {best[5] * 100:.1f}%")
     return best[1]
 

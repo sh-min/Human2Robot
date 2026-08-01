@@ -24,6 +24,13 @@ import rb5_arm_ik as ik
 
 REPO = Path(__file__).resolve().parents[2]
 
+# Default base placement (pipeline default): floor-mount, pushed to the bottom
+# corner far enough that the base projects OUT of frame and the arm enters from
+# that corner. Per-hand translation in the OpenCV cam frame (m); right mirrors
+# left across x (left -> bottom-left, right -> bottom-right). Tuned on the OCC
+# 1920x1080 framing; the adapter prints reachable% so a bad fit is visible.
+DEFAULT_BASE_T = {"left": (-0.624, 0.396, 0.638), "right": (0.624, 0.396, 0.638)}
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -39,6 +46,12 @@ def main():
     ap.add_argument("--optimize_base", action="store_true",
                     help="search base placements for the lowest reach-error + jitter "
                          "anywhere (instead of the default bottom-right placement).")
+    ap.add_argument("--base_place",
+                    choices=["bottomright", "bottomleft", "topright", "topleft"],
+                    default=None,
+                    help="opt-in corner search: place the base into this image corner. "
+                         "Unset (default) uses the fixed per-hand off-frame base "
+                         "(DEFAULT_BASE_T): left=bottom-left, right=bottom-right.")
     ap.add_argument("--img_w", type=int, default=1920)
     ap.add_argument("--img_h", type=int, default=1080,
                     help="image size for projecting the default bottom-right base placement.")
@@ -102,10 +115,15 @@ def main():
     elif any(s != 0.0 for s in shift):           # manual floor auto-fit + nudge
         T_cam_base = ik.auto_fit_base(wrist_pos[valid], model, data, fid,
                                       shift=shift, mount=args.mount)
-    else:                                        # default: bottom-right, generalised
-        T_cam_base = ik.place_bottom_right(flange, wrist_pos, valid, model, data, fid,
-                                           focal=focal, img_w=args.img_w, img_h=args.img_h,
-                                           w_ori=args.w_ori, mount=args.mount)
+    elif args.base_place is not None:            # opt-in corner search
+        T_cam_base = ik.place_corner(flange, wrist_pos, valid, model, data, fid,
+                                     corner=args.base_place, focal=focal,
+                                     img_w=args.img_w, img_h=args.img_h, w_ori=args.w_ori)
+    else:                                        # default: fixed per-hand off-frame base
+        R = ik._R_cam_base(args.mount)
+        t = np.asarray(DEFAULT_BASE_T[args.side], float)
+        T_cam_base = pin.SE3(R, t)
+        print(f"[rb5] default base ({args.side}, {args.mount}): t_cam={t.round(3).tolist()}")
     q, perr, reach = ik.solve_sequence(flange, valid, T_cam_base, model, data, fid,
                                        w_ori=args.w_ori, smooth_win=args.smooth_win)
     dq = np.abs(np.diff(q[valid], axis=0)).sum(1)

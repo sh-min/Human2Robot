@@ -13,6 +13,7 @@ import trimesh
 import pyrender
 import argparse
 import numpy as np
+from pathlib import Path
 from tqdm import tqdm
 
 from lib.core.config import cfg, update_config
@@ -139,7 +140,16 @@ def make_viz(rgb_img, side_renders, img_res=400):
     return np.hstack(panels)
 
 
-def predict_contact(model, orig_img, bbox, is_right, use_vit_norm, normalize, device, eval_thres):
+def predict_contact(
+    model,
+    orig_img,
+    bbox,
+    is_right,
+    use_vit_norm,
+    normalize,
+    device,
+    eval_thres,
+):
     crop_img, _, _, _, _, _ = augmentation_contact(
         orig_img.copy(), bbox, 'test', enforce_flip=(not is_right)
     )
@@ -154,32 +164,84 @@ def predict_contact(model, orig_img, bbox, is_right, use_vit_norm, normalize, de
     with torch.no_grad():
         outputs = model({'input': {'image': img_tensor[None].to(device)}}, mode='test')
 
-    contact_mask = (outputs['contact_out'].sigmoid()[0] > eval_thres).detach().cpu().numpy()
+    contact_probability = (
+        outputs['contact_out'].sigmoid()[0].detach().cpu().numpy().reshape(-1)
+    )
+    if contact_probability.shape != (778,):
+        raise RuntimeError(
+            "HACO full-resolution contact output must contain 778 MANO "
+            f"vertices, got {contact_probability.shape}"
+        )
+    contact_mask = contact_probability > eval_thres
     contact_mask = remove_small_contact_components(
         contact_mask, faces=mano.watertight_face['right'], min_size=20
     )
-    return contact_mask
+    return contact_probability, contact_mask
+
+
+def discover_images(input_dir, img_glob):
+    """Return one deterministic source image per HaWoR sequence frame.
+
+    Some datasets contain both ``000001.jpg`` and ``000001.png``.  Loading
+    every image extension silently doubles the sequence and shifts all HaWoR
+    and HACO results.  An explicit glob plus a duplicate-stem check makes that
+    failure impossible.
+    """
+    images = sorted(Path(input_dir, 'rgb').glob(img_glob))
+    images = [
+        path for path in images
+        if path.suffix.lower() in {'.png', '.jpg', '.jpeg'}
+    ]
+    if not images:
+        raise FileNotFoundError(
+            f"no RGB images matched {img_glob!r} in {Path(input_dir, 'rgb')}"
+        )
+    stems = [path.stem for path in images]
+    duplicates = sorted({
+        stem for stem in stems if stems.count(stem) > 1
+    })
+    if duplicates:
+        raise ValueError(
+            "multiple source images share a frame stem; choose a single "
+            f"extension with --img_glob (examples: {duplicates[:5]})"
+        )
+    return images
 
 
 def main():
     parser = argparse.ArgumentParser(description='Extract hand contact vertices')
     parser.add_argument('--input_dir', type=str, required=True,
                         help='Episode directory containing rgb/ and rgb_hawor/retarget_input.npz')
-    parser.add_argument('--img_focal', type=float, default=600.0,
-                        help='Camera focal length in pixels for 2D bbox projection')
+    parser.add_argument(
+        '--img_glob',
+        default='*.jpg',
+        help="Select exactly one source image per frame (default: '*.jpg')",
+    )
+    parser.add_argument(
+        '--img_focal',
+        type=float,
+        default=None,
+        help='Camera focal length in pixels. Default: retarget_input.npz img_focal',
+    )
     parser.add_argument('--backbone', type=str, default='hamer',
                         choices=['hamer', 'vit-l-16', 'vit-b-16', 'vit-s-16',
                                  'handoccnet', 'hrnet-w48', 'hrnet-w32',
                                  'resnet-152', 'resnet-101', 'resnet-50', 'resnet-34', 'resnet-18'])
     parser.add_argument('--checkpoint', type=str, default=os.path.join(HACO_DIR, 'release_checkpoint', 'haco_neurips_hamer_checkpoint.ckpt'))
+    parser.add_argument(
+        '--no_viz',
+        action='store_true',
+        help='Skip the per-frame contact visualization PNGs',
+    )
     args = parser.parse_args()
 
     input_dir = os.path.abspath(args.input_dir)
-    rgb_dir = os.path.join(input_dir, 'rgb')
+    rgb_dir = Path(input_dir, 'rgb')
     output_dir = os.path.join(input_dir, 'contact')
     viz_dir = os.path.join(output_dir, 'viz')
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(viz_dir, exist_ok=True)
+    if not args.no_viz:
+        os.makedirs(viz_dir, exist_ok=True)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -192,18 +254,37 @@ def main():
         cfg.MODEL.hamer_backbone_pretrained_path = args.checkpoint
 
     model = HACO().to(device)
-    model.eval()
     if args.checkpoint:
-        checkpoint = torch.load(args.checkpoint, map_location=device)
+        # Keep the second checkpoint copy off the GPU while loading the full
+        # model state. HACO's HaMeR constructor already reads its backbone
+        # checkpoint once, so retaining another CUDA state_dict can cause an
+        # avoidable multi-gigabyte memory spike.
+        checkpoint = torch.load(args.checkpoint, map_location='cpu')
         model.load_state_dict(checkpoint['state_dict'])
+        del checkpoint
+    model.eval()
 
     hawor = np.load(os.path.join(input_dir, 'rgb_hawor', 'retarget_input.npz'))
     hawor_verts = {'left': hawor['verts_left'], 'right': hawor['verts_right']}
     hawor_joints = {'left': hawor['joints_left'], 'right': hawor['joints_right']}
     hawor_valid = {'left': hawor['valid'][0], 'right': hawor['valid'][1]}
     hawor_start = int(hawor['start_idx'])
+    hawor_end = int(hawor['end_idx'])
+    img_focal = (
+        float(args.img_focal)
+        if args.img_focal is not None
+        else float(hawor['img_focal'])
+    )
+    if not np.isfinite(img_focal) or img_focal <= 0:
+        raise ValueError(f'invalid camera focal length: {img_focal}')
 
-    images = sorted([f for f in os.listdir(rgb_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    images = discover_images(input_dir, args.img_glob)
+    expected_frames = hawor_end - hawor_start
+    if len(images) != expected_frames:
+        raise ValueError(
+            "source/HaWoR frame count mismatch: "
+            f"{len(images)} images vs {expected_frames} HaWoR frames"
+        )
     eval_thres = get_contact_thres(args.backbone)
     faces = mano.watertight_face['right']
 
@@ -213,29 +294,59 @@ def main():
         from torchvision.transforms import Normalize
         normalize = Normalize(mean=cfg.MODEL.img_mean, std=cfg.MODEL.img_std)
 
-    for image_idx, frame_file in enumerate(tqdm(images)):
-        frame_key = os.path.splitext(frame_file)[0]
+    for image_idx, frame_path in enumerate(tqdm(images)):
+        frame_key = frame_path.stem
         # HaWoR indexes the sorted input sequence, not the numeric portion of
         # the filename.  Some recordings are named 000000.jpg while others
         # start at 000001.jpg, so parsing the stem shifts every prediction by
         # one frame and drops the final frame for the latter recordings.
-        frame_idx = image_idx - hawor_start
+        # ``images`` already contains exactly ``end_idx - start_idx`` frames,
+        # while every HaWoR array is stored densely from zero.  ``start_idx``
+        # describes the source-video slice and must not be subtracted a second
+        # time here.
+        frame_idx = image_idx
 
         if frame_idx < 0 or frame_idx >= hawor_valid['left'].shape[0]:
             continue
 
-        frame = cv2.imread(os.path.join(rgb_dir, frame_file))
+        frame = cv2.imread(str(frame_path))
+        if frame is None:
+            raise RuntimeError(f'failed to read source image {frame_path}')
         orig_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        save_dict = {}
+        save_dict = {
+            'source_filename': np.str_(frame_path.name),
+            'hawor_frame_index': np.int64(frame_idx),
+            'img_focal': np.float32(img_focal),
+            'contact_threshold': np.float32(eval_thres),
+        }
         side_renders = {}
 
         for side, is_right in [('left', False), ('right', True)]:
-            if not hawor_valid[side][frame_idx]:
+            is_valid = bool(hawor_valid[side][frame_idx])
+            save_dict[f'{side}_valid'] = np.bool_(is_valid)
+            if not is_valid:
+                save_dict[f'{side}_contact_mask'] = np.zeros(778, dtype=bool)
+                save_dict[f'{side}_contact_probability'] = np.zeros(
+                    778,
+                    dtype=np.float16,
+                )
+                save_dict[f'{side}_contact_indices'] = np.empty(
+                    0,
+                    dtype=np.int64,
+                )
+                save_dict[f'{side}_contact_verts_3d'] = np.empty(
+                    (0, 3),
+                    dtype=np.float32,
+                )
                 continue
 
-            bbox = get_bbox_from_joints3d(hawor_joints[side][frame_idx], orig_img.shape, args.img_focal)
-            contact_mask = predict_contact(
+            bbox = get_bbox_from_joints3d(
+                hawor_joints[side][frame_idx],
+                orig_img.shape,
+                img_focal,
+            )
+            contact_probability, contact_mask = predict_contact(
                 model, orig_img, bbox, is_right, use_vit_norm, normalize, device, eval_thres
             )
 
@@ -244,21 +355,29 @@ def main():
             contact_verts_3d = verts_3d[contact_indices]
 
             save_dict[f'{side}_contact_mask'] = contact_mask
+            save_dict[f'{side}_contact_probability'] = (
+                contact_probability.astype(np.float16)
+            )
             save_dict[f'{side}_contact_indices'] = contact_indices
             save_dict[f'{side}_contact_verts_3d'] = contact_verts_3d
 
-            mesh = build_contact_mesh(verts_3d, contact_mask, faces)
-            side_renders[side.capitalize()] = render_hand(mesh)
-
-        if not save_dict:
-            continue
+            if not args.no_viz:
+                mesh = build_contact_mesh(verts_3d, contact_mask, faces)
+                side_renders[side.capitalize()] = render_hand(mesh)
 
         np.savez(os.path.join(output_dir, f'{frame_key}.npz'), **save_dict)
 
-        viz = make_viz(orig_img, side_renders)
-        cv2.imwrite(os.path.join(viz_dir, f'{frame_key}.png'), cv2.cvtColor(viz, cv2.COLOR_RGB2BGR))
+        if not args.no_viz:
+            viz = make_viz(orig_img, side_renders)
+            cv2.imwrite(
+                os.path.join(viz_dir, f'{frame_key}.png'),
+                cv2.cvtColor(viz, cv2.COLOR_RGB2BGR),
+            )
 
-    print(f"Done. Saved to {output_dir}")
+    print(
+        f"Done. Saved to {output_dir} "
+        f"(frames={len(images)}, focal={img_focal:.2f}, glob={args.img_glob!r})"
+    )
 
 
 if __name__ == '__main__':

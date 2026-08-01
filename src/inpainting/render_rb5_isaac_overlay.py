@@ -48,6 +48,10 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.sensors import Camera, CameraCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
+from rb5_finger_semantics import (
+    FINGER_LABEL_IDS, SEMANTIC_TYPE, finger_labels_from_semantics,
+    xhand_finger_link_names, expected_finger_link_names, validate_finger_link_names,
+)
 
 XHAND_USD = {"right": "/result/skill2policy/isaac_assets/xhand_right_urdf/xhand_right.usd",
              "left":  "/result/skill2policy/isaac_assets/xhand_left_urdf/xhand_left.usd"}
@@ -98,7 +102,9 @@ def main():
     f = sim_utils.DistantLightCfg(intensity=args.fill_int, color=tint, angle=25.0); f.func("/World/fill", f, orientation=dir_quat(np.array([0.,0.,-1.])))
 
     cam = Camera(CameraCfg(prim_path="/World/Cam", update_period=0, height=Hh, width=W,
-        data_types=["rgb","distance_to_image_plane"],
+        data_types=["rgb","distance_to_image_plane","semantic_segmentation"],
+        semantic_filter=[SEMANTIC_TYPE],
+        colorize_semantic_segmentation=True,
         spawn=sim_utils.PinholeCameraCfg(focal_length=focal_mm, horizontal_aperture=H_APERTURE, clipping_range=(0.01,10.0)),
         offset=CameraCfg.OffsetCfg(pos=(0,0,0), rot=(1.0,0,0,0), convention="opengl")))
 
@@ -111,6 +117,20 @@ def main():
         init_state=ArticulationCfg.InitialStateCfg(pos=tuple(base_pos), rot=tuple(base_quat)),
         actuators={"all": ImplicitActuatorCfg(joint_names_expr=[".*"], stiffness=1e4, damping=1e3)}))
     sim.reset(); dev = hand.device
+    # Label the 12 XHand finger link prims so the camera emits per-finger
+    # semantic segmentation (consumed by the contact-occlusion compositor).
+    import omni.usd as _omni_usd
+    _stage = _omni_usd.get_context().get_stage()
+    _expected = expected_finger_link_names(side)
+    _finger_prims = {}
+    for _p in _stage.Traverse():
+        if _p.GetPath().pathString.startswith("/World/hand") and _p.GetName() in _expected:
+            _finger_prims[_p.GetName()] = _p
+    validate_finger_link_names(side, _finger_prims.keys())
+    for _finger, _links in xhand_finger_link_names(side).items():
+        for _ln in _links:
+            sim_utils.add_labels(_finger_prims[_ln], labels=[_finger], instance_name=SEMANTIC_TYPE)
+    print(f"[semantic] labeled {len(_finger_prims)} finger prims ({SEMANTIC_TYPE})", flush=True)
     # Optionally hide the RB5 flange (link6). NOTE: link6 bridges link5 to the
     # hand, so hiding it leaves a gap — off by default.
     if os.environ.get("HIDE_FLANGE"):
@@ -178,6 +198,7 @@ def main():
         print("[calib] wrote rb5_calib.png", flush=True); print("RB5_DONE", flush=True); os._exit(0)
 
     rgb_buf = np.zeros((Tn,Hh,W,3), np.uint8); depth_buf = np.full((Tn,Hh,W), np.inf, np.float32); mask_buf = np.zeros((Tn,Hh,W), bool)
+    finger_label_buf = np.zeros((Tn,Hh,W), np.uint8)
     import cv2
     bg_frames = None
     if args.preview and args.bg_video:
@@ -228,7 +249,11 @@ def main():
             preview_imgs.append(comp)
         else:
             rgb_buf[ki]=rgb; mask_buf[ki]=m; depth_buf[ki][m]=depth[m]
-        if ki % 5 == 0: print(f"  frame {t} mask={int(m.sum())}", flush=True)
+            sem = cam.data.output["semantic_segmentation"][0].cpu().numpy()
+            _info = cam.data.info
+            _si = (_info[0] if isinstance(_info, (list, tuple)) else _info)["semantic_segmentation"]
+            finger_label_buf[ki] = finger_labels_from_semantics(sem, m, _si)
+        if ki % 5 == 0: print(f"  frame {t} mask={int(m.sum())} fingers={int((finger_label_buf[ki]>0).sum()) if not args.preview else 0}", flush=True)
 
     if args.preview:
         if len(preview_imgs) > 6:
@@ -246,7 +271,11 @@ def main():
         np.save(f"{out}/overlay_processor/robot_rgb.npy", rgb_buf)
         np.save(f"{out}/overlay_processor/robot_depth.npy", depth_buf.astype(np.float16))
         np.save(f"{out}/overlay_processor/robot_mask.npy", mask_buf)
-        print(f"[ok] wrote {out}", flush=True)
+        np.save(f"{out}/overlay_processor/robot_finger_labels.npy", finger_label_buf)
+        np.save(f"{out}/overlay_processor/robot_finger_mask.npy", finger_label_buf > 0)
+        json.dump({"side": side, "finger_mask": {"label_ids": FINGER_LABEL_IDS}},
+                  open(f"{out}/overlay_processor/manifest.json", "w"))
+        print(f"[ok] wrote {out} (+ finger semantics + manifest)", flush=True)
     print("RB5_DONE", flush=True)
 
 

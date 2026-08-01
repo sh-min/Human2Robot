@@ -78,6 +78,39 @@ def _augment_with_forearm_points(kpts_2d: np.ndarray,
     return np.stack(out)
 
 
+FINGERTIP_IDXS = (4, 8, 12, 16, 20)   # MANO thumb..pinky tips
+
+
+def _object_negative_points(kpts_2d: np.ndarray,
+                            img_h: int,
+                            img_w: int,
+                            scales: tuple[float, ...] = (0.6, 1.2)) -> np.ndarray:
+    """Negative SAM2 prompts for a grasped object.
+
+    A held object protrudes past the fingers, so we extrapolate outward from the
+    palm through each fingertip and drop negative points beyond the tips. When
+    the hand grips something those land on the object and SAM2 carves it out of
+    the hand mask; when the hand is empty they fall on background the mask does
+    not reach anyway (harmless). Fixed count per frame so it stacks cleanly.
+    """
+    out = []
+    for points in np.asarray(kpts_2d, dtype=np.float32):
+        palm = points[list(PALM_IDXS)].mean(axis=0)
+        negs = []
+        for ti in FINGERTIP_IDXS:
+            tip = points[ti]
+            d = tip - palm
+            if not np.isfinite(d).all() or np.linalg.norm(d) < 1.0:
+                d = np.zeros(2, np.float32)   # degenerate -> keep the tip itself
+            for s in scales:
+                negs.append(tip + d * s)
+        negs = np.asarray(negs, np.float32)
+        negs[:, 0] = np.clip(negs[:, 0], 0, img_w - 1)
+        negs[:, 1] = np.clip(negs[:, 1], 0, img_h - 1)
+        out.append(negs)
+    return np.stack(out)
+
+
 def _expand_boxes_to_prompts(bboxes: np.ndarray,
                              points: np.ndarray,
                              img_h: int,
@@ -323,6 +356,8 @@ def _segment_hand(
     seed_stride: int = 20,
     reanchor_rounds: int = 2,
     collapse_frac: float = 0.15,
+    use_negatives: bool = True,
+    neg_scales: tuple[float, ...] = (0.6, 1.2),
 ) -> np.ndarray:
     """Run forward+reverse SAM2 propagation for one hand. Returns (T,H,W) bool.
 
@@ -341,18 +376,32 @@ def _segment_hand(
         valid_indices[::max(1, seed_stride)],
         np.array([seed_idx, valid_indices[-1]], dtype=np.int64),
     ]))
+    # Positive prompts (hand keypoints + forearm). Used for the seed box AND the
+    # connected-component keep — negatives must NOT influence either.
     arm_points = _augment_with_forearm_points(
         kpts_2d, img_h, img_w, forearm_scales,
     )
     arm_boxes = _expand_boxes_to_prompts(bboxes, arm_points, img_h, img_w)
+    # Add negative prompts on the grasped object so SAM2 returns hand+arm only.
+    if use_negatives:
+        neg_points = _object_negative_points(kpts_2d, img_h, img_w, neg_scales)
+        prompt_points = np.concatenate([arm_points, neg_points], axis=1)
+        prompt_labels = np.concatenate([
+            np.ones(arm_points.shape[1], np.int32),
+            np.zeros(neg_points.shape[1], np.int32)])
+    else:
+        prompt_points = arm_points
+        prompt_labels = None
     print(f"  seed frame={seed_idx} bbox={arm_boxes[seed_idx].round(1).tolist()} "
-          f"({len(prompt_indices)} temporal prompts)")
+          f"({len(prompt_indices)} temporal prompts, "
+          f"{'negatives on' if use_negatives else 'no negatives'})")
 
     def _fwd_rev(pidx):
         acc = np.zeros((n_frames, img_h, img_w), dtype=bool)
         for reverse in (False, True):
             out = _segment_one_pass(video_predictor, frames_dir,
-                                    arm_boxes[pidx], arm_points[pidx], pidx, reverse=reverse)
+                                    arm_boxes[pidx], prompt_points[pidx], pidx,
+                                    reverse=reverse, labels=prompt_labels)
             for idx, m in out.items():
                 acc[idx] |= m[0]
         return acc
@@ -452,10 +501,18 @@ def main() -> None:
     ap.add_argument("--keep_tmp", action="store_true",
                     help="Keep original_images/ and original_images_reverse/ for debugging")
     ap.add_argument("--forearm_scales", type=float, nargs="+",
-                    default=[0.75, 1.5, 2.5],
+                    default=[0.75, 1.5, 2.5, 4.0, 6.0, 8.0],
                     help="Wrist-minus-palm extrapolation scales used as SAM2 "
-                         "positive prompts. Use e.g. 0.75 1.5 2.5 4 6 to "
-                         "continue through a long sleeve to the frame edge.")
+                         "positive prompts. Default reaches up the whole arm to the "
+                         "frame edge; shorten (e.g. 0.75 1.5 2.5) for short/cropped arms.")
+    ap.add_argument("--no_object_negatives", dest="object_negatives",
+                    action="store_false", default=True,
+                    help="Disable SAM2 negative prompts on the grasped object. By "
+                         "default negatives are placed beyond the fingertips so a held "
+                         "object is carved out and the mask stays hand+arm only.")
+    ap.add_argument("--object_neg_scales", type=float, nargs="+", default=[0.6, 1.2],
+                    help="Fingertip-minus-palm extrapolation scales for the object "
+                         "negative prompts.")
     ap.add_argument("--output", type=Path, default=None,
                     help="Output mask path. Default: "
                          "<processed_demo>/segmentation_processor/masks_arm.npy")
@@ -511,12 +568,14 @@ def main() -> None:
             bbox["left_bboxes"], bbox["left_bbox_min_dist_to_edge"],
             bbox["left_hand_detected"], hd_l["kpts_2d"][:n_frames],
             img_h, img_w, tuple(args.forearm_scales),
+            use_negatives=args.object_negatives, neg_scales=tuple(args.object_neg_scales),
         )
         right_masks = _segment_hand(
             video_predictor, frames_dir, n_frames,
             bbox["right_bboxes"], bbox["right_bbox_min_dist_to_edge"],
             bbox["right_hand_detected"], hd_r["kpts_2d"][:n_frames],
             img_h, img_w, tuple(args.forearm_scales),
+            use_negatives=args.object_negatives, neg_scales=tuple(args.object_neg_scales),
         )
         masks = left_masks | right_masks
     masks, repaired_indices = _repair_temporal_mask_outliers(masks)

@@ -6,7 +6,8 @@ Stages marked [cube] only run when --cube_layer is passed.
 
     1. prepare_demo.py                      rgb/video → video_L.mp4 (demo layout)
     2. inject_hawor_data.py                 HaWoR → bbox + hand_data + video_rgb_imgs.mkv
-    3. segment_arms.py                      SAM2 → segmentation_processor/masks_arm.npy
+    3. annotate_arms.py (interactive)       SAM2 video annotation (human points →
+                                            propagate) → segmentation_processor/masks_arm.npy
   3.5. segment_cube.py            [cube]    SAM2 object mask → cube_mask_raw.npy
     4. inpaint_hands.py --mode legacy       E2FGVI → inpaint_processor/video_human_inpaint.mkv
     5. robot RGBD → overlay_processor/robot_{rgb,depth,mask}.npy
@@ -57,10 +58,10 @@ def main() -> None:
     ap.add_argument("--fps", type=float, default=None)
     ap.add_argument("--glob", default="*.jpg")
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
-    ap.add_argument("--arm_kpts", type=Path, default=None,
-                    help="EgoDex arm_kpts_2d.npz for whole-arm SAM2 seeding. "
-                         "If omitted, looks for <input>/arm_kpts_2d.npz; absent "
-                         "→ segment_arms falls back to hand-bbox seeding.")
+    ap.add_argument("--annotate_host", default=None,
+                    help="Host for the Stage-6 interactive annotator (default 127.0.0.1).")
+    ap.add_argument("--annotate_port", type=int, default=None,
+                    help="Port for the Stage-6 interactive annotator (default 7860).")
 
     ap.add_argument("--render_backend", choices=["isaac", "pyrender"], default="isaac",
                     help="Stage 5 robot renderer. isaac (default) = RB5-850 arm + xhand "
@@ -115,21 +116,26 @@ def main() -> None:
           "--processed_demo", pd,
           "--hawor_npz", args.hawor_npz])
 
-    # Resolve EgoDex arm keypoints (whole-arm seeding) if available.
-    arm_kpts = args.arm_kpts
-    if arm_kpts is None and args.input.is_dir():
-        cand = args.input / "arm_kpts_2d.npz"
-        arm_kpts = cand if cand.exists() else None
-
-    # Stage 3: SAM2 hand/arm seg
+    # Stage 3: interactive SAM2 video annotation → masks_arm.npy (the default
+    # Stage-6 segmenter). A human annotates a few frames with positive/negative
+    # point prompts and SAM2 propagates one mask across the clip; annotate_arms.py
+    # blocks until "Save & finish" writes the mask, then this resumes. There is no
+    # automatic fallback — the annotation is required.
     arm_npy = pd / "segmentation_processor" / "masks_arm.npy"
     if arm_npy.exists():
         print(f"\n[skip] {arm_npy} exists")
     else:
-        seg_cmd = [sys.executable, str(HERE / "segment_arms.py"), "--processed_demo", pd]
-        if arm_kpts is not None:
-            seg_cmd += ["--arm_kpts", str(arm_kpts)]
-        _run(seg_cmd)
+        print("\n[stage 6] launching interactive annotator — open the printed URL, "
+              "annotate a few frames, Propagate, then 'Save & finish' to continue.")
+        annot_cmd = [sys.executable, str(HERE / "annotate_arms.py"),
+                     "--processed_demo", str(pd)]
+        if args.annotate_host:
+            annot_cmd += ["--host", args.annotate_host]
+        if args.annotate_port:
+            annot_cmd += ["--port", str(args.annotate_port)]
+        _run(annot_cmd)
+        if not arm_npy.exists():
+            sys.exit("[stage 6] annotator exited without writing masks_arm.npy — aborting.")
 
     # Stage 3.5: modal object seg BEFORE inpaint, so the object can be protected
     # from removal. (run_cube_segmentation later reuses cube_mask_raw and only

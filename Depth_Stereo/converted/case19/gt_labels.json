@@ -1,0 +1,62 @@
+{
+  "episode": "case19",
+  "num_frames": 656,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 60,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 61,
+      "end_frame": 106,
+      "label": "Lock"
+    },
+    {
+      "start_frame": 107,
+      "end_frame": 166,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 167,
+      "end_frame": 219,
+      "label": "Cup"
+    },
+    {
+      "start_frame": 220,
+      "end_frame": 254,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 255,
+      "end_frame": 297,
+      "label": "Snack"
+    },
+    {
+      "start_frame": 298,
+      "end_frame": 343,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 344,
+      "end_frame": 386,
+      "label": "Milk"
+    },
+    {
+      "start_frame": 387,
+      "end_frame": 437,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 438,
+      "end_frame": 611,
+      "label": "Sweep"
+    },
+    {
+      "start_frame": 612,
+      "end_frame": 655,
+      "label": "Trans"
+    }
+  ]
+}

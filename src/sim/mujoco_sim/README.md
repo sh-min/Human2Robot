@@ -30,7 +30,6 @@ src/sim/mujoco_sim/
 ├── compose_rby1_xhand.py     # build composed scene from RBY1 + both XHands
 ├── ik.py                     # damped least-squares wrist IK (single-arm)
 ├── web.py                    # gradio MVP for interactive pose tuning
-├── probe_rby1.py             # legacy sanity-check render of bare RBY1
 ├── environment.yml
 └── README.md
 ```
@@ -59,9 +58,8 @@ Model totals: nq=57, nu=50, nbody=54.
 
 ## Object configuration
 
-Policy evaluation should pass an object spec. The scene builder replaces the
-legacy baked cube with the configured primitive or meshes, physics, free
-joint, spawn pose, and randomization.
+Policy evaluation should pass an object spec. The scene builder loads the
+configured primitive or meshes, physics, free joint, spawn pose, and randomization.
 
 The base scene now includes eight bundled objects for multi-object visual and
 physics checks. Passing a spec removes those baked objects and loads exactly
@@ -69,13 +67,13 @@ one target object. Bundled standalone MJCF specs live in
 `configs/objects/{cup_blue,cup_green,milk_carton,pringles,lock_box_large,lock_box_small,sponge,trash_bin}.yaml`.
 
 ```bash
-OBJECT_SPEC=configs/objects/cube.yaml \
+OBJECT_SPEC=configs/objects/milk_carton.yaml \
   bash scripts/validate_object_setup.sh
 
 MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m policy.eval_mujoco \
   --backend lerobot \
   --checkpoint output/train/<run>/checkpoints/last/pretrained_model \
-  --object_spec configs/objects/cube.yaml \
+  --object_spec configs/objects/milk_carton.yaml \
   --n_episodes 10 --save_video
 ```
 

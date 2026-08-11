@@ -53,7 +53,7 @@ import pyrender
 import trimesh
 import yaml
 from scipy.spatial.transform import Rotation
-from skimage.measure import marching_cubes
+from skimage.measure import marching_objects
 
 from atomic_directory_publish import publish_directory
 
@@ -379,7 +379,7 @@ def build_watertight_union_mesh(
     occupancy = (union_sdf <= 0.0).reshape(tuple(shape))
     if not occupancy.any() or occupancy.all():
         raise RuntimeError("canonical occupancy is empty or touches every voxel")
-    vertices, faces, _, _ = marching_cubes(
+    vertices, faces, _, _ = marching_objects(
         occupancy.astype(np.float32),
         level=0.5,
         spacing=(pitch, pitch, pitch),

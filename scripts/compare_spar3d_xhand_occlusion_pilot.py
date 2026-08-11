@@ -75,7 +75,7 @@ DEFAULT_REGISTRATION_REPORT = DEFAULT_REGISTERED_ROOT / "report.json"
 DEFAULT_PROCESSED_ROOT = (
     REPO_ROOT
     / "data"
-    / "cube_dataset"
+    / "kitchen_dataset"
     / "26.08.05_stereo_calibrated"
     / "1"
     / "camera_2"

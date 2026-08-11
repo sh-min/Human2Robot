@@ -34,7 +34,7 @@ from segment_annotated_objects import (  # noqa: E402
     _link_interval_frames,
 )
 from segment_arms import _dump_frames_as_jpegs, _segment_one_pass  # noqa: E402
-from segment_cube import _pick_grasp_seed  # noqa: E402
+from segment_object import _pick_grasp_seed  # noqa: E402
 
 ensure_sam2_importable()
 from sam2.build_sam import build_sam2_video_predictor  # noqa: E402

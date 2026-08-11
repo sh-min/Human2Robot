@@ -21,7 +21,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = REPO_ROOT / "08_04"
-DEFAULT_OUTPUT = REPO_ROOT / "data" / "cube_dataset" / "26.08.04_stereo"
+DEFAULT_OUTPUT = REPO_ROOT / "data" / "kitchen_dataset" / "26.08.04_stereo"
 LABELS = {"Cup", "Lock", "Milk", "Snack", "Sweep", "Trans"}
 # A multi-cue motion-correlation audit found a fixed one-frame capture phase
 # difference only in episodes 16 and 18.  MH/GT remains immutable; this offset

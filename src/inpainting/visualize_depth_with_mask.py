@@ -1,6 +1,6 @@
 """Side-by-side viz: raw RGB | colorized scene depth, both with the hand mask
 outlined in red. Useful for eyeballing how depth varies inside the hand
-silhouette vs. just outside it (i.e. where the cube would sit).
+silhouette vs. just outside it (i.e. where the object would sit).
 
 Output:
     <processed_demo>/depth_processor/depth_with_mask.mp4

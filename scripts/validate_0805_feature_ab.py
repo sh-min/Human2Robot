@@ -22,10 +22,10 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_APPROX_ROOT = (
-    REPO_ROOT / "data" / "cube_dataset" / "26.08.05_stereo_approx"
+    REPO_ROOT / "data" / "kitchen_dataset" / "26.08.05_stereo_approx"
 )
 DEFAULT_CALIBRATED_ROOT = (
-    REPO_ROOT / "data" / "cube_dataset" / "26.08.05_stereo_calibrated"
+    REPO_ROOT / "data" / "kitchen_dataset" / "26.08.05_stereo_calibrated"
 )
 DEFAULT_OUTPUT_DIR = (
     REPO_ROOT / "output" / "skill_classifier" / "0805_calibration_comparison"

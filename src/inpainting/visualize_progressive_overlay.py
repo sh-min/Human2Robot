@@ -4,7 +4,7 @@ For each frame we write 4 versions in lockstep:
 
     L1  bg only                                = inpainted bg
     L2  bg + behind-MCP robot                 (alpha blend)
-    L3  L2 + cube                              (cube layer = inpainted bg at cube_mask)
+    L3  L2 + object                              (object layer = inpainted bg at object_mask)
     L4  L3 + front-MCP robot                   = final composite
 
 Same alpha-blend / soft-edge / z_MCP-smoothing knobs as composite_layered.py.
@@ -12,14 +12,14 @@ Same alpha-blend / soft-edge / z_MCP-smoothing knobs as composite_layered.py.
 Outputs (under <pd>/overlay_processor_layered/):
     progressive_L1_bg.mp4
     progressive_L2_behind.mp4
-    progressive_L3_cube.mp4
+    progressive_L3_object.mp4
     progressive_L4_front.mp4    # same as video_overlay.mkv
 
 Usage:
     python visualize_progressive_overlay.py \
         --processed_demo /result/cam0_inpaint/cam0/0 \
         --hawor_npz /data/RFM_proj/cam0_hawor/retarget_input.npz \
-        --cube_mask_npy cube_layer/cube_mask_clean.npy
+        --object_mask_npy object_layer/object_mask_clean.npy
 """
 import argparse
 from pathlib import Path
@@ -52,7 +52,7 @@ def main() -> None:
     ap.add_argument("--depth_bias", type=float, default=0.0)
     ap.add_argument("--fps", type=int, default=10)
     ap.add_argument("--bg_video", default="inpaint_processor/video_human_inpaint.mkv")
-    ap.add_argument("--cube_mask_npy", default="overlay_processor_cube_v2/cube_mask.npy")
+    ap.add_argument("--object_mask_npy", default="overlay_processor_object_v2/object_mask.npy")
     ap.add_argument("--zmcp_sigma_t", type=float, default=8.0)
     ap.add_argument("--edge_sigma", type=float, default=1.5)
     args = ap.parse_args()
@@ -62,15 +62,15 @@ def main() -> None:
     r_rgb  = np.load(pd / "overlay_processor" / "robot_rgb.npy")
     r_z    = np.load(pd / "overlay_processor" / "robot_depth.npy").astype(np.float32)
     r_mask = np.load(pd / "overlay_processor" / "robot_mask.npy").astype(bool)
-    cube_m = np.load(pd / args.cube_mask_npy).astype(bool)
+    object_m = np.load(pd / args.object_mask_npy).astype(bool)
 
     ri = np.load(args.hawor_npz)
     joints_l = ri["joints_left"].astype(np.float64)
     joints_r = ri["joints_right"].astype(np.float64)
     valid = ri["valid"]
 
-    T = min(bg.shape[0], r_rgb.shape[0], cube_m.shape[0], joints_l.shape[0])
-    bg, r_rgb, r_z, r_mask, cube_m = bg[:T], r_rgb[:T], r_z[:T], r_mask[:T], cube_m[:T]
+    T = min(bg.shape[0], r_rgb.shape[0], object_m.shape[0], joints_l.shape[0])
+    bg, r_rgb, r_z, r_mask, object_m = bg[:T], r_rgb[:T], r_z[:T], r_mask[:T], object_m[:T]
     H, W = bg.shape[1], bg.shape[2]
 
     # smooth z_MCP_t
@@ -107,12 +107,12 @@ def main() -> None:
         front_robot  = r_mask[t] & ((r_z[t] + args.depth_bias) <  z_t)
 
         a_behind = _soft_alpha(behind_robot, args.edge_sigma)
-        a_cube   = _soft_alpha(cube_m[t],    args.edge_sigma)
+        a_object   = _soft_alpha(object_m[t],    args.edge_sigma)
         a_front  = _soft_alpha(front_robot,  args.edge_sigma)
 
         s1 = bg[t].astype(np.float32)
         s2 = _blend(s1, r_rgb[t], a_behind)
-        s3 = _blend(s2, bg[t],    a_cube)
+        s3 = _blend(s2, bg[t],    a_object)
         s4 = _blend(s3, r_rgb[t], a_front)
 
         L2[t] = np.clip(s2, 0, 255).astype(np.uint8)
@@ -127,7 +127,7 @@ def main() -> None:
     paths = {
         "progressive_L1_bg.mp4":     L1,
         "progressive_L2_behind.mp4": L2,
-        "progressive_L3_cube.mp4":   L3,
+        "progressive_L3_object.mp4":   L3,
         "progressive_L4_front.mp4":  L4,
     }
     for name, arr in paths.items():

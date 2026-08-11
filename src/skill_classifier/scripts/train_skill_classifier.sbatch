@@ -16,8 +16,8 @@
 # VJEPA_DIFF: false (default) | true
 #
 # Reads per-recording bundled features from
-#   data/cube_dataset/0412_train/saved_frames_*/features.pt        (train)
-#   data/cube_dataset/0412_val/episode_*/features.pt               (val)
+#   data/kitchen_dataset/0412_train/saved_frames_*/features.pt        (train)
+#   data/kitchen_dataset/0412_val/episode_*/features.pt               (val)
 #
 # Array usage:
 #   sbatch --array=0-2 --export=MODEL=transformer,VARIANT=vjepa_orig train_skill_classifier.sbatch

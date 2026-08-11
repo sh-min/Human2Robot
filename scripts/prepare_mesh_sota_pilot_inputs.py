@@ -24,7 +24,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EPISODE_ROOT = (
-    REPO_ROOT / "data" / "cube_dataset" / "26.08.05_stereo_calibrated" / "1"
+    REPO_ROOT / "data" / "kitchen_dataset" / "26.08.05_stereo_calibrated" / "1"
 )
 DEFAULT_OUTPUT = (
     REPO_ROOT / "8-5" / "mesh_sota_pilot" / "episode_1" / "choco" / "inputs"

@@ -95,8 +95,8 @@ def main():
     bg_path = pd / "inpaint_processor" / "video_human_inpaint.mkv"
 
     amodal_candidates = [
-        pd / "cube_layer" / "cube_mask_clean.npy",
-        pd / "cube_layer" / "cube_mask_amodal.npy",
+        pd / "object_layer" / "object_mask_clean.npy",
+        pd / "object_layer" / "object_mask_amodal.npy",
     ]
     amodal_path = next((p for p in amodal_candidates if p.exists()), None)
 
@@ -190,7 +190,7 @@ def main():
 
     print(f"[ok] wrote {out}")
     if amodal_path is None:
-        print("[missing optional] amodal mask: cube_layer/cube_mask_amodal.npy")
+        print("[missing optional] amodal mask: object_layer/object_mask_amodal.npy")
 
 
 if __name__ == "__main__":

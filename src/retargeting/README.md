@@ -34,8 +34,6 @@ src/retargeting/
 ├── retarget_from_npz.py            # ★ MANO npz → xhand qpos (Stage 1 + Stage 2)
 ├── overlay_on_rgb.py               # qpos + RGB → overlay mp4
 ├── compare_stages.py               # Stage 1 vs Stage 2 인터랙티브 3D 뷰어 (오른손)
-├── retarget_from_npz_contact.py    # (legacy) centroid 방식 contact retargeting
-├── visualize_contact_retarget.py   # (legacy) retargeting 시각화
 ├── build_palmar_mask.py            # palmar mask 생성 (1회)
 ├── build_finger_parts.py           # finger-part / tip mask 생성 (1회)
 ├── compute_R_mano_xhand.py         # Procrustes R 계산 (1회)
@@ -190,57 +188,6 @@ Open3D 뷰어로 같은 cam frame 위에 4종을 동시 표시 (오른손):
 | `M` / `1` / `2` / `C` | MANO / xhand stage1 / xhand stage2 / contact 점 toggle |
 | 마우스 | 드래그=회전, 스크롤=줌, Shift+드래그=pan |
 
-## (legacy) retarget_from_npz_contact.py + visualize_contact_retarget.py
-
-> 이전 contact-aware retargeting 구현. **centroid-replacement 방식**: contact 있는 손가락의 MANO fingertip keypoint를 해당 손가락 contact vertex의 centroid로 교체한 뒤 일반 retargeting 호출. `retarget_from_npz.py --contact` 의 normal-aware Chamfer 방식과 다름
-
-### Centroid-방식 retargeting
-
-```bash
-conda activate RFM_retarget
-cd <repo_root>/src/retargeting
-
-python retarget_from_npz_contact.py \
-    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz
-```
-
-출력: 같은 폴더에 `qpos_xhand_contact_{right,left}.pkl`
-
-> 같은 파일명을 `retarget_from_npz.py --contact` 도 사용. 둘 중 마지막에 실행한 게 디스크에 남음. 비교하려면 한쪽을 따로 보관.
-
-옵션:
-- `--hand right|left|both`
-- `--contact_dir <path>` (default `<npz 부모>/../contact`)
-- `--out_dir <path>`
-
-### Retargeting 시각화 (디버그용 패널)
-
-선행 조건: `retarget_from_npz.py` (Stage 1) + `retarget_from_npz_contact.py` (legacy Stage 2) 모두 완료되어 아래 4개 pkl 존재.
-- `qpos_xhand_{right,left}.pkl`
-- `qpos_xhand_contact_{right,left}.pkl`
-
-```bash
-conda activate vjepa2-312
-cd <repo_root>/src/retargeting
-
-python visualize_contact_retarget.py \
-    --npz /path/to/<episode>/rgb_hawor/retarget_input.npz \
-    --frame 10
-```
-
-출력 (default `src/retargeting/vis/`):
-
-| 파일 | 내용 |
-|---|---|
-| `frame{N}_mano_2d.png` | MANO만 — original vs contact-adjusted |
-| `frame{N}_mano_3d.html` | 위 인터랙티브 3D |
-| `frame{N}_xhand_2d.png` | MANO + xhand — original vs contact-adjusted |
-| `frame{N}_xhand_3d.html` | 위 인터랙티브 3D |
-
-옵션:
-- `--frame N` (default 10)
-- `--pkl_dir`, `--contact_dir`, `--out_dir`
-
 ## R_MANO_XHAND (정렬)
 
 `assets/R_mano_xhand_{right,left}.npy`에 저장된 3×3 rotation을 `_paths.py`가 모든 스크립트에 노출. **MANO canonical wrist frame → xhand wrist link frame** 변환.
@@ -260,7 +207,7 @@ python visualize_contact_retarget.py \
 5. anchor `||q − q_stage1||²` 추가하여 stage 1 결과에서 너무 멀어지지 않게 제약
 6. scipy L-BFGS-B로 12 DOF 손가락 자세만 최적화 (손목 위치/회전은 HaWoR 그대로 유지)
 
-## 검증된 결과 (cube manipulation 예시, Procrustes R 적용 후)
+## 검증된 결과 (kitchen manipulation 예시, Procrustes R 적용 후)
 
 DexPilot last distance:
 - right: **0.0011** (이전 R 0.0134 → 12× 개선)

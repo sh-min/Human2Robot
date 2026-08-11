@@ -4,9 +4,9 @@
 output_dir: output/skill_classifier
 
 # Per-recording bundles live at {root}/{glob}/features.pt
-train_data_root: data/cube_dataset/0412_train
+train_data_root: data/kitchen_dataset/0412_train
 train_recording_glob: "saved_frames_*"
-val_data_root: data/cube_dataset/0412_val
+val_data_root: data/kitchen_dataset/0412_val
 val_recording_glob: "episode_*"
 
 # Model

@@ -178,7 +178,7 @@ def apply_frame(
     runs mj_forward. Returns per-side (pos_err, ori_err).
 
     MuJoCo's qpos may carry extra DOFs that pinocchio's model doesn't see
-    (e.g. a free-joint cube). Those live past pin_model.nq; we slice to
+    (e.g. a free-joint object). Those live past pin_model.nq; we slice to
     the robot part for IK and merge back."""
     robot_nq = pin_model.nq
     q_full = muj_data.qpos.copy()
@@ -212,7 +212,7 @@ def apply_frame(
 
 
 def main():
-    pkl_path = REPO / "data/cube_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl"
+    pkl_path = REPO / "data/kitchen_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl"
     with pkl_path.open("rb") as f:
         pose = pickle.load(f)
 
@@ -220,13 +220,13 @@ def main():
     pin_data = pin_model.createData()
     muj_model = mujoco.MjModel.from_xml_path(str(SCENE))
     muj_data = mujoco.MjData(muj_model)
-    # Robot joints come first in MuJoCo's qpos; the cube's free joint +
-    # face hinge follow. Pinocchio sees only the robot (no cube), so
+    # Robot joints come first in MuJoCo's qpos; the object's free joint and
+    # optional articulation follow. Pinocchio sees only the robot, so
     # ROBOT_NQ is the slice into MuJoCo's state corresponding to its
     # kinematic tree.
     ROBOT_NQ = pin_model.nq
 
-    # Home pose: MJCF defaults (incl. cube placement), override head pitch.
+    # Home pose: MJCF defaults (including object placement), override head pitch.
     # Also bias arm joints to mid-range so the 7-DOF IK redundancy is
     # resolved into the natural elbow-down branch rather than the
     # elbow-inverted (out-of-range) one that zero-warm-start picks.

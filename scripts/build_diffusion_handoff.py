@@ -380,7 +380,7 @@ one-hot 또는 확률 벡터를 같은 condition 입력에 넣어야 합니다.
 cd /home/robin/shMin/skill2policy
 PYTHONPATH=src conda run -n vjepa2-312 --no-capture-output \\
   python scripts/build_diffusion_handoff.py \\
-  --data_root data/cube_dataset/26.07.27 \\
+  --data_root data/kitchen_dataset/26.07.27 \\
   --out_dir {output_root} \\
   --require_full_smoothing \\
   --strict_ready

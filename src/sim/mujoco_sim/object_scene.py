@@ -168,7 +168,7 @@ def build_object_scene(
     *,
     base_scene: str | Path = BASE_SCENE,
 ) -> Path:
-    """Replace the baked cube with the object described by ``object_spec``."""
+    """Build a scene with the object described by ``object_spec``."""
     spec = load_object_spec(object_spec, check_assets=True)
     base_scene = Path(base_scene).resolve()
     output_path = Path(output_path).resolve()
@@ -181,7 +181,6 @@ def build_object_scene(
     if worldbody is None or asset is None:
         raise ValueError(f"Invalid MuJoCo scene: {base_scene}")
     _remove_free_object_bodies(worldbody)
-    _remove_body(worldbody, "cube_root")
     _remove_body(worldbody, "object_root")
 
     geometry = spec["geometry"]

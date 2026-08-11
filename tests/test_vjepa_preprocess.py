@@ -65,7 +65,7 @@ class VjepaAlignmentTests(unittest.TestCase):
                         "fps": 24.0,
                         "segments": [
                             {"label": "Cup", "start_frame": 0, "end_frame": 14},
-                            {"label": "Milk", "start_frame": 15, "end_frame": 24},
+                            {"label": "Choco", "start_frame": 15, "end_frame": 24},
                         ],
                     }
                 )
@@ -83,14 +83,14 @@ class VjepaAlignmentTests(unittest.TestCase):
                 root, alignment, boundary_policy="center"
             )
             cup = preprocess.ACTION_LABELS.index("Cup")
-            milk = preprocess.ACTION_LABELS.index("Milk")
+            choco = preprocess.ACTION_LABELS.index("Choco")
             torch.testing.assert_close(
                 ignored,
-                torch.tensor([cup, -1, milk], dtype=torch.int32),
+                torch.tensor([cup, -1, choco], dtype=torch.int32),
             )
             torch.testing.assert_close(
                 centered,
-                torch.tensor([cup, milk, milk], dtype=torch.int32),
+                torch.tensor([cup, choco, choco], dtype=torch.int32),
             )
 
     def test_dataset_scoped_choco_vocabulary_keeps_six_contiguous_classes(self):

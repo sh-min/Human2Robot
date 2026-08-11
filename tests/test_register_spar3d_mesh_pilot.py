@@ -50,7 +50,7 @@ class Sim3Tests(unittest.TestCase):
             registration.project_camera_points(np.asarray(((0.0, 0.0, -1.0),)), k)
 
     def test_signed_axis_rotation_group_has_24_proper_unique_members(self):
-        rotations = registration.proper_cube_rotations()
+        rotations = registration.proper_axis_rotations()
         self.assertEqual(len(rotations), 24)
         self.assertTrue(np.allclose(rotations[0], np.eye(3)))
         fingerprints = {tuple(np.asarray(item, dtype=int).ravel()) for item in rotations}

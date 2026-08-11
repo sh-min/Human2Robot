@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Skill2Policy Pipeline
+#  Human2Robot Kitchen Pipeline
 #  Stages:
 #    1. Hand Estimation   (conda: hawor)        → rgb_hawor/retarget_input.npz
 #    2. Contact Estimation(conda: haco)         → contact/*.npz
-#    3. Retargeting       (conda: vjepa2-312) → rgb_hawor/qpos_xhand_*.pkl
-#    4. Export Robot Traj (conda: vjepa2-312) → rgb_hawor/final_pose.pkl
+#    3. Retargeting       (conda: RFM_retarget) → rgb_hawor/qpos_xhand_*.pkl
+#    4. Export Robot Traj (conda: RFM_retarget) → rgb_hawor/final_pose.pkl
 #    5. V-JEPA Features   (conda: vjepa2-312) → features.pt
-#    +. RGB Overlay       (conda: vjepa2-312) → rgb_hawor/overlay_*.mp4  [opt]
+#    +. RGB Overlay       (conda: RFM_retarget) → rgb_hawor/overlay_*.mp4  [opt]
 # ============================================================
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- Defaults -----------------------------------------------
-DATA_DIR="/virtual_lab/ljw_rvlab/lab/cube_dataset/web_data_curated/Rubik_s_Cube__Finger_Tricks_Tutorial__Beginner_to__001"
+DATA_DIR="${DATA_DIR:-}"
 IMG_FOCAL=497.77
 IMG_GLOB=""            # empty = auto-detect from rgb dir
 SKIP_SLAM=1          # 1=skip (default), 0=run SLAM
@@ -24,14 +24,16 @@ SKIP_HAND=0
 SKIP_CONTACT=0
 SKIP_RETARGET=0
 SKIP_FEATURES=0
-VJEPA_CKPT="/virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy/ckpt/v-jepa2/vitl.pt"
+RETARGET_ENV="${RETARGET_ENV:-RFM_retarget}"
+FEATURE_ENV="${FEATURE_ENV:-vjepa2-312}"
+VJEPA_CKPT="${VJEPA_CKPT:-$ROOT_DIR/weights/vjepa2/vitl.pt}"
 # -------------------------------------------------------------
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-  --data_dir PATH      Episode directory (default: $DATA_DIR)
+  --data_dir PATH      Episode directory (required; or set DATA_DIR)
   --img_focal FLOAT    Camera focal length in pixels (default: $IMG_FOCAL)
   --img_glob PATTERN   RGB frame filename glob (default: auto-detect)
   --with_slam          Run HaWoR SLAM stage (disabled by default)
@@ -44,7 +46,7 @@ Usage: $(basename "$0") [OPTIONS]
   --vjepa_ckpt PATH    V-JEPA pretrained checkpoint (default: $VJEPA_CKPT)
   -h, --help           Show this message
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -62,15 +64,25 @@ while [[ $# -gt 0 ]]; do
         --skip_retarget)  SKIP_RETARGET=1; shift ;;
         --skip_features)  SKIP_FEATURES=1; shift ;;
         --vjepa_ckpt)     VJEPA_CKPT="$2"; shift 2 ;;
-        -h|--help)        usage ;;
+        -h|--help)        usage 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+if [[ -z "$DATA_DIR" ]]; then
+    echo "ERROR: --data_dir PATH is required." >&2
+    usage 2 >&2
+fi
 
 RGB_DIR="$DATA_DIR/rgb"
 HAWOR_DIR="$DATA_DIR/rgb_hawor"
 NPZ="$HAWOR_DIR/retarget_input.npz"
 CONTACT_DIR="$DATA_DIR/contact"
+
+if [[ ! -d "$RGB_DIR" ]]; then
+    echo "ERROR: RGB directory not found: $RGB_DIR" >&2
+    exit 1
+fi
 
 # Auto-detect IMG_GLOB from first image file in rgb dir
 if [[ -z "$IMG_GLOB" ]]; then
@@ -96,7 +108,7 @@ PIPELINE_START=$(date +%s)
 declare -A STAGE_ELAPSED   # stage name → seconds
 
 echo "============================================================"
-echo " Skill2Policy Pipeline"
+echo " Human2Robot Kitchen Pipeline"
 echo "============================================================"
 echo " DATA_DIR    : $DATA_DIR"
 echo " ROOT_DIR    : $ROOT_DIR"
@@ -166,15 +178,15 @@ if [[ $SKIP_RETARGET -eq 0 ]]; then
     [[ $WITH_CONTACT -eq 1 ]] && RETARGET_ARGS+=(--contact)
 
     if [[ $WITH_CONTACT -eq 1 ]]; then
-        echo "[3/5] Retargeting  (conda: vjepa2-312)  [stage1 + stage2 contact-aware]"
+        echo "[3/5] Retargeting  (conda: $RETARGET_ENV)  [stage1 + stage2 contact-aware]"
     else
-        echo "[3/5] Retargeting  (conda: vjepa2-312)  [stage1 vector-only]"
+        echo "[3/5] Retargeting  (conda: $RETARGET_ENV)  [stage1 vector-only]"
     fi
     _t=$(date +%s)
 
     # _paths.py uses __file__-relative imports; put src/retargeting on PYTHONPATH.
     PYTHONPATH="$ROOT_DIR/src/retargeting${PYTHONPATH:+:$PYTHONPATH}" \
-        conda run -n vjepa2-312 --no-capture-output \
+        conda run -n "$RETARGET_ENV" --no-capture-output \
         python "$ROOT_DIR/src/retargeting/retarget_from_npz.py" \
         "${RETARGET_ARGS[@]}"
 
@@ -191,7 +203,7 @@ echo
 
 # ---- Stage 4: Export final_pose.pkl -------------------------
 if [[ $SKIP_RETARGET -eq 0 ]]; then
-    echo "[4/5] Export Robot Trajectory  (conda: vjepa2-312)"
+    echo "[4/5] Export Robot Trajectory  (conda: $RETARGET_ENV)"
     _t=$(date +%s)
 
     if [[ $WITH_CONTACT -eq 1 ]]; then
@@ -203,7 +215,7 @@ if [[ $SKIP_RETARGET -eq 0 ]]; then
     fi
 
     PYTHONPATH="$ROOT_DIR/src/retargeting${PYTHONPATH:+:$PYTHONPATH}" \
-        conda run -n vjepa2-312 --no-capture-output \
+        conda run -n "$RETARGET_ENV" --no-capture-output \
         python "$ROOT_DIR/src/retargeting/export_robot_traj.py" \
         --npz       "$NPZ" \
         --right_pkl "$RPKL" \
@@ -219,7 +231,7 @@ echo
 
 # ---- Stage 5: V-JEPA Feature Extraction ---------------------
 if [[ $SKIP_FEATURES -eq 0 ]]; then
-    echo "[5/5] V-JEPA Feature Extraction  (conda: vjepa2-312)"
+    echo "[5/5] V-JEPA Feature Extraction  (conda: $FEATURE_ENV)"
     _t=$(date +%s)
 
     if [[ ! -f "$VJEPA_CKPT" ]]; then
@@ -232,7 +244,7 @@ if [[ $SKIP_FEATURES -eq 0 ]]; then
     REC_NAME="$(basename "$DATA_DIR")"
 
     PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
-        conda run -n vjepa2-312 --no-capture-output \
+        conda run -n "$FEATURE_ENV" --no-capture-output \
         python -m data_preprocess.preprocess \
         --data_root "$REC_PARENT" \
         --recording_glob "$REC_NAME" \
@@ -247,7 +259,7 @@ echo
 
 # ---- (Optional) RGB Overlay ----------------------------------
 if [[ $RUN_OVERLAY -eq 1 && $SKIP_RETARGET -eq 0 ]]; then
-    echo "[+] RGB Overlay  (conda: vjepa2-312)"
+    echo "[+] RGB Overlay  (conda: $RETARGET_ENV)"
     _t=$(date +%s)
 
     if [[ $WITH_CONTACT -eq 1 ]]; then
@@ -261,7 +273,7 @@ if [[ $RUN_OVERLAY -eq 1 && $SKIP_RETARGET -eq 0 ]]; then
     fi
 
     PYTHONPATH="$ROOT_DIR/src/retargeting${PYTHONPATH:+:$PYTHONPATH}" \
-        conda run -n vjepa2-312 --no-capture-output \
+        conda run -n "$RETARGET_ENV" --no-capture-output \
         python "$ROOT_DIR/src/retargeting/overlay_on_rgb.py" \
         --npz       "$NPZ" \
         --rgb_dir   "$RGB_DIR" \

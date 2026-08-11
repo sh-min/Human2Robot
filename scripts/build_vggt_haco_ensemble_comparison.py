@@ -15,7 +15,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 PILOT = ROOT / "8-5/mesh_sota_pilot/episode_1"
-DATASET = ROOT / "data/cube_dataset/26.08.05_stereo_calibrated/1"
+DATASET = ROOT / "data/kitchen_dataset/26.08.05_stereo_calibrated/1"
 PROC = DATASET / "camera_2/inpainting/processed/view/0"
 OUTPUT = PILOT / "all_objects_vggt_haco_ensemble_comparison"
 sys.path.insert(0, str(ROOT / "scripts"))

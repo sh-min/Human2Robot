@@ -575,7 +575,7 @@ def _build_provenance(
     return {
         "checkpoint": _path_signature(checkpoint),
         "rgb": _path_signature(rec_dir / "rgb"),
-        "masked_rgb": _path_signature(rec_dir / "hand_cube_mask_overlayed"),
+        "masked_rgb": _path_signature(rec_dir / "hand_object_mask_overlayed"),
         "robot_video": _path_signature(_robot_video(rec_dir)),
         "hawor": _path_signature(rec_dir / "rgb_hawor" / "retarget_input.npz"),
         "result_json": _path_signature(rec_dir / "result.json"),
@@ -750,7 +750,7 @@ def main() -> None:
         default=",".join(ACTION_LABELS),
         help=(
             "Comma-separated dataset label vocabulary in exact class-index "
-            "order (default: the legacy Milk vocabulary)."
+            "order (default: the kitchen Choco vocabulary)."
         ),
     )
     args = parser.parse_args()
@@ -911,7 +911,7 @@ def main() -> None:
             "input_provenance": provenance,
         }
 
-        masked_dir = rec_dir / "hand_cube_mask_overlayed"
+        masked_dir = rec_dir / "hand_object_mask_overlayed"
         if masked_dir.is_dir():
             bundle["vjepa_orig_masked"], _ = extract_vjepa(
                 masked_dir,

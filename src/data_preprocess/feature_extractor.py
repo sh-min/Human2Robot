@@ -1,5 +1,5 @@
 """
-V-JEPA feature extractor for cube manipulation videos.
+V-JEPA feature extractor for kitchen manipulation videos.
 
 Loads the pretrained V-JEPA encoder (target_encoder from EMA)
 and extracts per-clip features from video tensors.

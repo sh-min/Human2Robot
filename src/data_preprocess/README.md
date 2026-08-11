@@ -9,7 +9,7 @@ Steps:
 1. **Hand pose extraction** — run [HaWoR](https://github.com/ThunderVVV/HaWoR)
    on `rgb/` → `result.json` *(friend's contribution, TBD)*
 2. **V-JEPA features** — run V-JEPA encoder on `rgb/` (and optionally on
-   `hand_cube_mask_overlayed/`)
+   `hand_object_mask_overlayed/`)
 3. **MANO axis-angle** — convert HaWoR rotation matrices to axis-angle
 4. **Per-token labels** — read `gt_labels.json` segments
 5. **Bundle** all of the above into `features.pt`
@@ -22,7 +22,7 @@ Steps 2-5 are implemented in [`preprocess.py`](preprocess.py).
 {recording}/
 ├── rgb/                          # PNG frames (required)
 ├── result.json                   # HaWoR output (required, produced by step 1)
-├── hand_cube_mask_overlayed/     # masked frames for V-JEPA-masked variant (optional)
+├── hand_object_mask_overlayed/     # masked frames for V-JEPA-masked variant (optional)
 └── gt_labels.json                # skill segments (optional)
 ```
 
@@ -57,7 +57,7 @@ downsamples to token rate.
 ```
 {recording}/features.pt
     vjepa_orig:        [T, 1024]    V-JEPA on rgb/
-    vjepa_orig_masked: [T, 1024]    V-JEPA on hand_cube_mask_overlayed/  (optional)
+    vjepa_orig_masked: [T, 1024]    V-JEPA on hand_object_mask_overlayed/  (optional)
     mano:              [T, 96]      MANO axis-angle, token-rate
     labels_per_token:  [T]          int skill label per token, -1 if no GT
     num_frames, num_tokens, recording
@@ -89,7 +89,7 @@ Or directly:
 ```bash
 cd skill2policy
 PYTHONPATH=$PWD/src python -m data_preprocess.preprocess \
-    --data_root data/cube_dataset/0412_train \
+    --data_root data/kitchen_dataset/0412_train \
     --recording_glob "saved_frames_*" \
     --checkpoint ckpt/v-jepa2/vitl.pt
 ```
@@ -98,7 +98,7 @@ Skips recordings that already have `features.pt`. Pass `--overwrite` to redo.
 
 ## Adding new datasets
 
-Drop new recordings under `data/cube_dataset/<split>/<recording_name>/` with
+Drop new recordings under `data/kitchen_dataset/<split>/<recording_name>/` with
 the input layout above (run HaWoR first to generate `result.json`), then run
 preprocess. The resulting `features.pt` plugs directly into
 [`skill_classifier`](../skill_classifier).

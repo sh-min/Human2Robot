@@ -21,13 +21,13 @@ CKPT=ckpt/v-jepa2/vitl.pt
 
 echo "=== Train (saved_frames_*) ==="
 PYTHONPATH=$PROJ_DIR/src python -m data_preprocess.preprocess \
-    --data_root data/cube_dataset/0412_train \
+    --data_root data/kitchen_dataset/0412_train \
     --recording_glob "saved_frames_*" \
     --checkpoint $CKPT
 
 echo "=== Val (episode_*) ==="
 PYTHONPATH=$PROJ_DIR/src python -m data_preprocess.preprocess \
-    --data_root data/cube_dataset/0412_val \
+    --data_root data/kitchen_dataset/0412_val \
     --recording_glob "episode_*" \
     --checkpoint $CKPT
 

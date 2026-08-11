@@ -7,7 +7,7 @@
 
 This mapping is intentional: `composite_rb5_stereo_occlusion.py` treats camera 2 as the final view.
 
-The prepared data lives at `data/cube_dataset/26.08.04_stereo/<episode>/`. The root `rgb`, `rgb_hawor`, and `contact` paths are relative symlinks to `camera_2` (MH), so existing single-view V-JEPA and robot code continues to consume MH.
+The prepared data lives at `data/kitchen_dataset/26.08.04_stereo/<episode>/`. The root `rgb`, `rgb_hawor`, and `contact` paths are relative symlinks to `camera_2` (MH), so existing single-view V-JEPA and robot code continues to consume MH.
 
 ## Prepared data
 
@@ -107,9 +107,9 @@ BACKGROUND_MODE=source USE_SH_HACO=1 \
 
 conda run -n inpaint-gpu --no-capture-output \
   python src/inpainting/compare_contact_interior_expansion.py \
-  --baseline_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_raw \
-  --expanded_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_boundaryfill_3px_cap25_raw \
-  --out_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_compare_baseline_vs_boundaryfill_3px_cap25_raw
+  --baseline_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_raw \
+  --expanded_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_boundaryfill_3px_cap25_raw \
+  --out_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_compare_baseline_vs_boundaryfill_3px_cap25_raw
 ```
 
 The comparison video has three panels: baseline, completed result, and a dark
@@ -133,7 +133,7 @@ limited to the matching MH semantic finger inside the object mask.
 Generate it over the original MH video without replacing either contact result:
 
 ```bash
-EP=data/cube_dataset/26.08.04_stereo/1
+EP=data/kitchen_dataset/26.08.04_stereo/1
 PD="$EP/camera_2/visibility/processed/view/0"
 conda run -n inpaint-gpu --no-capture-output \
   python src/inpainting/composite_rb5_stereo_occlusion.py \
@@ -160,10 +160,10 @@ Build the synchronized 2x2 review video:
 ```bash
 conda run -n inpaint-gpu --no-capture-output \
   python src/inpainting/compare_contact_occlusion_variants.py \
-  --baseline_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_raw \
-  --boundary_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_boundaryfill_3px_cap25_raw \
-  --force_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/stereo_occlusion_visibility_force_raw \
-  --out_dir data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_compare_baseline_boundaryfill_visibility_force_raw
+  --baseline_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_raw \
+  --boundary_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_dual_haco_boundaryfill_3px_cap25_raw \
+  --force_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/stereo_occlusion_visibility_force_raw \
+  --out_dir data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0/contact_occlusion_compare_baseline_boundaryfill_visibility_force_raw
 ```
 
 The panels are baseline HaCo, boundary fill, visibility force, and force minus
@@ -201,7 +201,7 @@ BACKGROUND_MODE=source USE_SH_HACO=1 \
 Build the six-way synchronized review:
 
 ```bash
-PD=data/cube_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0
+PD=data/kitchen_dataset/26.08.04_stereo/1/camera_2/visibility/processed/view/0
 conda run -n inpaint-gpu --no-capture-output \
   python src/inpainting/compare_xhand_thickness_strategies.py \
   --baseline_dir "$PD/contact_occlusion_dual_haco_raw" \
@@ -479,7 +479,7 @@ new packed frame against the existing finger labels, then replaces only the
 surface array and updates the manifest after the complete render succeeds:
 
 ```bash
-EP=data/cube_dataset/26.08.04_stereo/1
+EP=data/kitchen_dataset/26.08.04_stereo/1
 PD="$EP/camera_2/visibility/processed/view/0"
 read -r SIDE ARM_MODE SOURCE_W SOURCE_H RENDER_SCALE < <(python -c '
 import json, sys
@@ -512,7 +512,7 @@ bash scripts/run_0804_visibility_haco_composite.sh 1
 Its direct equivalent is copy/paste runnable:
 
 ```bash
-EP=data/cube_dataset/26.08.04_stereo/1
+EP=data/kitchen_dataset/26.08.04_stereo/1
 PD="$EP/camera_2/visibility/processed/view/0"
 C1_OFFSET=$(python -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["temporal_alignment"]["camera1_frame_offset"])' \

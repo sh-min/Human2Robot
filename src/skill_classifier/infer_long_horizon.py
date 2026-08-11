@@ -10,14 +10,14 @@ Given a long video with multiple skills performed sequentially:
 Usage (V-JEPA + hand):
     cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy
     PYTHONPATH=$PWD/src python -m skill_classifier.infer_long_horizon \
-        --data_dir data/cube_dataset/0325 \
+        --data_dir data/kitchen_dataset/0325 \
         --vjepa_ckpt ckpt/egodex/vitl16-256px-16f/latest.pt \
         --classifier_ckpt output/skill_classifier/mlp_w8_0325_0138/best_mlp.pt
 
 Usage (MANO hand-only):
     cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/skill2policy
     PYTHONPATH=$PWD/src python -m skill_classifier.infer_long_horizon \
-        --data_dir data/cube_dataset/0412_val \
+        --data_dir data/kitchen_dataset/0412_val \
         --classifier_ckpt output/skill_classifier/mlp_w8_0416_1547/best_mlp.pt
 """
 
@@ -597,7 +597,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to long-horizon episodes (e.g. data/cube_dataset/0412_val)")
+                        help="Path to long-horizon episodes (e.g. data/kitchen_dataset/0412_val)")
     parser.add_argument("--vjepa_ckpt", type=str, default=None,
                         help="V-JEPA checkpoint (not needed for hand-only models)")
     parser.add_argument("--classifier_ckpt", type=str, required=True)

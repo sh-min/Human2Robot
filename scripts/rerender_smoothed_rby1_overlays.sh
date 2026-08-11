@@ -6,14 +6,14 @@ set -euo pipefail
 # to a temporary directory, validated, then atomically replaces the old output.
 #
 # Usage:
-#   DATA=data/cube_dataset/26.07.27 \
+#   DATA=data/kitchen_dataset/26.07.27 \
 #     bash scripts/rerender_smoothed_rby1_overlays.sh 07_27-1
-#   DATA=data/cube_dataset/26.07.27 ALL=1 \
+#   DATA=data/kitchen_dataset/26.07.27 ALL=1 \
 #     bash scripts/rerender_smoothed_rby1_overlays.sh
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DATA="${DATA:-$ROOT/data/cube_dataset/26.07.27}"
+DATA="${DATA:-$ROOT/data/kitchen_dataset/26.07.27}"
 ALL="${ALL:-0}"
 
 if [ "$#" -gt 0 ]; then

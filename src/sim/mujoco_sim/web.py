@@ -90,7 +90,7 @@ def _sync_ctrl_to_qpos() -> None:
 
 
 def _reset_to_home() -> None:
-    """Reset to the default slider pose (cube-grasp ready)."""
+    """Reset to the default object-manipulation pose."""
     mujoco.mj_resetData(_model, _data)
     # Pre-set head pitch so IK starts with the head in place.
     hjid = mujoco.mj_name2id(_model, mujoco.mjtObj.mjOBJ_JOINT, "head_1")

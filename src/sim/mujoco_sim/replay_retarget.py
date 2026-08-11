@@ -5,7 +5,7 @@ render head_cam and front_view side-by-side, write an mp4.
 
 Usage:
     MUJOCO_GL=egl PYTHONPATH=$PWD/src python -m mujoco_sim.replay_retarget \
-        --pkl data/cube_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl \
+        --pkl data/kitchen_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl \
         --out output/episode_0_retarget.mp4
 """
 
@@ -96,8 +96,8 @@ class ReferenceReader:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pkl", default="data/cube_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl")
-    ap.add_argument("--rgb-dir", default="data/cube_dataset/0412_val/episode_0/rgb_hawor/extracted_images",
+    ap.add_argument("--pkl", default="data/kitchen_dataset/0412_val/episode_0/rgb_hawor/final_pose.pkl")
+    ap.add_argument("--rgb-dir", default="data/kitchen_dataset/0412_val/episode_0/rgb_hawor/extracted_images",
                     help="Legacy reference image directory; arbitrary numeric filenames supported.")
     ap.add_argument("--reference", default=None,
                     help="Reference video or image directory shown beside the simulation.")
@@ -119,7 +119,7 @@ def main():
     pin_data = pin_model.createData()
     muj_model = mujoco.MjModel.from_xml_path(str(SCENE))
     muj_data = mujoco.MjData(muj_model)
-    # Robot joints come first in MuJoCo's qpos/qvel; cube state follows.
+    # Robot joints come first in MuJoCo's qpos/qvel; free-object state follows.
     # Pinocchio sees only the robot, so its nq/nv give the slice into
     # MuJoCo's state that corresponds to the robot.
     ROBOT_NQ = pin_model.nq
@@ -145,7 +145,7 @@ def main():
 
     # Drive the robot through its position actuators: each frame compute
     # the IK target via pinocchio, push to ctrl, let mj_step's PD track.
-    # Cube physics and any contact reactions emerge naturally from the
+    # Object physics and any contact reactions emerge naturally from the
     # same mj_step. n_substeps makes sim time advance ~1/fps per frame.
     n_substeps = max(1, int(round(1.0 / (args.fps * muj_model.opt.timestep))))
 

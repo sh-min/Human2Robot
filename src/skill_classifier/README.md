@@ -1,6 +1,6 @@
 # skill_classifier
 
-Per-frame skill classifier for cube manipulation videos. Trains a temporal
+Per-frame skill classifier for kitchen manipulation videos. Trains a temporal
 classifier (Transformer or MLP) over a sliding window of features to predict
 the active skill at each frame.
 
@@ -73,7 +73,7 @@ Outputs go to `output/skill_classifier/{exp_id}/best_{model}.pt`.
 
 ```bash
 PYTHONPATH=$PWD/src python -m skill_classifier.infer_long_horizon \
-    --data_dir data/cube_dataset/0412_val \
+    --data_dir data/kitchen_dataset/0412_val \
     --vjepa_ckpt ckpt/v-jepa2/vitl.pt \
     --classifier_ckpt output/skill_classifier/{exp_id}/best_transformer.pt \
     --output_dir output/long_horizon/{exp_id}
@@ -88,4 +88,4 @@ Per-episode outputs:
 ## Labels
 
 6 classes from [`utils/labels.py`](../utils/labels.py):
-`Cup`, `Lock`, `Milk`, `Snack`, `Sweep`, and `Trans`.
+`Cup`, `Lock`, `Choco`, `Snack`, `Sweep`, and `Trans`.

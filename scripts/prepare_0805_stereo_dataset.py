@@ -36,7 +36,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = REPO_ROOT / "8-5" / "data"
-DEFAULT_OUTPUT = REPO_ROOT / "data" / "cube_dataset" / "26.08.05_stereo"
+DEFAULT_OUTPUT = REPO_ROOT / "data" / "kitchen_dataset" / "26.08.05_stereo"
 LABELS = ("Cup", "Lock", "Choco", "Snack", "Sweep", "Trans")
 LABEL_SET = set(LABELS)
 

@@ -3,9 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_NAME="${ENV_NAME:-lerobot-312}"
-OBJECT_SPEC="${OBJECT_SPEC:-$ROOT/configs/objects/cube.yaml}"
+TASK_SPEC="${TASK_SPEC:-$ROOT/configs/tasks/kitchen.yaml}"
 DEFAULT_DATASET=$(PYTHONPATH="$ROOT/src" conda run -n "$ENV_NAME" \
-  python -m object_config get "$OBJECT_SPEC" dataset.lerobot_v3_root)
+  python -m task_config get "$TASK_SPEC" dataset.lerobot_v3_root)
 DATASET="${DATASET:-$DEFAULT_DATASET}"
 STEPS="${STEPS:-100000}"
 BATCH_SIZE="${BATCH_SIZE:-2}"

@@ -219,14 +219,14 @@ class ManifestContractTests(unittest.TestCase):
                     ):
                         pilot.load_pilot_manifest(manifest)
 
-    def test_schema_kind_choco_and_camera_mapping_are_strictly_bound(self):
+    def test_schema_kind_label_and_camera_mapping_are_strictly_bound(self):
         mutations = (
             ("schema", lambda doc: doc.update(schema_version=2), "schema_version"),
             ("kind", lambda doc: doc.update(kind="other_bundle"), "manifest kind"),
             (
                 "label",
-                lambda doc: doc["selection"].update(object_label="Milk"),
-                "object_label='Choco'",
+                lambda doc: doc["selection"].update(object_label=""),
+                "non-empty string",
             ),
             (
                 "camera mapping",

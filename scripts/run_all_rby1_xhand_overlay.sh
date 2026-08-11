@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DATA="${DATA:-$ROOT/data/cube_dataset/26.07.24}"
+DATA="${DATA:-$ROOT/data/kitchen_dataset/26.07.24}"
 FORCE="${FORCE:-0}"
 ALL="${ALL:-0}"
 

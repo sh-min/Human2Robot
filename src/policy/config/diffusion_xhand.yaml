@@ -22,7 +22,7 @@
 # --- Dataset ---
 dataset:
   repo_id: xhand/local                 # logical id (not on Hub)
-  root: data/lerobot_cube_26_07_24     # local dataset directory
+  root: data/lerobot_kitchen           # local dataset directory
   video_backend: torchcodec
 
 # --- Policy ---
@@ -70,4 +70,4 @@ use_policy_training_preset: true
 wandb:
   enable: false
   project: skill2policy-diffusion
-  notes: "Diffusion Policy on xHand bimanual cube manipulation"
+  notes: "Diffusion Policy on xHand bimanual kitchen manipulation"

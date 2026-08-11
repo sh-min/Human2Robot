@@ -5,7 +5,7 @@ TRANSITION_LABEL = "Trans"
 ACTION_LABELS = [
     "Cup",
     "Lock",
-    "Milk",
+    "Choco",
     "Snack",
     "Sweep",
     TRANSITION_LABEL,

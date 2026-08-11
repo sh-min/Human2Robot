@@ -167,6 +167,8 @@ def export_groot_v21(
             if normalized_object_spec
             else source_info.get("object_id")
         ),
+        "task_id": source_info.get("task_id"),
+        "object_ids": source_info.get("object_ids", []),
         "total_episodes": episode_count,
         "total_frames": int(source_info["total_frames"]),
         "total_tasks": len(task_names),
@@ -200,7 +202,7 @@ def export_groot_v21(
         json.dumps(modality, indent=2) + "\n"
     )
 
-    for filename in ("stats.json", "object_spec.json"):
+    for filename in ("stats.json", "object_spec.json", "task_spec.json"):
         source_path = source / "meta" / filename
         if source_path.is_file():
             shutil.copy2(source_path, meta / filename)

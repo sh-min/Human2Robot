@@ -12,8 +12,7 @@ State/action vector layout (matches pkl_to_lerobot.schema):
    34:38   left_wrist_quat
 
 Usage:
-    OBJECT_SPEC=configs/objects/cube.yaml \\
-        bash scripts/train_groot_policy.sh
+    TASK_SPEC=configs/tasks/kitchen.yaml bash scripts/train_groot_policy.sh
 
     # Inference:
     python standalone_inference_script.py \\

@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_NAME="${ENV_NAME:-lerobot-312}"
-OBJECT_SPEC="${OBJECT_SPEC:-$ROOT/configs/objects/cube.yaml}"
+OBJECT_SPEC="${OBJECT_SPEC:-$ROOT/configs/objects/milk_carton.yaml}"
 SCENE_OUT="$(mktemp --suffix=.xml /tmp/rby1_xhand_object.XXXXXX)"
 trap 'rm -f "$SCENE_OUT"' EXIT
 

@@ -10,8 +10,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-APPROX_ROOT="${APPROX_ROOT:-$ROOT/data/cube_dataset/26.08.05_stereo_approx}"
-CALIBRATED_ROOT="${CALIBRATED_ROOT:-$ROOT/data/cube_dataset/26.08.05_stereo_calibrated}"
+APPROX_ROOT="${APPROX_ROOT:-$ROOT/data/kitchen_dataset/26.08.05_stereo_approx}"
+CALIBRATED_ROOT="${CALIBRATED_ROOT:-$ROOT/data/kitchen_dataset/26.08.05_stereo_calibrated}"
 OUT_DIR="${OUT_DIR:-$ROOT/8-5/calibration_ab}"
 EPISODES="${EPISODES:-1,2}"
 VIEWS="${VIEWS:-camera_1,camera_2}"

@@ -26,7 +26,7 @@ from workspace_calibration import (
 )
 
 # Comfortable arm configurations whose wrist origins sit on either side of
-# the cube workspace.  They are used only to define the workspace anchor.
+# the kitchen workspace. They are used only to define the workspace anchor.
 NATURAL_ARM_QPOS = {
     "left": [-1.2, 0.4, -1.2, -1.0, 0.0, 1.2, 0.8],
     "right": [-1.2, -0.4, 1.2, -1.0, 0.0, 1.2, -0.8],

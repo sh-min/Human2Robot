@@ -12,8 +12,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-APPROX_ROOT="${APPROX_ROOT:-$ROOT/data/cube_dataset/26.08.05_stereo_approx}"
-CALIBRATED_ROOT="${CALIBRATED_ROOT:-$ROOT/data/cube_dataset/26.08.05_stereo_calibrated}"
+APPROX_ROOT="${APPROX_ROOT:-$ROOT/data/kitchen_dataset/26.08.05_stereo_approx}"
+CALIBRATED_ROOT="${CALIBRATED_ROOT:-$ROOT/data/kitchen_dataset/26.08.05_stereo_calibrated}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$ROOT/8-5/calibration_inpainting_ab}"
 ENVIRONMENT="${ENVIRONMENT:-inpaint-gpu}"
 CHECKPOINT="${CHECKPOINT:-$ROOT/weights/depth_anything/depth_anything_v2_metric_hypersim_vits.pth}"

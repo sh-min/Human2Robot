@@ -4,7 +4,7 @@
 Everything else is set to black. Idea: the table sits near the per-frame
 median depth, so this sweeps away the table+background and leaves only the
 shallow non-hand stuff in front of it — which on this scene is mostly the
-cube.
+object.
 
 Output:
     <processed_demo>/depth_processor/shallow_nonhand.mp4

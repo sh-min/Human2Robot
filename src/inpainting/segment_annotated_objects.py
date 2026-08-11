@@ -1,7 +1,7 @@
 """Segment each annotated manipulated-object interval with an independent SAM2 track.
 
 The annotation JSON is expected to contain inclusive frame intervals such as
-``Cup``, ``Milk`` and ``Sweep``, separated by ``Trans`` intervals.  A separate
+``Cup``, ``Choco`` and ``Sweep``, separated by ``Trans`` intervals. A separate
 SAM2 state is used for every non-transition interval so an object from one
 task cannot leak into the next task.
 
@@ -27,7 +27,7 @@ import torch
 
 from _paths import SAM2_CHECKPOINT, SAM2_CONFIG_NAME, ensure_sam2_importable
 from segment_arms import _dump_frames_as_jpegs, _segment_one_pass
-from segment_cube import _GRIP_BAND, _grip_metrics, _pick_grasp_seed
+from segment_object import _GRIP_BAND, _grip_metrics, _pick_grasp_seed
 
 ensure_sam2_importable()
 from sam2.build_sam import build_sam2_video_predictor  # noqa: E402

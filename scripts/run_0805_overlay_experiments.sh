@@ -625,7 +625,7 @@ fi
 
 if any_stage_enabled retarget preview render raw methods stereo derived barrier; then
 for BRANCH in "${BRANCH_LIST[@]}"; do
-    DATA="$ROOT/data/cube_dataset/26.08.05_stereo_${BRANCH}"
+    DATA="$ROOT/data/kitchen_dataset/26.08.05_stereo_${BRANCH}"
     case "$BRANCH" in
         approx) MH_FOCAL="924.4444580078125" ;;
         calibrated) MH_FOCAL="1030.2115914516535" ;;
@@ -913,8 +913,8 @@ fi
 
 if stage_enabled compare; then
     for ID in "${EPISODES[@]}"; do
-        APPROX_PD="$ROOT/data/cube_dataset/26.08.05_stereo_approx/$ID/camera_2/inpainting/processed/view/0"
-        CALIBRATED_PD="$ROOT/data/cube_dataset/26.08.05_stereo_calibrated/$ID/camera_2/inpainting/processed/view/0"
+        APPROX_PD="$ROOT/data/kitchen_dataset/26.08.05_stereo_approx/$ID/camera_2/inpainting/processed/view/0"
+        CALIBRATED_PD="$ROOT/data/kitchen_dataset/26.08.05_stereo_calibrated/$ID/camera_2/inpainting/processed/view/0"
         OUT="$OUTPUT_ROOT/episode_$ID"
         echo
         echo "[compare/$ID] synchronized method + dual-camera + calibration grids"
@@ -923,7 +923,7 @@ if stage_enabled compare; then
             --out_dir "$OUT" --extended-grid required
         )
         if [ "$FORCE" != "1" ] && [ -s "$OUT/comparison_report.json" ] && \
-           validate_comparison "$OUT" "$(expected_frames "$ROOT/data/cube_dataset/26.08.05_stereo_calibrated/$ID/gt_labels.json")" "$APPROX_PD" "$CALIBRATED_PD"; then
+           validate_comparison "$OUT" "$(expected_frames "$ROOT/data/kitchen_dataset/26.08.05_stereo_calibrated/$ID/gt_labels.json")" "$APPROX_PD" "$CALIBRATED_PD"; then
             echo "    [skip] current comparison grids"
         else
             [ -e "$OUT" ] && COMPARE_ARGS+=(--overwrite)

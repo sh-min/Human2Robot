@@ -229,7 +229,7 @@ def convert_episode(
     fps: float = 30.0,
     action_mode: str = "absolute",
     img_glob: str = "frame_*.jpg",
-    task_description: str = "manipulate cube",
+    task_description: str = "manipulate kitchen object",
     chunk: int = 0,
     visual_source: str = "auto",
     allow_legacy_actions: bool = False,

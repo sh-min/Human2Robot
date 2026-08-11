@@ -28,7 +28,7 @@ Usage:
     PYTHONPATH=$PWD/src python -m pkl_to_lerobot.convert_batch \\
         --data_root /path/to/episodes \\
         --out_dir /path/to/lerobot_dataset \\
-        --task "manipulate rubik's cube"
+        --task_spec configs/tasks/kitchen.yaml
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from object_config import load_object_spec, public_object_spec
+from task_config import load_task_spec, public_task_spec
 
 from .convert_episode import HEAD_CAM_KEY, TARGET_IMG_SIZE, convert_episode
 from .schema import BIMANUAL_DIM, write_modality_json
@@ -220,6 +221,7 @@ def convert_batch(
     allow_legacy_actions: bool = False,
     skip_failed: bool = False,
     object_spec_path: str | None = None,
+    task_spec_path: str | None = None,
     episode_glob: str | None = None,
 ) -> None:
     """Convert all episodes under ``data_root`` into a LeRobot v3 dataset."""
@@ -228,18 +230,25 @@ def convert_batch(
         if object_spec_path is not None
         else None
     )
+    task_spec = (
+        load_task_spec(task_spec_path, check_objects=False)
+        if task_spec_path is not None
+        else None
+    )
     if task_description is None:
-        task_description = (
-            object_spec["task"]["instruction"]
-            if object_spec is not None
-            else "manipulate object"
-        )
+        if task_spec is not None:
+            task_description = task_spec["instruction"]
+        elif object_spec is not None:
+            task_description = object_spec["task"]["instruction"]
+        else:
+            task_description = "manipulate object"
     if episode_glob is None:
-        episode_glob = (
-            object_spec["dataset"]["episode_glob"]
-            if object_spec is not None
-            else "*"
-        )
+        if task_spec is not None:
+            episode_glob = task_spec["dataset"]["episode_glob"]
+        elif object_spec is not None:
+            episode_glob = object_spec["dataset"]["episode_glob"]
+        else:
+            episode_glob = "*"
     episodes = _discover_episodes(data_root, episode_glob)
     if not episodes:
         raise FileNotFoundError(
@@ -342,6 +351,12 @@ def convert_batch(
         "object_id": (
             object_spec["object_id"] if object_spec is not None else None
         ),
+        "task_id": task_spec["task_id"] if task_spec is not None else None,
+        "object_ids": (
+            task_spec["object_ids"]
+            if task_spec is not None
+            else ([object_spec["object_id"]] if object_spec is not None else [])
+        ),
         "total_episodes": len(episode_metas),
         "total_frames": total_frames,
         "total_tasks": 1,
@@ -364,6 +379,15 @@ def convert_batch(
         with open(meta_dir / "object_spec.json", "w") as f:
             json.dump(public_object_spec(object_spec), f, indent=2)
             f.write("\n")
+    if task_spec is not None:
+        with open(meta_dir / "task_spec.json", "w") as f:
+            json.dump(
+                public_task_spec(task_spec),
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+            f.write("\n")
 
     print(f"Dataset complete: {out_dir}")
     print(f"  episodes: {len(episode_metas)}")
@@ -371,6 +395,9 @@ def convert_batch(
     print(f"  action_mode: {action_mode}")
     if object_spec is not None:
         print(f"  object_id: {object_spec['object_id']}")
+    if task_spec is not None:
+        print(f"  task_id: {task_spec['task_id']}")
+        print(f"  object_ids: {', '.join(task_spec['object_ids'])}")
 
 
 def _state_names() -> list[str]:
@@ -400,7 +427,12 @@ def main():
     ap.add_argument(
         "--object_spec",
         default=None,
-        help="Validated object/task YAML copied into dataset metadata.",
+        help="Optional single-object YAML copied into dataset metadata.",
+    )
+    ap.add_argument(
+        "--task_spec",
+        default=None,
+        help="Optional multi-object task YAML copied into dataset metadata.",
     )
     ap.add_argument(
         "--episode_glob",
@@ -435,6 +467,7 @@ def main():
         allow_legacy_actions=args.allow_legacy_actions,
         skip_failed=args.skip_failed,
         object_spec_path=args.object_spec,
+        task_spec_path=args.task_spec,
         episode_glob=args.episode_glob,
     )
 

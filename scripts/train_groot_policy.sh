@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 GROOT_ROOT="${GROOT_ROOT:-$ROOT/third_party/Isaac-GR00T}"
-OBJECT_SPEC="${OBJECT_SPEC:-$ROOT/configs/objects/cube.yaml}"
+TASK_SPEC="${TASK_SPEC:-$ROOT/configs/tasks/kitchen.yaml}"
 CONFIG="${CONFIG:-$ROOT/src/policy/config/groot_xhand_config.py}"
 BASE_MODEL="${BASE_MODEL:-nvidia/GR00T-N1.7-3B}"
 MAX_STEPS="${MAX_STEPS:-2000}"
@@ -23,7 +23,7 @@ test -x "$GROOT_ROOT/.venv/bin/python" || {
 
 DATASET="${DATASET:-$(
   PYTHONPATH="$ROOT/src" "$GROOT_ROOT/.venv/bin/python" \
-    -m object_config get "$OBJECT_SPEC" dataset.groot_v21_root
+    -m task_config get "$TASK_SPEC" dataset.groot_v21_root
 )}"
 
 for required in \
@@ -33,7 +33,7 @@ for required in \
   "$DATASET/meta/modality.json"; do
     test -s "$required" || {
         echo "Missing GR00T dataset file: $required" >&2
-        echo "Run: OBJECT_SPEC=$OBJECT_SPEC bash scripts/prepare_policy_dataset.sh" >&2
+        echo "Run: TASK_SPEC=$TASK_SPEC bash scripts/prepare_policy_dataset.sh" >&2
         exit 1
     }
 done

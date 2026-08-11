@@ -53,7 +53,7 @@ DEFAULT_OUTPUT = PILOT_ROOT / "spar3d_registered_mh"
 DEFAULT_DEPTH = (
     REPO_ROOT
     / "data"
-    / "cube_dataset"
+    / "kitchen_dataset"
     / "26.08.05_stereo_calibrated"
     / "1"
     / "camera_2"
@@ -536,7 +536,7 @@ def project_camera_points(points: np.ndarray, camera_matrix: np.ndarray) -> np.n
     return output
 
 
-def proper_cube_rotations() -> list[np.ndarray]:
+def proper_axis_rotations() -> list[np.ndarray]:
     """Return the 24 proper signed-axis rotations, identity first."""
 
     rotations: list[np.ndarray] = []
@@ -1001,7 +1001,7 @@ def fit_approximate_sim3(
         )
         naive_loss, naive_metrics = evaluator.evaluate(naive_matrix, naive_rotation)
 
-        for index, rotation in enumerate(proper_cube_rotations()):
+        for index, rotation in enumerate(proper_axis_rotations()):
             scale, translation = _initial_scale_translation(
                 centered, rotation, observation, camera_matrix
             )

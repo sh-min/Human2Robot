@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DATA="${DATA:-$ROOT/data/cube_dataset/26.08.04_stereo}"
+DATA="${DATA:-$ROOT/data/kitchen_dataset/26.08.04_stereo}"
 TRAIN_ENV="${TRAIN_ENV:-vjepa2-312}"
 CONFIG="${CONFIG:-$ROOT/src/skill_classifier/config/0804_vjepa_mano_mlp.yaml}"
 

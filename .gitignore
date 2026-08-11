@@ -66,6 +66,8 @@ wget-log
 slurm-*.out
 slurm-*.err
 docs/progress_slides.pdf
+/graphify-out/
+/GRAPH_REPORT.md
 
 # Sample media (data, not code)
 examples/*.mp4

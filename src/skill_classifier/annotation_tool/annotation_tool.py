@@ -4,7 +4,7 @@ Web-based GT labeling tool for long-horizon skill sequences.
 Usage:
     conda activate vjepa2-312
     cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/RFM_Proj
-    python -m skill_segmentor.annotation_tool --data_dir data/cube_dataset/0325 --port 7860
+    python -m skill_segmentor.annotation_tool --data_dir data/kitchen_dataset/0325 --port 7860
 
     # SSH tunnel from local machine:
     ssh -L 7860:localhost:7860 user@server
@@ -866,7 +866,7 @@ def build_app(data_dir, fps, rotation="ccw", view="primary"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="e.g. data/cube_dataset/0325")
+                        help="e.g. data/kitchen_dataset/0325")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--fps",  type=float, default=30.0,
                         help="FPS used only when building _raw_video.mp4 for the first time. "

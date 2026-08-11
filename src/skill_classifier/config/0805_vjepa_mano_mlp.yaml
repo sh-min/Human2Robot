@@ -5,9 +5,9 @@
 
 output_dir: output/skill_classifier/0805_calibrated
 
-train_data_root: data/cube_dataset/26.08.05_stereo_calibrated
+train_data_root: data/kitchen_dataset/26.08.05_stereo_calibrated
 train_recording_glob: "1"
-val_data_root: data/cube_dataset/26.08.05_stereo_calibrated
+val_data_root: data/kitchen_dataset/26.08.05_stereo_calibrated
 val_recording_glob: "2"
 
 action_labels: [Cup, Lock, Choco, Snack, Sweep, Trans]

@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DATA="${DATA:-$ROOT/data/cube_dataset/26.08.04_stereo}"
+DATA="${DATA:-$ROOT/data/kitchen_dataset/26.08.04_stereo}"
 STAGES="${STAGES:-retarget,preview}"
 ALL="${ALL:-0}"
 FORCE="${FORCE:-0}"

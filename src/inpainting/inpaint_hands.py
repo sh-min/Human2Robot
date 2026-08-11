@@ -250,7 +250,7 @@ def main() -> None:
     comp = _inpaint_video(model, device, frames, masks)
 
     # If we inpainted at a reduced resolution to save GPU memory, upscale the result
-    # back to native res so downstream layers (robot render, cube mask) stay aligned.
+    # back to native res so downstream layers (robot render, object mask) stay aligned.
     # comp is a list of (h, w, 3) frames.
     if args.output_resolution and (comp[0].shape[0] != h0 or comp[0].shape[1] != w0):
         comp = [cv2.resize(f, (w0, h0), interpolation=cv2.INTER_LINEAR) for f in comp]

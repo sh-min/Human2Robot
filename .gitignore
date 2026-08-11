@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Environments
+.venv/
+env/
+venv/
+.env
+.env.*
+!.env.example
+
+# ML / data — paths or symlinks specific to this repo
+/ckpt
+/data
+/output
+/out
+/wandb
+/weights
+/08_04
+/8-5
+/Depth_Stereo
+/calibration-*
+/calibration_results
+/isaac_assets
+
+# Model / feature artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.npy
+*.npz
+
+# Raw recordings, generated videos, and dataset archives
+*.mp4
+*.mkv
+*.mov
+*.MOV
+*.avi
+*.db3
+*.bag
+*.tar
+*.tar.gz
+*.tar.xz
+*.zip
+
+# Logs
+*.log
+wget-log
+slurm-*.out
+slurm-*.err
+docs/progress_slides.pdf
+
+# Sample media (data, not code)
+examples/*.mp4
+
+# OMC operational state (never commit)
+.omc/
+**/.omc/

@@ -1,0 +1,33 @@
+[submodule "third_party/vjepa2"]
+	path = third_party/vjepa2
+	url = https://github.com/facebookresearch/vjepa2.git
+[submodule "third_party/HACO_RELEASE"]
+	path = third_party/HACO_RELEASE
+	url = https://github.com/dqj5182/HACO_RELEASE.git
+[submodule "third_party/HaWoR"]
+	path = third_party/HaWoR
+	url = https://github.com/ThunderVVV/HaWoR.git
+[submodule "third_party/dex-retargeting"]
+	path = third_party/dex-retargeting
+	url = https://github.com/dexsuite/dex-retargeting.git
+[submodule "third_party/lerobot"]
+	path = third_party/lerobot
+	url = https://github.com/huggingface/lerobot.git
+[submodule "third_party/sam2"]
+	path = third_party/sam2
+	url = https://github.com/facebookresearch/sam2.git
+[submodule "third_party/E2FGVI"]
+	path = third_party/E2FGVI
+	url = https://github.com/MCG-NKU/E2FGVI.git
+[submodule "third_party/Depth-Anything-V2"]
+	path = third_party/Depth-Anything-V2
+	url = https://github.com/DepthAnything/Depth-Anything-V2.git
+[submodule "third_party/mujoco_menagerie"]
+	path = third_party/mujoco_menagerie
+	url = https://github.com/google-deepmind/mujoco_menagerie.git
+[submodule "third_party/diffusion-vas"]
+	path = third_party/diffusion-vas
+	url = https://github.com/Kaihua-Chen/diffusion-vas.git
+[submodule "third_party/Isaac-GR00T"]
+	path = third_party/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git

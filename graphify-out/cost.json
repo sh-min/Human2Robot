@@ -1,0 +1,19 @@
+{
+  "runs": [
+    {
+      "date": "2026-05-13T03:25:19.868081+00:00",
+      "input_tokens": 39000,
+      "output_tokens": 16903,
+      "files": 56,
+      "note": "incremental: src/inpainting/ merged"
+    },
+    {
+      "date": "2026-05-20T15:57:49.349236+00:00",
+      "input_tokens": 290516,
+      "output_tokens": 124506,
+      "files": 109
+    }
+  ],
+  "total_input_tokens": 329516,
+  "total_output_tokens": 141409
+}

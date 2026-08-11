@@ -1,0 +1,30 @@
+schema_version: 1
+object_id: cup_blue
+task:
+  instruction: pick up the blue cup
+geometry:
+  mjcf: ../../src/sim/mujoco_sim/assets/cup_blue/cup_blue.xml
+  usd: ../../isaac_assets/objects/cup_blue/cup_blue.usd
+  usd_source: scanned_regularized
+physics:
+  mass_kg: 0.262423
+  friction: [1.2, 0.05, 0.001]
+spawn:
+  position: [0.65, 0.0, 1.0]
+  quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+  randomization:
+    x_range: [0.539, 0.851]
+    y_range: [-0.481, 0.481]
+    z_range: [1.0, 1.0]
+    yaw_range_deg: [-180.0, 180.0]
+success:
+  type: lift
+  height_delta_m: 0.1
+  terminate_on_success: true
+control:
+  active_hands: [left]
+dataset:
+  recordings_root: ../../data/object_datasets/cup_blue/recordings
+  episode_glob: "*"
+  lerobot_v3_root: ../../data/lerobot_cup_blue
+  groot_v21_root: ../../data/groot_cup_blue

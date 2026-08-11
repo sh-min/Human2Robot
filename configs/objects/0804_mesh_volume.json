@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "description": "Nominal MJCF geometry priors for the 2026-08-04 MH object intervals.",
+  "voxel_pitch_m": 0.001,
+  "labels": {
+    "Lock": {
+      "object_id": "lock_box_small",
+      "object_spec": "lock_box_small.yaml",
+      "screen_major_axis": "x",
+      "screen_minor_axis": "y",
+      "screen_minor_sign": 1
+    },
+    "Milk": {
+      "object_id": "milk_carton",
+      "object_spec": "milk_carton.yaml",
+      "screen_major_axis": "z",
+      "screen_minor_axis": "x",
+      "screen_minor_sign": 1
+    },
+    "Snack": {
+      "object_id": "pringles",
+      "object_spec": "pringles.yaml",
+      "screen_major_axis": "z",
+      "screen_minor_axis": "x",
+      "screen_minor_sign": 1
+    },
+    "Cup": {
+      "object_id": "cup_green",
+      "object_spec": "cup_green.yaml",
+      "screen_major_axis": "z",
+      "screen_minor_axis": "x",
+      "screen_minor_sign": -1
+    },
+    "Sweep": {
+      "object_id": "sponge",
+      "object_spec": "sponge.yaml",
+      "screen_major_axis": "x",
+      "screen_minor_axis": "y",
+      "screen_minor_sign": 1
+    }
+  },
+  "fit": {
+    "minimum_mask_pixels": 96,
+    "minimum_depth_samples": 48,
+    "minimum_segment_area_ratio": 0.35,
+    "maximum_segment_area_ratio": 2.2,
+    "maximum_depth_iqr_m": 0.35,
+    "relative_observation_blend": 0.2,
+    "minimum_pose_confidence": 0.4,
+    "good_depth_error_m": 0.04,
+    "bad_depth_error_m": 0.18,
+    "good_iou": 0.45,
+    "maximum_centroid_error_px": 120.0,
+    "minimum_front_back_order_fraction": 0.65
+  }
+}

@@ -1,0 +1,38 @@
+# 08_04 MH V-JEPA 2 + MANO skill classifier.
+# Episodes 1-20 train; 21-24 validation. The loader enforces that every bundle
+# uses the same vjepa2_4fps temporal/spatial contract.
+
+output_dir: output/skill_classifier
+
+train_data_root: data/cube_dataset/26.08.04_stereo
+train_recording_glob: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20"
+val_data_root: data/cube_dataset/26.08.04_stereo
+val_recording_glob: "21,22,23,24"
+
+model: mlp
+variant: vjepa_orig
+vjepa_diff: false
+window_size: 8       # 8 tokens at 2 Hz = 4 seconds of context
+include_trans: true
+
+epochs: 300
+batch_size: 32
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 50
+
+device: cuda
+seed: 42
+
+hidden_dims: [256, 128]
+dropout: 0.3
+pool: mean
+
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: true

@@ -1,0 +1,44 @@
+# Transformer skill classifier on per-recording bundled features.
+# Override `variant`, `train_*`, `val_*` via sbatch --set.
+
+output_dir: output/skill_classifier
+
+# Per-recording bundles live at {root}/{glob}/features.pt
+train_data_root: data/cube_dataset/0412_train
+train_recording_glob: "saved_frames_*"
+val_data_root: data/cube_dataset/0412_val
+val_recording_glob: "episode_*"
+
+# Model
+model: transformer
+variant: mano_only       # mano_only | vjepa_orig | masked_vjepa_orig
+vjepa_diff: false        # if true, use vjepa[t]-vjepa[t-1]
+window_size: 8
+include_trans: true
+
+# Training
+epochs: 1000
+batch_size: 64
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 10
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 100
+
+# System
+device: cuda
+seed: 42
+
+# Transformer-specific
+d_model: 128
+nhead: 4
+num_layers: 2
+dropout: 0.1
+
+# Logging
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: false

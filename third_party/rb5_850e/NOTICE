@@ -1,0 +1,4 @@
+RB5-850e robot model (URDF, MJCF, meshes) vendored from:
+  RainbowRobotics/rbpodo_ros2  (rbpodo_description), Apache License 2.0
+  https://github.com/RainbowRobotics/rbpodo_ros2
+URDF mesh paths rewritten package:// -> relative; MJCF meshdir set to meshes/collision.

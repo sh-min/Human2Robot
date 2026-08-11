@@ -1,0 +1,42 @@
+# MLP skill classifier on per-recording bundled features.
+# Override `variant`, `train_*`, `val_*` via sbatch --set.
+
+output_dir: output/skill_classifier
+
+train_data_root: data/cube_dataset/0412_train
+train_recording_glob: "saved_frames_*"
+val_data_root: data/cube_dataset/0412_val
+val_recording_glob: "episode_*"
+
+# Model
+model: mlp
+variant: mano_only       # mano_only | vjepa_orig | masked_vjepa_orig
+vjepa_diff: false
+window_size: 8
+include_trans: true
+
+# Training
+epochs: 1000
+batch_size: 64
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 100
+
+# System
+device: cuda
+seed: 42
+
+# MLP-specific
+hidden_dims: [256, 128]
+dropout: 0.3
+pool: mean   # mean | concat
+
+# Logging
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: false

@@ -45,6 +45,26 @@ from skill_classifier.skill_dataset import (
 )
 
 
+def resolve_action_labels(recordings, configured=None):
+    """Resolve one class-index vocabulary shared by every feature bundle."""
+
+    vocabularies = {
+        tuple(recording.get("action_labels", ACTION_LABELS))
+        for recording in recordings
+    }
+    if len(vocabularies) != 1:
+        raise ValueError(f"feature bundles use mixed action_labels: {vocabularies}")
+    bundled = next(iter(vocabularies))
+    requested = tuple(configured) if configured is not None else bundled
+    if not requested or len(set(requested)) != len(requested):
+        raise ValueError(f"invalid action_labels: {requested}")
+    if requested != bundled:
+        raise ValueError(
+            f"configured action_labels {requested} != feature bundle {bundled}"
+        )
+    return list(requested)
+
+
 def compute_f1(all_labels, all_preds, num_classes):
     """Compute macro and weighted F1 without sklearn."""
     all_labels = np.array(all_labels)
@@ -340,7 +360,16 @@ def main():
     args = types.SimpleNamespace(**cfg)
     args.exp_id = exp_id
 
+    deterministic = bool(getattr(args, "deterministic", False))
+    args.deterministic = deterministic
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
     torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
@@ -370,17 +399,31 @@ def main():
     val_recs = load_recordings(val_root, val_glob)
     print(f"Train: {len(train_recs)} recordings, Val: {len(val_recs)} recordings")
 
+    action_labels = resolve_action_labels(
+        train_recs + val_recs,
+        getattr(args, "action_labels", None),
+    )
+    args.action_labels = action_labels
+
     # Filter per-token labels for include_trans
     include_trans = getattr(args, "include_trans", True)
     if not include_trans:
-        trans_idx = ACTION_LABELS.index(TRANSITION_LABEL)
+        if TRANSITION_LABEL not in action_labels:
+            raise ValueError(
+                f"include_trans=false but {TRANSITION_LABEL!r} is not in action_labels"
+            )
+        trans_idx = action_labels.index(TRANSITION_LABEL)
+        if trans_idx != len(action_labels) - 1:
+            raise ValueError(
+                f"{TRANSITION_LABEL!r} must be last when include_trans=false"
+            )
         for rec in train_recs + val_recs:
             mask = rec["labels_per_token"] == trans_idx
             rec["labels_per_token"][mask] = -1
-        active_labels = [a for a in ACTION_LABELS if a != TRANSITION_LABEL]
+        active_labels = [a for a in action_labels if a != TRANSITION_LABEL]
         print(f"{TRANSITION_LABEL} tokens masked out from training/eval samples.")
     else:
-        active_labels = list(ACTION_LABELS)
+        active_labels = list(action_labels)
     num_classes = len(active_labels)
 
     variant = getattr(args, "variant", "mano_only")
@@ -389,34 +432,52 @@ def main():
     vjepa_diff = getattr(args, "vjepa_diff", False)
     if vjepa_diff:
         print("V-JEPA diff mode: using vjepa[t]-vjepa[t-1]")
+    hand_representation = getattr(args, "hand_representation", "axis_angle")
+    args.hand_representation = hand_representation
 
     train_ds = SkillWindowDataset(train_recs, window_size=args.window_size,
-                                  variant=variant, vjepa_diff=vjepa_diff)
+                                  variant=variant, vjepa_diff=vjepa_diff,
+                                  hand_representation=hand_representation)
     val_ds = SkillWindowDataset(val_recs, window_size=args.window_size,
-                                variant=variant, vjepa_diff=vjepa_diff)
+                                variant=variant, vjepa_diff=vjepa_diff,
+                                hand_representation=hand_representation)
+    if train_ds.sampling_signature != val_ds.sampling_signature:
+        raise ValueError(
+            "train/validation sampling contracts differ: "
+            f"{train_ds.sampling_signature} != {val_ds.sampling_signature}"
+        )
+    args.sampling_signature = list(train_ds.sampling_signature)
     print(f"Train: {len(train_ds)} samples, Val: {len(val_ds)} samples")
+    print(f"Sampling contract: {train_ds.sampling_signature}")
 
     hand_dim = train_ds.hand_dim
     vjepa_dim_inferred = train_ds.vjepa_dim
 
     # Balanced sampling: cap over-represented classes per epoch
     balance_cfg = getattr(args, "balance_sampling", "none")
+    num_workers = int(getattr(args, "num_workers", 4))
+    if num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
     if balance_cfg and balance_cfg != "none":
         print(f"Balanced sampling ({balance_cfg}):")
         sampler = BalancedClassSampler(train_ds, max_samples=balance_cfg)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, sampler=sampler,
-                                  num_workers=4, pin_memory=True, drop_last=True)
+                                  num_workers=num_workers, pin_memory=True, drop_last=True)
     else:
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=4, pin_memory=True, drop_last=True)
+                                  num_workers=num_workers, pin_memory=True, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=4, pin_memory=True)
+                            num_workers=num_workers, pin_memory=True)
 
     # Save dims/labels/variant into args so they're stored in checkpoints
     args.hand_dim = hand_dim
     args.vjepa_dim = vjepa_dim_inferred
+    args.vjepa_spatial_tokens = train_ds.vjepa_spatial_tokens
     args.active_labels = active_labels
-    print(f"variant: {variant}  vjepa_dim: {vjepa_dim_inferred}  hand_dim: {hand_dim}")
+    print(
+        f"variant: {variant}  hand_representation: {hand_representation}  "
+        f"vjepa_dim: {vjepa_dim_inferred}  hand_dim: {hand_dim}"
+    )
     print(f"Active labels ({num_classes}): {active_labels}")
 
     # Build model
@@ -431,6 +492,15 @@ def main():
             hidden_dims=tuple(args.hidden_dims),
             dropout=args.dropout,
             pool=args.pool,
+        )
+    elif args.model == "spatial_attention_mlp":
+        if train_ds.vjepa_spatial_tokens <= 1:
+            raise ValueError(
+                "spatial_attention_mlp requires vjepa_orig_dense features"
+            )
+        model_kwargs.update(
+            hidden_dims=tuple(args.hidden_dims),
+            dropout=args.dropout,
         )
     elif args.model == "transformer":
         model_kwargs.update(
@@ -471,7 +541,9 @@ def main():
     criterion = nn.CrossEntropyLoss(weight=class_wts, label_smoothing=args.label_smoothing)
 
     # Train
-    best_val_acc = 0.0
+    # A tiny exploratory split can score exactly zero on its first epoch; it
+    # must still produce a valid best checkpoint for the final report.
+    best_val_acc = float("-inf")
     history = []
 
     for epoch in range(1, args.epochs + 1):
@@ -586,7 +658,11 @@ def main():
         }
     summary = {
         "experiment": exp_id,
+        "model": args.model,
         "variant": variant,
+        "hand_representation": hand_representation,
+        "seed": int(args.seed),
+        "deterministic": deterministic,
         "train_recordings": len(train_recs),
         "validation_recordings": len(val_recs),
         "train_samples": len(train_ds),

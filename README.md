@@ -1,5 +1,11 @@
 # skill2policy
 
+## V-JEPA skill training
+
+The V-JEPA 2/2.1 feature extraction, spatial-attention classifier, Color
+Jitter training, evaluation, and presentation workflow is documented in
+[`docs/vjepa_train.md`](docs/vjepa_train.md).
+
 ## LLM pair-coding tools
 
 This repo is built assuming you'll be pair-coding with an LLM (Claude Code or

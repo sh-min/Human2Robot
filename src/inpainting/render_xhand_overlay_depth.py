@@ -228,6 +228,8 @@ def main() -> None:
     ap.add_argument("--right_pkl", type=Path, required=True)
     ap.add_argument("--left_pkl",  type=Path, required=True)
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--output_subdir", default="overlay_processor",
+                    help="Output directory under --processed_demo.")
     ap.add_argument("--right_embodiment", choices=EMBODIMENT_NAMES, default=None,
                     help="Override the robot hand model for the right hand. "
                          "Default: read from the pkl, which retargeting stamps.")
@@ -370,7 +372,7 @@ def main() -> None:
 
     renderer.delete()
 
-    out_dir = args.processed_demo / "overlay_processor"
+    out_dir = args.processed_demo / args.output_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     np.save(out_dir / "robot_rgb.npy",   rgb_buf)
     np.save(out_dir / "robot_depth.npy", depth_buf.astype(np.float16))

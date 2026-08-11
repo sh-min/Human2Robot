@@ -128,6 +128,57 @@ python run_layered.py \
 
 각 stage는 출력이 존재하면 `[skip]` — 부분 재실행하려면 해당 파일/폴더만 지우면 됨.
 
+## 한 영상에서 조작 물체가 바뀌는 경우
+
+`segment_cube.py`는 하나의 물체가 전체 클립에 계속 등장하는 장면을 위한
+경로다. 머그 → 컵 → 우유팩처럼 조작 대상이 바뀌는 영상에서는 각 구간과
+SAM2 seed prompt를 JSON으로 기술하고 modal object mask를 합친다.
+
+```bash
+python segment_interaction_objects.py \
+  --processed_demo <pd> \
+  --segments_json ../../configs/inpainting/v0729_01_objects.json
+
+python composite_interaction_objects.py \
+  --processed_demo <pd> \
+  --hawor_npz <pd>/rgb_hawor/retarget_input.npz
+```
+
+합성 순서는 `inpainted bg → behind-MCP robot → source-RGB object →
+front-MCP robot`이다. 물체 레이어에는 인페인팅 결과가 아니라 원본 RGB를
+사용하므로 손-물체 접촉부의 인페인팅 손상을 최종 영상에 다시 복사하지 않는다.
+
+주요 출력:
+
+```
+interaction_objects/object_mask.npy
+interaction_objects/object_mask_preview.mp4
+interaction_objects/video_overlay_object_occlusion.mp4
+```
+
+로봇 렌더의 RGB는 `robot_mask` 안에서만 유효하므로, 로봇 마스크를 그대로
+바깥쪽 Gaussian blur 하면 마스크 밖의 검정 RGB가 섞여 움직이는 어두운 halo가
+생긴다. `composite_interaction_objects.py`의 기본 `--robot_edge_mode clamped`는
+Gaussian 경계를 로봇 raster 내부로 제한한다. 이전 동작 재현이 필요할 때만
+`--robot_edge_mode gaussian`을 사용한다.
+
+최종 합성 뒤에는 원본 손/인페인팅 support 안에서만 안전한 원본 픽셀을 다시
+복원할 수 있다. 같은 프레임 원본을 손 마스크 전체에 복사하면 사람 손이
+재등장하므로, 아래 후처리는 로봇손을 보호하고 보이는 물체 및 clean background와
+일치하는 비피부 픽셀만 선택한다.
+
+```bash
+python recover_source_after_composite.py \
+  --original_video <pd>/video_L.mp4 \
+  --composite_video <pd>/interaction_objects/video_overlay_object_occlusion.mp4 \
+  --background_video <pd>/inpaint_processor/video_human_inpaint.mkv \
+  --human_mask <pd>/segmentation_processor/masks_arm.npy \
+  --inpaint_mask <pd>/segmentation_processor/masks_arm_robot_residual.npy \
+  --robot_mask <pd>/overlay_processor/robot_mask.npy \
+  --visible_object_mask <pd>/interaction_objects/object_mask.npy \
+  --output <pd>/interaction_objects/video_overlay_source_recovered.mkv
+```
+
 결과 디렉터리 (`/result/skill2policy/processed/cam0/0/`):
 
 ```

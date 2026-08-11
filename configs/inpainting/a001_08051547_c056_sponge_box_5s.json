@@ -1,0 +1,15 @@
+{
+  "video": "A001_08051547_C056.mov",
+  "notes": "Track the sponge from the fully visible rectangular ROI at exactly 5 seconds (frame 120 at 24 fps).",
+  "segments": [
+    {
+      "name": "sponge",
+      "start_frame": 0,
+      "end_frame": 552,
+      "seed_frame": 120,
+      "box": [88, 168, 278, 352],
+      "positive_points": [[145, 220], [205, 260], [230, 315]],
+      "negative_points": [[75, 250], [290, 250], [185, 155], [185, 365]]
+    }
+  ]
+}

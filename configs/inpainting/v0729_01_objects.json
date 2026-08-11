@@ -1,0 +1,51 @@
+{
+  "video": "07_29-01",
+  "notes": "Inclusive frame ranges and prompts for the five manipulated objects.",
+  "segments": [
+    {
+      "name": "mint_mug",
+      "start_frame": 0,
+      "end_frame": 67,
+      "seed_frame": 40,
+      "box": [590, 110, 725, 275],
+      "positive_points": [[665, 218], [701, 178]],
+      "negative_points": [[608, 159], [628, 188], [603, 210]]
+    },
+    {
+      "name": "yellow_cup",
+      "start_frame": 68,
+      "end_frame": 116,
+      "seed_frame": 90,
+      "box": [325, 65, 505, 245],
+      "positive_points": [[439, 177], [413, 137]],
+      "negative_points": [[357, 120], [390, 166], [326, 193]]
+    },
+    {
+      "name": "milk_carton",
+      "start_frame": 117,
+      "end_frame": 169,
+      "seed_frame": 140,
+      "box": [520, 185, 665, 350],
+      "positive_points": [[603, 278], [625, 315]],
+      "negative_points": [[557, 241], [575, 264], [537, 290]]
+    },
+    {
+      "name": "blue_container",
+      "start_frame": 170,
+      "end_frame": 237,
+      "seed_frame": 190,
+      "box": [370, 250, 535, 390],
+      "positive_points": [[470, 326], [500, 345]],
+      "negative_points": [[423, 282], [445, 303], [400, 325]]
+    },
+    {
+      "name": "sponge",
+      "start_frame": 238,
+      "end_frame": 375,
+      "seed_frame": 300,
+      "box": [365, 330, 565, 510],
+      "positive_points": [[493, 430], [527, 447]],
+      "negative_points": [[430, 390], [458, 410], [407, 430]]
+    }
+  ]
+}

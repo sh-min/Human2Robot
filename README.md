@@ -203,6 +203,7 @@ bash -n run_pipeline.sh scripts/*.sh
 - [`src/contact_estimation/README.md`](src/contact_estimation/README.md)
 - [`src/retargeting/README.md`](src/retargeting/README.md)
 - [`src/inpainting/README.md`](src/inpainting/README.md)
+- [`docs/trex_haco_visibility.md`](docs/trex_haco_visibility.md) — T-Rex-style HaCo 차폐 실험
 - [`src/data_preprocess/README.md`](src/data_preprocess/README.md)
 - [`src/skill_classifier/README.md`](src/skill_classifier/README.md)
 - [`src/pkl_to_lerobot/README.md`](src/pkl_to_lerobot/README.md)

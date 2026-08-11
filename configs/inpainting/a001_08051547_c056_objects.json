@@ -1,0 +1,51 @@
+{
+  "video": "A001_08051547_C056.mov",
+  "notes": "Inclusive interaction intervals for mug, red snack box, green snack box, mint container, and sponge.",
+  "segments": [
+    {
+      "name": "navy_mug",
+      "start_frame": 0,
+      "end_frame": 105,
+      "seed_frame": 15,
+      "box": [195, 185, 375, 345],
+      "positive_points": [[255, 250], [325, 280]],
+      "negative_points": [[180, 270], [390, 260]]
+    },
+    {
+      "name": "red_snack_box",
+      "start_frame": 96,
+      "end_frame": 190,
+      "seed_frame": 100,
+      "box": [215, 325, 485, 490],
+      "positive_points": [[335, 390], [420, 440]],
+      "negative_points": [[180, 360], [500, 360]]
+    },
+    {
+      "name": "green_snack_box",
+      "start_frame": 175,
+      "end_frame": 260,
+      "seed_frame": 185,
+      "box": [545, 310, 710, 555],
+      "positive_points": [[625, 355], [650, 470]],
+      "negative_points": [[535, 430], [725, 430]]
+    },
+    {
+      "name": "mint_container",
+      "start_frame": 250,
+      "end_frame": 325,
+      "seed_frame": 260,
+      "box": [355, 215, 560, 355],
+      "positive_points": [[455, 265], [505, 315]],
+      "negative_points": [[390, 205], [445, 205], [565, 265]]
+    },
+    {
+      "name": "sponge",
+      "start_frame": 300,
+      "end_frame": 520,
+      "seed_frame": 300,
+      "box": [90, 170, 270, 325],
+      "positive_points": [[170, 215], [210, 280]],
+      "negative_points": [[75, 235], [285, 235]]
+    }
+  ]
+}

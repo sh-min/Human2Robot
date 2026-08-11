@@ -118,6 +118,49 @@ For the default `demo_name=cam0`, `demo_num=0`:
 Stages reuse existing outputs. Remove only the output of the stage you intend to
 recompute.
 
+## Multiple interaction objects in one video
+
+For clips where the manipulated object changes over time, describe each temporal
+segment and its SAM2 seed prompts in JSON, then build a unified modal object mask:
+
+```bash
+python segment_interaction_objects.py \
+  --processed_demo <processed_demo> \
+  --segments_json ../../configs/inpainting/v0729_01_objects.json
+
+python composite_interaction_objects.py \
+  --processed_demo <processed_demo> \
+  --hawor_npz <processed_demo>/rgb_hawor/retarget_input.npz
+```
+
+The composite order is `inpainted background -> robot behind MCP -> source-RGB
+object -> robot in front of MCP`. The source object pixels are restored after
+inpainting, while the robot edge blur is clamped to the robot raster by default
+to avoid a moving dark halo. Use `--robot_edge_mode gaussian` only to reproduce
+the legacy behavior.
+
+Main outputs:
+
+```text
+interaction_objects/object_mask.npy
+interaction_objects/object_mask_preview.mp4
+interaction_objects/video_overlay_object_occlusion.mp4
+```
+
+For conservative source-pixel recovery after compositing:
+
+```bash
+python recover_source_after_composite.py \
+  --original_video <processed_demo>/video_L.mp4 \
+  --composite_video <processed_demo>/interaction_objects/video_overlay_object_occlusion.mp4 \
+  --background_video <processed_demo>/inpaint_processor/video_human_inpaint.mkv \
+  --human_mask <processed_demo>/segmentation_processor/masks_arm.npy \
+  --inpaint_mask <processed_demo>/segmentation_processor/masks_arm_robot_residual.npy \
+  --robot_mask <processed_demo>/overlay_processor/robot_mask.npy \
+  --visible_object_mask <processed_demo>/interaction_objects/object_mask.npy \
+  --output <processed_demo>/interaction_objects/video_overlay_source_recovered.mkv
+```
+
 ## Main options
 
 | Option | Meaning |

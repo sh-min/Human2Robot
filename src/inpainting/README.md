@@ -251,6 +251,40 @@ python composite_layered.py       --processed_demo <pd> --hawor_npz <...> \
                                   --threshold_joint 5
 ```
 
+## 로봇 팔 base 위치 기준 (published overlay)
+
+Stage 5의 팔 base는 렌더 백엔드에 따라 완전히 달라진다.
+
+- `pyrender` (`render_xhand_overlay_depth.py`, **기본값**): RBY1 하박(arm3–arm6)을
+  HaWoR 손목에서 기하학적으로 붙인다. base가 따로 없고 `EE_OFFSET_Z=0.1261`,
+  `_ARM3_OFFSET=[0.031, 0, 0.256]`으로 손목을 따라간다.
+- `isaac` (`isaac_stage5.sh` → `render_rb5_isaac_overlay.py`): RB5-850 팔이며
+  base를 `rb5_arm_ik.auto_fit_base()`가 데모마다 탐색해서 잡으므로 위치가 다르다.
+
+공개된 오버레이 결과물은 모두 `pyrender` 경로로 만들었으므로 `run_layered.py`의
+기본값도 `pyrender`다. RB5 배치가 필요할 때만 `--render_backend isaac`을 준다.
+
+배치에 영향을 주는 나머지 인자는 전부 스크립트 기본값을 그대로 쓴다:
+`--hand both`, `--smooth`(on), `--smooth_win 15`, `--smooth_wrist_win 21`,
+`--relight auto`, embodiment는 pkl에 찍힌 값. 입력 경로만 데모마다 지정한다.
+retargeting이 만드는 두 pkl 중 **`qpos_xhand_*_smooth.pkl`** 을 넘긴다.
+
+`results/17_2026-08-11_엄지_전경고정_레이어분리` 기준 재현 명령:
+
+```bash
+D=<processed_demo>
+PYOPENGL_PLATFORM=egl python -u render_xhand_overlay_depth.py \
+  --processed_demo $D \
+  --hawor_npz  $D/rgb_hawor_full/retarget_input.npz \
+  --right_pkl  $D/rgb_hawor/qpos_xhand_right.pkl \
+  --left_pkl   $D/rgb_hawor_full/qpos_xhand_left_smooth.pkl \
+  --hand both \
+  --output_subdir overlay_processor_hawor_reference
+```
+
+이 명령으로 다시 렌더한 프레임은 기존 `overlay_processor_hawor_reference`와
+mask IoU 1.000000, RGB 최대 차이 0으로 일치한다.
+
 ## SAM2 smoothing A/B 재생성
 
 `segment_arms.py`의 기본 스무딩(작은 컴포넌트 제거, close, 5-frame

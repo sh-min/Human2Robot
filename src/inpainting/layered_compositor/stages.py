@@ -112,13 +112,26 @@ def build_layer_masks(inputs: FrameInputs, config: StageConfig) -> LayerMasks:
     behind = visible & (depth >= inputs.split_depth) & ~forced_robot
     front = visible & (depth < inputs.split_depth) & ~forced_robot
 
+    # A static scene object is only an interaction object while it is grasped.
+    # Before that it rests on the table behind the hand, so no object layer may
+    # draw it over the robot; the single depth split cannot express that,
+    # because it is calibrated for the grasped object instead.
+    if inputs.behind_robot_object_mask is None:
+        behind_robot_object = np.zeros_like(visible)
+    else:
+        behind_robot_object = (
+            np.asarray(inputs.behind_robot_object_mask, dtype=bool) & visible
+        )
+
     # The stage-6 semantic part has final authority.  Carving it out here also
     # prevents a feathered stage-5 object edge from tinting the thumb.
-    forced_object = np.asarray(inputs.forced_object_mask, dtype=bool) & ~forced_robot
+    forced_object = (np.asarray(inputs.forced_object_mask, dtype=bool)
+                     & ~forced_robot & ~behind_robot_object)
     return LayerMasks(
         robot_visible=visible,
         robot_behind=behind,
-        object_visible=np.asarray(inputs.object_mask, dtype=bool),
+        object_visible=(np.asarray(inputs.object_mask, dtype=bool)
+                        & ~behind_robot_object),
         robot_front=front,
         object_forced_front=forced_object,
         robot_forced_front=forced_robot,

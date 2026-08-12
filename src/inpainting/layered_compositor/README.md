@@ -10,7 +10,7 @@
 |---|---|---|---|---|---|
 | 1. Background | `stage_1_background` | 사람 손·팔을 지운 장면 바탕이다. 이후 레이어가 모두 이 영상 위에 쌓인다. | inpainted background | 손가락/피부 잔존, 팔 모양의 흐림, 테이블 선 왜곡 | 사람 마스크 확장, 접촉부 마스크 보강, ProPainter/E2FGVI 교체, temporal consistency 개선 |
 | 2. Robot behind | `stage_2_robot_behind` | 기준 깊이보다 뒤에 있는 로봇 픽셀이다. 물체가 다음 단계에서 이 레이어를 덮는다. | robot RGB/depth/mask, split depth | 손가락 조각이 잘못 앞/뒤로 이동, 프레임별 깜빡임 | depth 정합, `depth_bias`, `threshold_joint`, `depth_sigma` 조정 또는 손가락별 분류기 적용 |
-| 3. Object | `stage_3_object` | 사람 손에 가렸던 부분까지 복원한 조작 물체를 원본 RGB 계열에서 다시 올린다. | completed object RGB, refined object mask | 손 피부 혼입, 물체 구멍, 움직임 잔상, 경계 손실 | modal/amodal mask 개선, 물체별 texture completion, `object_edge_sigma` 조정 |
+| 3. Object | `stage_3_object` | 사람 손에 가렸던 부분까지 복원한 조작 물체를 원본 RGB 계열에서 다시 올린다. | completed object RGB, refined object mask, behind-robot object mask | 손 피부 혼입, 물체 구멍, 움직임 잔상, 경계 손실, 손이 지나가기만 하는 정적 물체가 로봇을 관통 | modal/amodal mask 개선, 물체별 texture completion, `object_edge_sigma` 조정, `behind_robot_object_mask`로 비조작 정적 물체 제외 |
 | 4. Robot front | `stage_4_robot_front` | 일반 깊이 판정상 물체 앞에 오는 로봇 픽셀이다. 강제 엄지는 여기서 제외된다. | robot RGB, ordinary-front mask | 검은 halo, 손가락 관통, 경계 떨림 | `robot_edge_mode`, `robot_edge_sigma`, 렌더 품질과 per-finger depth 개선 |
 | 5. Object forced front | `stage_5_forced_object` | 컵·상자 같은 단단한 물체가 네 개의 말린 손가락을 반드시 덮어야 하는 영역이다. | grasp-specific force-front mask | 로봇 손가락이 물체 내부를 관통하거나, 반대로 물체가 엄지를 덮음 | 물체/파지별 force mask를 보수적으로 조정, `forced_object_edge_sigma` 조정 |
 | 6. Robot forced front | `stage_6_forced_robot_front` | 의미론적으로 지정한 로봇 부품을 마지막에 올린다. 현재는 XHand 엄지이며 최종 결과다. | rendered semantic thumb mask | 엄지가 상자 뒤로 넘어감, 엄지 가장자리 틈 | thumb-link 렌더·depth agreement 개선, `forced_robot_front_dilate` 1–2 px 조정 |
@@ -20,6 +20,9 @@
 - 6단계 강제 로봇 마스크는 2단계와 4단계 로봇 마스크에서 제외한다.
 - 6단계 강제 로봇 마스크는 5단계 강제 물체 마스크에서도 제외한다.
 - 따라서 네 손가락은 물체 뒤에 둘 수 있지만 엄지는 항상 마지막에 그릴 수 있다.
+- `behind_robot_object_mask`로 표시한 물체 픽셀은 3단계와 5단계 물체 마스크에서
+  모두 제외한다. 프레임당 하나뿐인 깊이 분할면은 파지 중인 물체를 기준으로
+  잡히므로, 손이 위를 지나가기만 하는 정적 물체는 그 분할면으로 표현할 수 없다.
 - 로봇 경계 alpha는 유효한 robot raster 밖으로 나가지 않아 검은 halo를 만들지 않는다.
 - 각 스테이지는 누적 영상을 반환하므로 어느 단계에서 결함이 들어왔는지 바로 비교할 수 있다.
 
@@ -50,6 +53,7 @@ python src/inpainting/composite_interaction_objects.py \
   --force_front_mask <object-force-front.npy> \
   --force_robot_front_mask <robot-thumb-mask.npy> \
   --force_robot_front_dilate 2 \
+  --behind_robot_object_mask <static-object-behind-robot.npy> \
   --layer_output_dir <isolated-layers> \
   --layer_context_videos \
   --progressive_output_dir <cumulative-stages> \

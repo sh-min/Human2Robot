@@ -36,6 +36,7 @@ def frame_inputs(shape: tuple[int, int] = (3, 3)) -> FrameInputs:
         forced_object_mask=np.zeros(shape, dtype=bool),
         forced_robot_front_mask=np.zeros(shape, dtype=bool),
         split_depth=1.0,
+        behind_robot_object_mask=np.zeros(shape, dtype=bool),
     )
 
 
@@ -93,6 +94,32 @@ class LayeredCompositorTest(unittest.TestCase):
         self.assertFalse(
             np.any(masks.robot_forced_front & masks.object_forced_front)
         )
+
+    def test_behind_robot_object_never_covers_the_robot(self) -> None:
+        inputs = frame_inputs((5, 5))
+        inputs.robot_mask[1:4, 1:4] = True
+        inputs.robot_depth[:] = 2.0  # every robot pixel is classified rear
+        inputs.object_mask[:] = True
+        inputs.forced_object_mask[:] = True
+        inputs.behind_robot_object_mask[:] = True
+
+        masks = build_layer_masks(inputs, StageConfig())
+        self.assertFalse(np.any(masks.object_visible & inputs.robot_mask))
+        self.assertFalse(np.any(masks.object_forced_front & inputs.robot_mask))
+        # Outside the robot the static object is still restored, so background
+        # inpainting damage stays covered.
+        self.assertTrue(np.all(masks.object_visible[0]))
+
+        result = compose_frame(
+            inputs,
+            StageConfig(
+                robot_edge_sigma=0,
+                object_edge_sigma=0,
+                forced_object_edge_sigma=0,
+            ),
+        )
+        self.assertTrue(np.all(result.final[2, 2] == 100))
+        self.assertTrue(np.all(result.final[0, 0] == 200))
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                          "ffmpeg tools are required")

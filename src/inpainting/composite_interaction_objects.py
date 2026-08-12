@@ -96,6 +96,13 @@ def main() -> None:
              "forced object layer cannot cover it.",
     )
     parser.add_argument(
+        "--behind_robot_object_mask", default=None,
+        help="Optional mask of object pixels that lie behind the robot, such as "
+             "a static table object the hand only passes over. It is carved out "
+             "of both object layers so the robot cannot be penetrated by an "
+             "object the frame's single depth split does not describe.",
+    )
+    parser.add_argument(
         "--force_robot_front_dilate", type=int, default=0,
         help="Dilate the forced-front robot mask by this many pixels, then "
              "clip it to the rendered robot support. A small value closes "
@@ -163,6 +170,10 @@ def main() -> None:
         np.load(processed / args.force_robot_front_mask, mmap_mode="r")
         if args.force_robot_front_mask is not None else None
     )
+    behind_robot_object = (
+        np.load(processed / args.behind_robot_object_mask, mmap_mode="r")
+        if args.behind_robot_object_mask is not None else None
+    )
     pose = np.load(args.hawor_npz)
     frame_count = min(
         len(robot_rgb), len(robot_depth), len(robot_mask), len(object_mask),
@@ -174,6 +185,8 @@ def main() -> None:
         frame_count = min(frame_count, len(force_front))
     if force_robot_front is not None:
         frame_count = min(frame_count, len(force_robot_front))
+    if behind_robot_object is not None:
+        frame_count = min(frame_count, len(behind_robot_object))
     if object_source_cap is not None:
         frame_count = min(
             frame_count,
@@ -312,6 +325,10 @@ def main() -> None:
                 if force_robot_front is not None else np.zeros_like(visible_robot)
             ),
             split_depth=float(z_split[idx]),
+            behind_robot_object_mask=(
+                np.asarray(behind_robot_object[idx], dtype=bool)
+                if behind_robot_object is not None else None
+            ),
         )
         composite = compose_frame(frame_inputs, stage_config)
         progressive_stages = [

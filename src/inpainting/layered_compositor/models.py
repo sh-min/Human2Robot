@@ -35,6 +35,7 @@ class FrameInputs:
     forced_object_mask: np.ndarray
     forced_robot_front_mask: np.ndarray
     split_depth: float
+    behind_robot_object_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

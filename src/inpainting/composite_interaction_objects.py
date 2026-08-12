@@ -97,10 +97,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--behind_robot_object_mask", default=None,
-        help="Optional mask of object pixels that lie behind the robot, such as "
-             "a static table object the hand only passes over. It is carved out "
-             "of both object layers so the robot cannot be penetrated by an "
-             "object the frame's single depth split does not describe.",
+        help="Optional mask of object pixels that lie behind the robot: amodal "
+             "completions of whatever the human hand was covering, and static "
+             "objects nobody is holding. It is carved out of both object layers "
+             "so the robot cannot be penetrated by pixels the frame's single "
+             "depth split does not describe. See "
+             "export_behind_robot_object_mask.py.",
     )
     parser.add_argument(
         "--force_robot_front_dilate", type=int, default=0,

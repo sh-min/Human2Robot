@@ -1,14 +1,21 @@
-"""Export the frames in which a static scene object stays behind the robot.
+"""Export the object pixels that must stay behind the robot on each frame.
 
-`refine_interaction_object_masks.py` restores a static table object such as the
-sponge on *every* frame, because the human inpainting mask erases it whenever an
-arm sweeps over it.  The compositor then draws those pixels in its object layers,
-which sit in front of the rear robot, so the hand appears to be cut by an object
-it is only passing above.
+The compositor splits robot pixels against a single depth plane per frame, and
+that plane comes from the grasping hand, so it describes the object being
+manipulated and nothing else.  Every pixel of the object layer inherits that
+ordering, which puts two kinds of pixel in front of the robot where they do not
+belong:
 
-An object is a real interaction object only inside its annotated segment.  Every
-other frame of its restored mask belongs behind the robot, and this script writes
-exactly that mask for ``--behind_robot_object_mask``.
+1. *Amodal completions.*  `complete_occluded_objects.py` rebuilds the part of an
+   object the human hand was covering.  That is exactly the region the robot
+   hand now occupies, so a fabricated completion must never be drawn over it —
+   it reads as the robot being sliced by the object it is holding.
+2. *Static objects nobody is holding.*  A sponge lying on the table is restored
+   on every frame, because the human inpainting mask erases it whenever an arm
+   sweeps above.  It still has to be restored, just underneath the robot.
+
+Both are unions of masks the earlier stages already produce, and the result is
+written for the compositor's ``--behind_robot_object_mask``.
 """
 from __future__ import annotations
 
@@ -22,37 +29,67 @@ import numpy as np
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--object_mask", type=Path, required=True,
-                        help="Per-frame mask of the restored static object.")
-    parser.add_argument("--segments_json", type=Path, required=True)
-    parser.add_argument("--object_name", required=True,
-                        help="Segment name whose interaction interval is kept "
-                             "out of the behind-robot mask.")
+                        help="Refined object mask the compositor draws.")
+    parser.add_argument("--modal_mask", type=Path, required=True,
+                        help="Object mask before amodal completion; whatever is "
+                             "in the refined mask but not here was hidden by "
+                             "the human hand and is a completion.")
+    parser.add_argument("--static_mask", type=Path, default=None,
+                        help="Optional mask of a static object that is only an "
+                             "interaction object inside its own segment.")
+    parser.add_argument("--segments_json", type=Path, default=None)
+    parser.add_argument("--static_object_name", default=None,
+                        help="Segment whose interaction interval keeps "
+                             "--static_mask in front of the robot.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    segments = {item["name"]: item for item in
-                json.loads(args.segments_json.read_text(encoding="utf-8"))["segments"]}
-    if args.object_name not in segments:
-        raise SystemExit(f"unknown segment: {args.object_name}")
-    segment = segments[args.object_name]
-    start, end = int(segment["start_frame"]), int(segment["end_frame"])
+    if args.static_mask is not None and (args.segments_json is None
+                                         or args.static_object_name is None):
+        raise SystemExit("--static_mask needs --segments_json and "
+                         "--static_object_name")
 
-    source = np.load(args.object_mask, mmap_mode="r")
+    refined = np.load(args.object_mask, mmap_mode="r")
+    modal = np.load(args.modal_mask, mmap_mode="r")
+    frame_count = min(len(refined), len(modal))
+
+    static = None
+    hold_start = hold_end = -1
+    if args.static_mask is not None:
+        static = np.load(args.static_mask, mmap_mode="r")
+        frame_count = min(frame_count, len(static))
+        segments = {item["name"]: item for item in json.loads(
+            args.segments_json.read_text(encoding="utf-8"))["segments"]}
+        if args.static_object_name not in segments:
+            raise SystemExit(f"unknown segment: {args.static_object_name}")
+        segment = segments[args.static_object_name]
+        hold_start = int(segment["start_frame"])
+        hold_end = int(segment["end_frame"])
+        print(f"[info] {args.static_object_name} held over frames "
+              f"{hold_start}-{hold_end}; behind the robot elsewhere")
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     result = np.lib.format.open_memmap(
-        args.output, mode="w+", dtype=bool, shape=source.shape
+        args.output, mode="w+", dtype=bool, shape=(frame_count,) + refined.shape[1:]
     )
-    kept = 0
-    for frame_idx in range(len(source)):
-        if start <= frame_idx <= end:
-            result[frame_idx] = False
-            continue
-        frame = np.asarray(source[frame_idx], dtype=bool)
-        result[frame_idx] = frame
-        kept += int(frame.sum())
+    completion_px = static_px = 0
+    for frame_idx in range(frame_count):
+        frame = np.asarray(refined[frame_idx], dtype=bool)
+        visible = np.asarray(modal[frame_idx], dtype=bool)
+        held = None
+        if static is not None:
+            held = np.asarray(static[frame_idx], dtype=bool)
+            visible = visible | held
+        behind = frame & ~visible
+        completion_px += int(behind.sum())
+        if held is not None and not (hold_start <= frame_idx <= hold_end):
+            loose = frame & held
+            static_px += int((loose & ~behind).sum())
+            behind = behind | loose
+        result[frame_idx] = behind
     result.flush()
-    print(f"[info] {args.object_name} interaction interval {start}-{end} excluded")
-    print(f"[info] behind-robot px={kept}, frames={len(source)}")
+    print(f"[info] amodal-completion px={completion_px}, "
+          f"unheld-static px={static_px}, frames={frame_count}")
     print(f"[ok] wrote {args.output}")
 
 

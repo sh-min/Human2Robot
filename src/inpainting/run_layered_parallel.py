@@ -5,13 +5,13 @@ three independent branches that join only at the final composite:
 
     1 prepare → 2 inject ─┬─ PIPE1 bg:    3 SAM2-hand → 4 E2FGVI
                           ├─ PIPE2 robot:  5 pyrender xhand RGBD
-                          └─ PIPE3 cube:   6 DA2 depth → 7 align
-                                             → 8a SAM2-cube → 8b Diffusion-VAS amodal
+                          └─ PIPE3 object:   6 DA2 depth → 7 align
+                                             → 8a SAM2-object → 8b Diffusion-VAS amodal
                                                   ▲ needs masks_arm.npy from PIPE1.3
                           (join) → 10 composite_layered
 
 Two cross-edges constrain it:
-  * PIPE3.8a (segment_cube) reads masks_arm.npy → waits on PIPE1.3.
+  * PIPE3.8a (segment_object) reads masks_arm.npy → waits on PIPE1.3.
   * composite needs all three pipe outputs.
 
 So this runs stages 1-2 first, then PIPE1/2/3 concurrently (threads, GPU-pinned),
@@ -44,7 +44,7 @@ HERE = Path(__file__).parent
 # Stage scripts that belong to this pipeline (for GPU-memory attribution).
 _OUR_SCRIPTS = ("segment_arms.py", "inpaint_hands.py",
                 "render_xhand_overlay_depth.py", "estimate_depth.py",
-                "align_depth.py", "segment_cube.py", "amodal_cube.py",
+                "align_depth.py", "segment_object.py", "amodal_object.py",
                 "composite_layered.py")
 
 _timing = {}            # stage name -> elapsed seconds
@@ -168,7 +168,7 @@ def pipe_robot(pd, py, gpu, hawor_npz, right_pkl, left_pkl, hand):
          gpu=gpu, extra_env={"PYOPENGL_PLATFORM": "egl"})
 
 
-def pipe_cube(pd, py, gpus, dvas_env, hand_ready, args):
+def pipe_object(pd, py, gpus, dvas_env, hand_ready, args):
     serial_gpu = gpus[-1]      # distinct from bg(gpus[0]) / robot(gpus[1])
     # 6 depth + 7 align — independent, start immediately
     if (pd / "depth_processor" / "depth_raw.npy").exists():
@@ -183,16 +183,16 @@ def pipe_cube(pd, py, gpus, dvas_env, hand_ready, args):
         _run("7_align_depth", [py, str(HERE / "align_depth.py"),
                                "--processed_demo", str(pd)], gpu=serial_gpu)
 
-    # 8a SAM2 cube modal — needs masks_arm (PIPE1.3)
-    if (pd / "cube_layer" / "cube_mask_amodal.npy").exists():
-        print("[skip] PIPE3.8 cube_mask_amodal.npy exists", flush=True)
+    # 8a SAM2 object modal — needs masks_arm (PIPE1.3)
+    if (pd / "object_layer" / "object_mask_amodal.npy").exists():
+        print("[skip] PIPE3.8 object_mask_amodal.npy exists", flush=True)
         return
-    if not (pd / "cube_layer" / "cube_mask_raw.npy").exists():
+    if not (pd / "object_layer" / "object_mask_raw.npy").exists():
         print("[wait] PIPE3.8a waiting on hand mask (PIPE1.3)...", flush=True)
         hand_ready.wait()
-        _run("8a_segment_cube", [py, str(HERE / "segment_cube.py"),
+        _run("8a_segment_object", [py, str(HERE / "segment_object.py"),
                                  "--processed_demo", str(pd),
-                                 "--quantile", str(args.cube_quantile)],
+                                 "--quantile", str(args.object_quantile)],
              gpu=serial_gpu)
 
     # 8b Diffusion-VAS amodal — shard windows across the whole GPU pool
@@ -201,7 +201,7 @@ def pipe_cube(pd, py, gpus, dvas_env, hand_ready, args):
     threads = []
     for i, g in enumerate(gpus):
         cmd = ["conda", "run", "-n", dvas_env, "--no-capture-output",
-               "python", str(HERE / "amodal_cube.py"),
+               "python", str(HERE / "amodal_object.py"),
                "--processed_demo", str(pd),
                "--overlap", str(args.overlap),
                "--top_percentile", str(args.top_percentile),
@@ -217,7 +217,7 @@ def pipe_cube(pd, py, gpus, dvas_env, hand_ready, args):
     # assemble (no GPU needed)
     _run("8b_amodal_assemble",
          ["conda", "run", "-n", dvas_env, "--no-capture-output",
-          "python", str(HERE / "amodal_cube.py"),
+          "python", str(HERE / "amodal_object.py"),
           "--processed_demo", str(pd),
           "--top_percentile", str(args.top_percentile),
           "--smooth_sigma", str(args.smooth_sigma),
@@ -242,7 +242,7 @@ def main():
                     help="comma-separated GPU pool, e.g. 0,1,5,6,7")
     ap.add_argument("--dvas_env", default="diffusion_vas")
     ap.add_argument("--encoder", default="vitl", choices=["vits", "vitb", "vitl"])
-    ap.add_argument("--cube_quantile", type=float, default=0.25)
+    ap.add_argument("--object_quantile", type=float, default=0.25)
     ap.add_argument("--overlap", type=int, default=0)
     ap.add_argument("--top_percentile", type=float, default=1.0)
     ap.add_argument("--smooth_sigma", type=float, default=2.0)
@@ -284,7 +284,7 @@ def main():
         threading.Thread(target=pipe_robot,
                          args=(pd, py, g_robot, args.hawor_npz,
                                args.right_pkl, args.left_pkl, args.hand)),
-        threading.Thread(target=pipe_cube,
+        threading.Thread(target=pipe_object,
                          args=(pd, py, gpus, args.dvas_env, hand_ready, args)),
     ]
     for p in pipes:
@@ -300,7 +300,7 @@ def main():
         _run("10_composite",
              [py, str(HERE / "composite_layered.py"),
               "--processed_demo", str(pd), "--hawor_npz", str(args.hawor_npz),
-              "--cube_mask_npy", "cube_layer/cube_mask_amodal.npy",
+              "--object_mask_npy", "object_layer/object_mask_amodal.npy",
               "--threshold_joint", str(args.threshold_joint),
               "--zmcp_sigma_t", str(args.zmcp_sigma_t),
               "--edge_sigma", str(args.edge_sigma)], gpu=gpus[0])

@@ -1,0 +1,21 @@
+schema_version: 1
+task_id: kitchen
+instruction: manipulate kitchen objects
+
+action_labels: [Cup, Lock, Choco, Snack, Sweep, Trans]
+
+object_specs:
+  - ../objects/cup_blue.yaml
+  - ../objects/cup_green.yaml
+  - ../objects/milk_carton.yaml
+  - ../objects/pringles.yaml
+  - ../objects/lock_box_large.yaml
+  - ../objects/lock_box_small.yaml
+  - ../objects/sponge.yaml
+  - ../objects/trash_bin.yaml
+
+dataset:
+  recordings_root: ../../data/kitchen_dataset/26.07.24
+  episode_glob: "IMG_*"
+  lerobot_v3_root: ../../data/lerobot_kitchen
+  groot_v21_root: ../../data/groot_kitchen

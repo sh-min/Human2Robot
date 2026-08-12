@@ -145,6 +145,26 @@ training images. Object-position generalization therefore depends on
 recordings that actually cover the intended workspace (and on the object
 remaining visible in the robot-replacement observation).
 
+### 물체 실측 무게
+
+`physics.mass_kg` 값을 채울 때 쓰는 실측 무게 (2026-08-12 기록).
+
+| 물체 | 무게 (g) | mass_kg |
+|---|---:|---:|
+| 허니버터 감자칩 통 | 21 | 0.021 |
+| 우유팩 | 11 | 0.011 |
+| 남색 컵 | 60 | 0.060 |
+| 민트색 컵 | 74 | 0.074 |
+| 컵걸이 | 247 | 0.247 |
+| 쓰레기통 | 192 | 0.192 |
+| 수세미 | 15 | 0.015 |
+| 초코비 | 16 | 0.016 |
+| 연청색 락앤락 | 44 | 0.044 |
+| 스테인리스 락앤락 | 108 | 0.108 |
+| 초코비 | 20 | 0.020 |
+
+초코비가 두 항목(16 g / 20 g)으로 기록돼 있음 — 서로 다른 물체면 이름을 구분해야 함.
+
 ---
 
 ## ⚠️ Required Downloads (NOT in git)

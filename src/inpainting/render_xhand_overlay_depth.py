@@ -255,6 +255,21 @@ def main() -> None:
     ap.add_argument("--smooth_wrist_win", type=int, default=21,
                     help="Savgol window (frames) for wrist pos + orientation. "
                          "Odd, larger because wrist estimation is jitterier.")
+    ap.add_argument("--start_frame", type=int, default=0,
+                    help="First source frame to render (default: 0).")
+    ap.add_argument("--max_frames", type=int, default=None,
+                    help="Optional number of frames to render.")
+    ap.add_argument(
+        "--thumb_mask_only", action="store_true",
+        help="Render only XHand thumb links and write robot_thumb_mask.npy. "
+             "This is useful for forcing the thumb into the front composite "
+             "layer without rerendering the existing RGB/depth buffers.",
+    )
+    ap.add_argument(
+        "--thumb_depth_tolerance", type=float, default=0.004,
+        help="Maximum depth difference in metres between the thumb-only pass "
+             "and an existing full robot render (default: 0.004).",
+    )
     args = ap.parse_args()
 
     ri = np.load(args.hawor_npz)
@@ -331,11 +346,27 @@ def main() -> None:
         print(f"[relight] scene tint = {np.round(light['key_color'], 3).tolist()}, "
               f"light_dir_cam = {np.round(light['dir_cam'], 3).tolist()}")
 
-    rgb_buf   = np.zeros((T_use, img_h, img_w, 3), dtype=np.uint8)
-    depth_buf = np.full((T_use, img_h, img_w), np.inf, dtype=np.float32)
-    mask_buf  = np.zeros((T_use, img_h, img_w), dtype=bool)
+    start = max(0, args.start_frame)
+    end = T_use if args.max_frames is None else min(T_use, start + args.max_frames)
+    if start >= end:
+        raise ValueError(f"empty frame range {start}:{end}")
+    frame_count = end - start
 
-    for t in range(T_use):
+    if args.thumb_mask_only:
+        thumb_mask_buf = np.zeros((frame_count, img_h, img_w), dtype=bool)
+        existing_dir = args.processed_demo / args.output_subdir
+        full_depth_path = existing_dir / "robot_depth.npy"
+        full_mask_path = existing_dir / "robot_mask.npy"
+        full_depth = (np.load(full_depth_path, mmap_mode="r")
+                      if full_depth_path.exists() else None)
+        full_mask = (np.load(full_mask_path, mmap_mode="r")
+                     if full_mask_path.exists() else None)
+    else:
+        rgb_buf   = np.zeros((frame_count, img_h, img_w, 3), dtype=np.uint8)
+        depth_buf = np.full((frame_count, img_h, img_w), np.inf, dtype=np.float32)
+        mask_buf  = np.zeros((frame_count, img_h, img_w), dtype=bool)
+
+    for out_idx, t in enumerate(range(start, end)):
         hands_data = []
         arm_scene_data = []
         for s in ("right", "left"):
@@ -350,30 +381,57 @@ def main() -> None:
             qpos_dict = {jn: float(qdata[i]) for i, jn in enumerate(jnames)}
             wrist_pos = (joints_right if s == "right" else joints_left)[t, 0, :]
             R_mano = Rotation.from_rotvec(go[h_idx, t]).as_matrix()
-            hands_data.append((s, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes))
+            render_meshes = link_meshes
+            if args.thumb_mask_only:
+                render_meshes = {
+                    name: items for name, items in link_meshes.items()
+                    if "thumb" in name
+                }
+            hands_data.append(
+                (s, wrist_pos, R_mano, qpos_dict, joints_tree, render_meshes)
+            )
 
             # Lower arm poses from wrist orientation
             _, R_cam_hand = hand_root_pose(R_mano, wrist_pos, side_align[s])
             link_poses = _arm_link_poses_pyrender(
                 s, wrist_pos, R_cam_hand, sign=forearm_sign(embodiment_of[s]))
-            arm_scene_data.append((link_poses, arm_mesh_cfg[s]))
+            if not args.thumb_mask_only:
+                arm_scene_data.append((link_poses, arm_mesh_cfg[s]))
 
         if not hands_data:
             continue
 
         rgb, depth, mask = _render_robot_rgbd(hands_data, arm_scene_data,
                                               camera, renderer, side_align, light)
-        rgb_buf[t] = rgb
-        mask_buf[t] = mask
-        depth_buf[t, mask] = depth[mask]   # leave non-robot pixels at +inf
+        if args.thumb_mask_only:
+            if full_depth is not None and t < len(full_depth):
+                depth_delta = np.abs(
+                    depth.astype(np.float32) -
+                    np.asarray(full_depth[t], dtype=np.float32)
+                )
+                mask &= depth_delta <= args.thumb_depth_tolerance
+            if full_mask is not None and t < len(full_mask):
+                mask &= np.asarray(full_mask[t], dtype=bool)
+            thumb_mask_buf[out_idx] = mask
+        else:
+            rgb_buf[out_idx] = rgb
+            mask_buf[out_idx] = mask
+            depth_buf[out_idx, mask] = depth[mask]   # leave non-robot pixels at +inf
 
-        if (t + 1) % 100 == 0:
-            print(f"  {t+1}/{T_use}")
+        if (out_idx + 1) % 100 == 0:
+            print(f"  {out_idx + 1}/{frame_count} (source {t})")
 
     renderer.delete()
 
     out_dir = args.processed_demo / args.output_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.thumb_mask_only:
+        np.save(out_dir / "robot_thumb_mask.npy", thumb_mask_buf)
+        per_frame = thumb_mask_buf.sum(axis=(1, 2))
+        print(f"[ok] wrote {out_dir / 'robot_thumb_mask.npy'}  "
+              f"(thumb avg {per_frame.mean():.0f} px / "
+              f"max {per_frame.max()} px)")
+        return
     np.save(out_dir / "robot_rgb.npy",   rgb_buf)
     np.save(out_dir / "robot_depth.npy", depth_buf.astype(np.float16))
     np.save(out_dir / "robot_mask.npy",  mask_buf)

@@ -155,11 +155,16 @@ def main() -> None:
     parser.add_argument("--segments_json", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--chocobi_erode", type=int, default=3)
+    parser.add_argument("--left_hand_data", type=Path, default=None,
+                        help="MediaPipe hand data used to keep the thumb in front "
+                             "of the mug and Chocobi box.")
     args = parser.parse_args()
 
     merged = np.load(args.merged_mask, mmap_mode="r")
     payload = json.loads(args.segments_json.read_text(encoding="utf-8"))
     segments = {item["name"]: item for item in payload["segments"]}
+    mug = _track_interval(merged, segments["navy_mug"])
+    mint = _track_interval(merged, segments["mint_container"])
     green = _track_interval(merged, segments["green_snack_box"])
     sponge_segment = segments["sponge"]
     sponge_track = _track_interval(merged, sponge_segment)
@@ -184,16 +189,65 @@ def main() -> None:
                 green[frame_idx].astype(np.uint8), kernel, iterations=1
             ).astype(bool)
 
+    # The mug and mint container are rigid grasped objects.  Their completed
+    # interiors must sit in front of the four curling fingers; otherwise the
+    # renderer's incompatible depth scale makes those fingers penetrate the
+    # object.  Keep a one-pixel inset so the robot can still supply a clean,
+    # antialiased contact silhouette at the outer boundary (including thumb).
+    rigid_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mug_grasp_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    rigid_force = np.zeros_like(force)
+    mug_force = np.zeros_like(force)
+    mint_force = np.zeros_like(force)
+    for frame_idx in range(len(rigid_force)):
+        if mug[frame_idx].any():
+            # The four curled fingers sit farther behind the cylindrical mug
+            # than a flat depth split suggests.  A small outward allowance
+            # removes the remaining rim/side penetration at grasp time.
+            mug_force[frame_idx] = cv2.dilate(
+                mug[frame_idx].astype(np.uint8), mug_grasp_kernel, iterations=1
+            ).astype(bool)
+        if mint[frame_idx].any():
+            mint_force[frame_idx] = cv2.erode(
+                mint[frame_idx].astype(np.uint8), rigid_kernel, iterations=1
+            ).astype(bool)
+
+    # A power grasp has a different ordering for the thumb: four fingers curl
+    # behind the object while the thumb closes across its visible face.  Carve
+    # the tracked thumb chain out of only the mug/Chocobi foreground masks so
+    # the already-rendered XHand thumb remains visible on top.
+    if args.left_hand_data is not None:
+        hand = np.load(args.left_hand_data)
+        detected = hand["hand_detected"]
+        keypoints = hand["kpts_2d"]
+        thumb_clear = np.zeros_like(force)
+        for frame_idx in range(min(len(thumb_clear), len(detected))):
+            if not detected[frame_idx]:
+                continue
+            points = np.rint(keypoints[frame_idx, 1:5]).astype(np.int32)
+            cv2.polylines(thumb_clear[frame_idx].view(np.uint8), [points], False,
+                          1, thickness=38, lineType=cv2.LINE_AA)
+            for point in points:
+                cv2.circle(thumb_clear[frame_idx].view(np.uint8), tuple(point),
+                           20, 1, thickness=-1, lineType=cv2.LINE_AA)
+        mug_force &= ~thumb_clear
+        force &= ~thumb_clear
+
+    rigid_force = mug_force | mint_force
+    force |= rigid_force
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.save(args.output_dir / "object_mask_refined.npy", refined)
     np.save(args.output_dir / "chocobi_force_front.npy", force)
+    np.save(args.output_dir / "rigid_grasp_force_front.npy", rigid_force)
     np.save(args.output_dir / "sponge_visible_mask.npy", sponge)
     cap = cv2.VideoCapture(str(args.video))
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 24.0
     cap.release()
     _preview(args.video, green, sponge,
              args.output_dir / "contact_mask_refinement_preview.mp4", fps)
-    print(f"[info] chocobi px={int(green.sum())}, force-front px={int(force.sum())}")
+    print(f"[info] chocobi px={int(green.sum())}, rigid grasp px={int(rigid_force.sum())}, "
+          f"force-front px={int(force.sum())}")
     print(
         f"[info] sponge px={int(sponge.sum())}, "
         f"skin/object-track removed={int((sponge_track & ~sponge).sum())}, "

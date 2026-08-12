@@ -141,10 +141,24 @@ def main() -> None:
     parser.add_argument("--human_mask", type=Path, required=True)
     parser.add_argument("--segments_json", type=Path, required=True)
     parser.add_argument("--sponge_mask", type=Path, default=None)
+    parser.add_argument(
+        "--only_object", choices=("navy_mug", "red_snack_box",
+                                   "green_snack_box", "mint_container",
+                                   "sponge"), default=None,
+        help="Restrict completion to one object, useful for a conservative "
+             "second pass over an otherwise finished object layer.",
+    )
     parser.add_argument("--robot_mask", type=Path, default=None)
     parser.add_argument("--human_dilate", type=int, default=2)
     parser.add_argument("--robot_erode", type=int, default=5)
     parser.add_argument("--close_radius", type=int, default=5)
+    parser.add_argument(
+        "--sponge_dilate", type=int, default=0,
+        help="Expand the sponge amodal support by this many pixels, but only "
+             "inside the source-human occlusion. This conservatively restores "
+             "a little more sponge at close hand contact without painting it "
+             "onto exposed tabletop.",
+    )
     parser.add_argument("--max_hull_ratio", type=float, default=3.2)
     parser.add_argument("--min_visible_pixels", type=int, default=80)
     parser.add_argument("--output_video", type=Path, required=True)
@@ -162,6 +176,9 @@ def main() -> None:
              if args.robot_mask is not None else None)
     payload = json.loads(args.segments_json.read_text(encoding="utf-8"))
     segments = payload["segments"]
+    if args.only_object is not None:
+        segments = [item for item in segments
+                    if item["name"] == args.only_object]
 
     tracks: list[dict] = []
     for segment in segments:
@@ -231,6 +248,9 @@ def main() -> None:
     robot_kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (2 * max(0, args.robot_erode) + 1,) * 2
     )
+    sponge_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * max(0, args.sponge_dilate) + 1,) * 2
+    )
     per_object_pixels = {layer["name"]: 0 for layer in tracks}
     remaining_background_pixels = 0
 
@@ -258,6 +278,10 @@ def main() -> None:
             amodal = _amodal_hull(
                 visible, args.close_radius, args.max_hull_ratio
             )
+            if layer["name"] == "sponge" and args.sponge_dilate > 0:
+                amodal = cv2.dilate(
+                    amodal.astype(np.uint8), sponge_kernel, iterations=1
+                ).astype(bool)
             missing = amodal & occlusion & ~visible & ~current_object
             if not missing.any():
                 current_visible_all |= visible

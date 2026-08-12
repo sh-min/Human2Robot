@@ -17,47 +17,27 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from layered_compositor import (
+    STAGE_SPECS,
+    FrameInputs,
+    StageConfig,
+    compose_frame,
+)
+from layered_compositor.visualization import (
+    checkerboard,
+    context_layer,
+    grid_3x2,
+    isolated_layer,
+    label,
+)
+from layered_compositor.video import CompatibleVideoWriter
+
 
 def _video_info(capture: cv2.VideoCapture) -> tuple[int, int, float]:
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
     return width, height, fps
-
-
-def _alpha(mask: np.ndarray, sigma: float,
-           mode: str = "gaussian",
-           support: np.ndarray | None = None) -> np.ndarray:
-    value = mask.astype(np.float32)
-    if sigma > 0 and mode == "gaussian":
-        value = cv2.GaussianBlur(value, (0, 0), sigma)
-    elif sigma > 0 and mode == "clamped":
-        value = cv2.GaussianBlur(value, (0, 0), sigma)
-        if support is None:
-            raise ValueError("clamped alpha requires a support mask")
-        # Preserve Gaussian antialiasing on the rendered side of the edge, but
-        # never let alpha reach RGB pixels outside the valid robot raster.
-        value[~np.asarray(support, dtype=bool)] = 0.0
-    elif sigma > 0 and mode == "inside":
-        # Robot RGB is only defined inside its raster mask.  Blurring a binary
-        # robot mask outwards mixes the near-black, undefined pixels outside
-        # the render into the scene and creates a dark moving halo.  A distance
-        # transform gives us the same sub-pixel softening on the *inside* while
-        # keeping alpha exactly zero outside the rendered robot support.
-        distance = cv2.distanceTransform(
-            mask.astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_3
-        )
-        value = np.clip(distance / max(1.0, 1.08 * sigma), 0.0, 1.0)
-    elif mode not in {"gaussian", "clamped", "inside"}:
-        raise ValueError(f"unknown alpha mode: {mode}")
-    return np.clip(value, 0.0, 1.0)[..., None]
-
-
-def _blend(acc: np.ndarray, content: np.ndarray, mask: np.ndarray, sigma: float,
-           mode: str = "gaussian",
-           support: np.ndarray | None = None) -> np.ndarray:
-    alpha = _alpha(mask, sigma, mode, support)
-    return alpha * content.astype(np.float32) + (1.0 - alpha) * acc
 
 
 def _fill_and_smooth_depth(joints_left: np.ndarray,
@@ -109,6 +89,34 @@ def main() -> None:
                         help="Optional source-RGB mask drawn after the complete robot "
                              "layer, used to prevent visible rigid-object interiors "
                              "from being penetrated by robot links.")
+    parser.add_argument(
+        "--force_robot_front_mask", default=None,
+        help="Optional robot-part mask that is always classified as the front "
+             "robot layer. It is also carved out of --force_front_mask so the "
+             "forced object layer cannot cover it.",
+    )
+    parser.add_argument(
+        "--force_robot_front_dilate", type=int, default=0,
+        help="Dilate the forced-front robot mask by this many pixels, then "
+             "clip it to the rendered robot support. A small value closes "
+             "one-pixel object seams around the thumb.",
+    )
+    parser.add_argument(
+        "--layer_output_dir", default=None,
+        help="Optional directory for isolated background/robot/object layer "
+             "videos and a six-panel visualization.",
+    )
+    parser.add_argument(
+        "--layer_context_videos", action="store_true",
+        help="Also write sparse layers over a 20%%-brightness scene reference "
+             "so their position and edge quality are easier to inspect.",
+    )
+    parser.add_argument(
+        "--progressive_output_dir", default=None,
+        help="Optional directory for six cumulative videos that show the "
+             "composite being assembled one layer at a time, plus a six-panel "
+             "cumulative comparison.",
+    )
     parser.add_argument("--output",
                         default="interaction_objects/video_overlay_object_occlusion.mp4")
     parser.add_argument("--threshold_joint", type=int, default=5)
@@ -124,6 +132,11 @@ def main() -> None:
     )
     parser.add_argument("--object_edge_sigma", type=float, default=0.8)
     parser.add_argument("--force_front_edge_sigma", type=float, default=0.45)
+    parser.add_argument(
+        "--video_codec", choices=("h264", "mp4v"), default="h264",
+        help="Output codec. h264 is the default because VS Code and browser "
+             "previews generally cannot decode OpenCV's mp4v output.",
+    )
     args = parser.parse_args()
 
     processed = args.processed_demo
@@ -146,6 +159,10 @@ def main() -> None:
     object_mask = np.load(processed / args.object_mask, mmap_mode="r")
     force_front = (np.load(processed / args.force_front_mask, mmap_mode="r")
                    if args.force_front_mask is not None else None)
+    force_robot_front = (
+        np.load(processed / args.force_robot_front_mask, mmap_mode="r")
+        if args.force_robot_front_mask is not None else None
+    )
     pose = np.load(args.hawor_npz)
     frame_count = min(
         len(robot_rgb), len(robot_depth), len(robot_mask), len(object_mask),
@@ -155,6 +172,8 @@ def main() -> None:
     )
     if force_front is not None:
         frame_count = min(frame_count, len(force_front))
+    if force_robot_front is not None:
+        frame_count = min(frame_count, len(force_robot_front))
     if object_source_cap is not None:
         frame_count = min(
             frame_count,
@@ -167,15 +186,95 @@ def main() -> None:
 
     output = processed / args.output
     output.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps,
-                             (width, height))
+    def make_writer(path: Path) -> CompatibleVideoWriter:
+        return CompatibleVideoWriter(
+            path, fps, (width, height), codec=args.video_codec
+        )
+
+    writer = make_writer(output)
     if not writer.isOpened():
         raise RuntimeError(f"cannot create output: {output}")
+
+    layer_writers = None
+    layer_grid_writer = None
+    context_writers = None
+    progressive_writers = None
+    progressive_grid_writer = None
+    transparency_plate = None
+    if args.layer_output_dir is not None:
+        layer_dir = processed / args.layer_output_dir
+        layer_dir.mkdir(parents=True, exist_ok=True)
+        layer_paths = {
+            "background": layer_dir / "01_background_inpaint.mp4",
+            "behind_robot": layer_dir / "02_robot_behind.mp4",
+            "object": layer_dir / "03_object.mp4",
+            "front_robot": layer_dir / "04_robot_front.mp4",
+            "forced_object": layer_dir / "05_object_forced_front.mp4",
+            "forced_thumb": layer_dir / "06_thumb_forced_front.mp4",
+        }
+        layer_writers = {
+            name: make_writer(path)
+            for name, path in layer_paths.items()
+        }
+        if not all(item.isOpened() for item in layer_writers.values()):
+            raise RuntimeError(f"cannot create layer videos in {layer_dir}")
+        layer_grid_writer = make_writer(layer_dir / "layers_6panel.mp4")
+        if not layer_grid_writer.isOpened():
+            raise RuntimeError(f"cannot create layer grid in {layer_dir}")
+        if args.layer_context_videos:
+            context_paths = {
+                "behind_robot": layer_dir / "02_robot_behind_context.mp4",
+                "object": layer_dir / "03_object_context.mp4",
+                "front_robot": layer_dir / "04_robot_front_context.mp4",
+                "forced_object": layer_dir / "05_object_forced_front_context.mp4",
+                "forced_thumb": layer_dir / "06_thumb_forced_front_context.mp4",
+            }
+            context_writers = {
+                name: make_writer(path)
+                for name, path in context_paths.items()
+            }
+            if not all(item.isOpened() for item in context_writers.values()):
+                raise RuntimeError(f"cannot create context videos in {layer_dir}")
+        transparency_plate = checkerboard(height, width)
+
+    if args.progressive_output_dir is not None:
+        progressive_dir = processed / args.progressive_output_dir
+        progressive_dir.mkdir(parents=True, exist_ok=True)
+        progressive_paths = {
+            "background": progressive_dir / "01_background.mp4",
+            "behind_robot": progressive_dir / "02_add_robot_behind.mp4",
+            "object": progressive_dir / "03_add_object.mp4",
+            "front_robot": progressive_dir / "04_add_robot_front.mp4",
+            "forced_object": progressive_dir / "05_add_object_forced_front.mp4",
+            "forced_thumb": progressive_dir / "06_add_thumb_forced_front_final.mp4",
+        }
+        progressive_writers = {
+            name: make_writer(path)
+            for name, path in progressive_paths.items()
+        }
+        if not all(item.isOpened() for item in progressive_writers.values()):
+            raise RuntimeError(
+                f"cannot create progressive videos in {progressive_dir}"
+            )
+        progressive_grid_writer = make_writer(
+            progressive_dir / "progressive_layers_6panel.mp4"
+        )
+        if not progressive_grid_writer.isOpened():
+            raise RuntimeError(
+                f"cannot create progressive grid in {progressive_dir}"
+            )
 
     object_overlap = 0
     front_pixels = 0
     behind_pixels = 0
     forced_pixels = 0
+    stage_config = StageConfig(
+        robot_edge_sigma=args.robot_edge_sigma,
+        robot_edge_mode=args.robot_edge_mode,
+        object_edge_sigma=args.object_edge_sigma,
+        forced_object_edge_sigma=args.force_front_edge_sigma,
+        forced_robot_front_dilate=args.force_robot_front_dilate,
+    )
     for idx in range(frame_count):
         ok_source, source = source_cap.read()
         if object_source_cap is not None:
@@ -194,31 +293,111 @@ def main() -> None:
                 object_source, (width, height), interpolation=cv2.INTER_LINEAR
             )
 
+        robot_frame = np.asarray(robot_rgb[idx])
         visible_robot = np.asarray(robot_mask[idx], dtype=bool)
-        depth = np.asarray(robot_depth[idx], dtype=np.float32) + args.depth_bias
-        behind = visible_robot & (depth >= z_split[idx])
-        front = visible_robot & (depth < z_split[idx])
-        obj = np.asarray(object_mask[idx], dtype=bool)
+        frame_inputs = FrameInputs(
+            background=background,
+            robot_rgb=robot_frame,
+            object_rgb=object_source,
+            robot_mask=visible_robot,
+            robot_depth=(np.asarray(robot_depth[idx], dtype=np.float32)
+                         + args.depth_bias),
+            object_mask=np.asarray(object_mask[idx], dtype=bool),
+            forced_object_mask=(
+                np.asarray(force_front[idx], dtype=bool)
+                if force_front is not None else np.zeros_like(visible_robot)
+            ),
+            forced_robot_front_mask=(
+                np.asarray(force_robot_front[idx], dtype=bool)
+                if force_robot_front is not None else np.zeros_like(visible_robot)
+            ),
+            split_depth=float(z_split[idx]),
+        )
+        composite = compose_frame(frame_inputs, stage_config)
+        progressive_stages = [
+            np.clip(value, 0, 255).astype(np.uint8)
+            for value in composite.stages
+        ]
+        writer.write(progressive_stages[-1])
 
-        acc = background.astype(np.float32)
-        acc = _blend(
-            acc, np.asarray(robot_rgb[idx]), behind, args.robot_edge_sigma,
-            args.robot_edge_mode, visible_robot,
-        )
-        acc = _blend(acc, object_source, obj, args.object_edge_sigma)
-        acc = _blend(
-            acc, np.asarray(robot_rgb[idx]), front, args.robot_edge_sigma,
-            args.robot_edge_mode, visible_robot,
-        )
-        if force_front is not None:
-            forced = np.asarray(force_front[idx], dtype=bool)
-            acc = _blend(acc, object_source, forced, args.force_front_edge_sigma)
-            forced_pixels += int((forced & visible_robot).sum())
-        writer.write(np.clip(acc, 0, 255).astype(np.uint8))
+        masks = composite.masks
+        behind = masks.robot_behind
+        obj = masks.object_visible
+        ordinary_front = masks.robot_front
+        forced = masks.object_forced_front
+        forced_robot = masks.robot_forced_front
+        front = ordinary_front | forced_robot
+
+        if progressive_writers is not None:
+            labelled_progressive = [
+                label(stage, spec.label)
+                for stage, spec in zip(progressive_stages, STAGE_SPECS)
+            ]
+            for progressive_writer, stage in zip(
+                progressive_writers.values(), labelled_progressive
+            ):
+                progressive_writer.write(stage)
+            progressive_grid_writer.write(
+                grid_3x2(labelled_progressive, width, height)
+            )
+
+        if layer_writers is not None:
+            background_layer = np.asarray(background, dtype=np.uint8)
+            behind_layer = isolated_layer(
+                robot_frame, behind, transparency_plate, (255, 160, 32)
+            )
+            object_layer = isolated_layer(
+                object_source, obj, transparency_plate, (32, 220, 255)
+            )
+            front_layer = isolated_layer(
+                robot_frame, ordinary_front, transparency_plate, (255, 64, 220)
+            )
+            forced_object_layer = isolated_layer(
+                object_source, forced, transparency_plate, (40, 40, 255)
+            )
+            forced_thumb_layer = isolated_layer(
+                robot_frame, forced_robot, transparency_plate, (40, 255, 40)
+            )
+            layers = [
+                background_layer, behind_layer, object_layer, front_layer,
+                forced_object_layer, forced_thumb_layer,
+            ]
+            for layer_writer, layer_frame in zip(layer_writers.values(), layers):
+                layer_writer.write(layer_frame)
+            if context_writers is not None:
+                context_layers = {
+                    "behind_robot": context_layer(
+                        background, robot_frame, behind, (255, 160, 32)
+                    ),
+                    "object": context_layer(
+                        background, object_source, obj, (32, 220, 255)
+                    ),
+                    "front_robot": context_layer(
+                        background, robot_frame, ordinary_front, (255, 64, 220)
+                    ),
+                    "forced_object": context_layer(
+                        background, object_source, forced, (40, 40, 255)
+                    ),
+                    "forced_thumb": context_layer(
+                        background, robot_frame, forced_robot, (40, 255, 40)
+                    ),
+                }
+                for name, context_writer in context_writers.items():
+                    context_writer.write(context_layers[name])
+            labelled = [
+                label(layer, name) for layer, name in zip(
+                    layers,
+                    ("01 BACKGROUND", "02 ROBOT BEHIND", "03 OBJECT",
+                     "04 ROBOT FRONT", "05 OBJECT FORCED FRONT",
+                     "06 THUMB FORCED FRONT"),
+                )
+            ]
+            layer_grid_writer.write(grid_3x2(labelled, width, height))
 
         object_overlap += int((obj & visible_robot).sum())
         front_pixels += int(front.sum())
         behind_pixels += int(behind.sum())
+        forced_pixels += int((forced & visible_robot).sum())
         if (idx + 1) % 100 == 0:
             print(f"[frame] {idx + 1}/{frame_count}")
 
@@ -227,6 +406,17 @@ def main() -> None:
         object_source_cap.release()
     background_cap.release()
     writer.release()
+    if layer_writers is not None:
+        for layer_writer in layer_writers.values():
+            layer_writer.release()
+        layer_grid_writer.release()
+        if context_writers is not None:
+            for context_writer in context_writers.values():
+                context_writer.release()
+    if progressive_writers is not None:
+        for progressive_writer in progressive_writers.values():
+            progressive_writer.release()
+        progressive_grid_writer.release()
     print(f"[ok] wrote {output}")
     print(f"[info] object/robot overlap={object_overlap} px, "
           f"front robot={front_pixels} px, behind robot={behind_pixels} px, "

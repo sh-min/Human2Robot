@@ -1,8 +1,9 @@
 # Inpainting + xhand layered overlay
 
-RGB 영상에서 사람 손/팔을 SAM2 + E2FGVI로 inpaint해서 지우고, retargeting
-결과(xhand qpos)를 pyrender로 렌더링한 로봇 손을, **3-layer (behind-MCP robot
-→ cube → front-MCP robot)** depth-aware composite로 raw bg 위에 합성한다.
+RGB 영상에서 사람 손/팔을 inpaint해서 지우고, retargeting 결과(xhand qpos)를
+pyrender로 렌더링한 로봇 손을 depth-aware composite로 배경 위에 합성한다.
+상호작용 물체 경로는 **6-stage (background → robot behind → object → robot front
+→ forced object → forced robot part)** 로 분리되어 각 단계를 독립 개선할 수 있다.
 결과는 "인간 동작을 그대로 따라하는 xhand 데모 영상" + 손에 잡고 있던 cube가
 robot 손가락 사이로 보이게 occlusion 처리된 버전.
 
@@ -144,9 +145,11 @@ python composite_interaction_objects.py \
   --hawor_npz <pd>/rgb_hawor/retarget_input.npz
 ```
 
-합성 순서는 `inpainted bg → behind-MCP robot → source-RGB object →
-front-MCP robot`이다. 물체 레이어에는 인페인팅 결과가 아니라 원본 RGB를
-사용하므로 손-물체 접촉부의 인페인팅 손상을 최종 영상에 다시 복사하지 않는다.
+합성 순서는 `background → robot behind → object → robot front → forced object
+→ forced robot part`이다. 물체 레이어에는 인페인팅 결과가 아니라 복원된 원본
+RGB를 사용하므로 손-물체 접촉부의 인페인팅 손상을 최종 영상에 다시 복사하지
+않는다. 여섯 단계의 정확한 의미, 개선 포인트, 모듈 API는
+[`layered_compositor/README.md`](layered_compositor/README.md)에 정리되어 있다.
 
 주요 출력:
 

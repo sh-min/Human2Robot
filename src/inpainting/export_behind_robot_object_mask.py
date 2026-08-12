@@ -41,6 +41,12 @@ def main() -> None:
     parser.add_argument("--static_object_name", default=None,
                         help="Segment whose interaction interval keeps "
                              "--static_mask in front of the robot.")
+    parser.add_argument("--trust_completion_segments", default="",
+                        help="Comma-separated segments whose completion is kept "
+                             "in front of the robot for the duration of their "
+                             "own grasp. Use where the robot's fingers are "
+                             "rendered outside the object's visible silhouette, "
+                             "so only the completion can hide them.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -52,6 +58,20 @@ def main() -> None:
     refined = np.load(args.object_mask, mmap_mode="r")
     modal = np.load(args.modal_mask, mmap_mode="r")
     frame_count = min(len(refined), len(modal))
+
+    all_segments = {}
+    if args.segments_json is not None:
+        all_segments = {item["name"]: item for item in json.loads(
+            args.segments_json.read_text(encoding="utf-8"))["segments"]}
+    trusted = []
+    for name in filter(None, (n.strip() for n in
+                              args.trust_completion_segments.split(","))):
+        if name not in all_segments:
+            raise SystemExit(f"unknown segment: {name}")
+        span = (int(all_segments[name]["start_frame"]),
+                int(all_segments[name]["end_frame"]))
+        trusted.append(span)
+        print(f"[info] {name}: completion trusted over frames {span[0]}-{span[1]}")
 
     static = None
     hold_start = hold_end = -1
@@ -80,7 +100,10 @@ def main() -> None:
         if static is not None:
             held = np.asarray(static[frame_idx], dtype=bool)
             visible = visible | held
-        behind = frame & ~visible
+        if any(start <= frame_idx <= end for start, end in trusted):
+            behind = np.zeros_like(frame)
+        else:
+            behind = frame & ~visible
         completion_px += int(behind.sum())
         if held is not None and not (hold_start <= frame_idx <= hold_end):
             loose = frame & held

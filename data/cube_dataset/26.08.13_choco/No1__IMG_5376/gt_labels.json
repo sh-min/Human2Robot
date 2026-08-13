@@ -1,0 +1,62 @@
+{
+  "episode": "No1__IMG_5376",
+  "num_frames": 588,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 18,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 19,
+      "end_frame": 63,
+      "label": "Snack"
+    },
+    {
+      "start_frame": 64,
+      "end_frame": 93,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 94,
+      "end_frame": 155,
+      "label": "Choco"
+    },
+    {
+      "start_frame": 156,
+      "end_frame": 205,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 206,
+      "end_frame": 264,
+      "label": "Lock"
+    },
+    {
+      "start_frame": 265,
+      "end_frame": 288,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 289,
+      "end_frame": 357,
+      "label": "Cup"
+    },
+    {
+      "start_frame": 358,
+      "end_frame": 385,
+      "label": "Trans"
+    },
+    {
+      "start_frame": 386,
+      "end_frame": 560,
+      "label": "Sweep"
+    },
+    {
+      "start_frame": 561,
+      "end_frame": 587,
+      "label": "Trans"
+    }
+  ]
+}

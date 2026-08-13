@@ -1,0 +1,62 @@
+{
+  "episode": "No7__IMG_5542",
+  "num_frames": 399,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 9,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 10,
+      "end_frame": 32,
+      "label": "PlaceRedSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 33,
+      "end_frame": 64,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 65,
+      "end_frame": 98,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 99,
+      "end_frame": 119,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 120,
+      "end_frame": 152,
+      "label": "StackContainers"
+    },
+    {
+      "start_frame": 153,
+      "end_frame": 180,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 181,
+      "end_frame": 208,
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 209,
+      "end_frame": 242,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 243,
+      "end_frame": 359,
+      "label": "WipeFloorWithSponge"
+    },
+    {
+      "start_frame": 360,
+      "end_frame": 398,
+      "label": "Transition"
+    }
+  ]
+}

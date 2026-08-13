@@ -1,61 +1,61 @@
 {
-  "episode": "No3__IMG_5425",
-  "num_frames": 478,
+  "episode": "No8__IMG_5575",
+  "num_frames": 463,
   "fps": 30.0,
   "segments": [
     {
       "start_frame": 0,
-      "end_frame": 14,
+      "end_frame": 22,
       "label": "Transition"
     },
     {
-      "start_frame": 15,
-      "end_frame": 60,
-      "label": "HangCup"
-    },
-    {
-      "start_frame": 61,
-      "end_frame": 83,
-      "label": "Transition"
-    },
-    {
-      "start_frame": 84,
-      "end_frame": 119,
+      "start_frame": 23,
+      "end_frame": 45,
       "label": "PlaceLightGreenSnackBoxInTrashBin"
     },
     {
-      "start_frame": 120,
-      "end_frame": 145,
+      "start_frame": 46,
+      "end_frame": 82,
       "label": "Transition"
     },
     {
-      "start_frame": 146,
-      "end_frame": 183,
+      "start_frame": 83,
+      "end_frame": 113,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 114,
+      "end_frame": 139,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 140,
+      "end_frame": 171,
       "label": "StackContainers"
     },
     {
-      "start_frame": 184,
+      "start_frame": 172,
       "end_frame": 204,
       "label": "Transition"
     },
     {
       "start_frame": 205,
-      "end_frame": 245,
+      "end_frame": 239,
       "label": "PlaceRedSnackBoxInTrashBin"
     },
     {
-      "start_frame": 246,
+      "start_frame": 240,
       "end_frame": 271,
       "label": "Transition"
     },
     {
       "start_frame": 272,
-      "end_frame": 434,
+      "end_frame": 416,
       "label": "WipeFloorWithSponge"
     },
     {
-      "start_frame": 435,
-      "end_frame": 477,
+      "start_frame": 417,
+      "end_frame": 462,
       "label": "Transition"
     }
   ]

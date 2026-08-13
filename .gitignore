@@ -25,7 +25,11 @@ venv/
 
 # ML / data — paths or symlinks specific to this repo
 /ckpt
-/data
+# Ignore dataset payloads under /data but keep hand-made GT labels tracked.
+# Directories stay re-included so git can descend to the label files.
+/data/**
+!/data/**/
+!/data/**/gt_labels.json
 /output
 /out
 /wandb

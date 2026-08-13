@@ -1,0 +1,62 @@
+{
+  "episode": "No7__22",
+  "num_frames": 429,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 20,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 21,
+      "end_frame": 47,
+      "label": "StackContainers"
+    },
+    {
+      "start_frame": 48,
+      "end_frame": 86,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 87,
+      "end_frame": 114,
+      "label": "PlaceRedSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 115,
+      "end_frame": 150,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 151,
+      "end_frame": 180,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 181,
+      "end_frame": 210,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 211,
+      "end_frame": 242,
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 243,
+      "end_frame": 272,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 273,
+      "end_frame": 377,
+      "label": "WipeFloorWithSponge"
+    },
+    {
+      "start_frame": 378,
+      "end_frame": 428,
+      "label": "Transition"
+    }
+  ]
+}

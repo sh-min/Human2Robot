@@ -1,0 +1,62 @@
+{
+  "episode": "No8__01",
+  "num_frames": 441,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 31,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 32,
+      "end_frame": 58,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 59,
+      "end_frame": 88,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 89,
+      "end_frame": 111,
+      "label": "PlaceRedSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 112,
+      "end_frame": 149,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 150,
+      "end_frame": 180,
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 181,
+      "end_frame": 214,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 215,
+      "end_frame": 246,
+      "label": "StackContainers"
+    },
+    {
+      "start_frame": 247,
+      "end_frame": 266,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 267,
+      "end_frame": 396,
+      "label": "WipeFloorWithSponge"
+    },
+    {
+      "start_frame": 397,
+      "end_frame": 440,
+      "label": "Transition"
+    }
+  ]
+}

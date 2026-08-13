@@ -1,0 +1,62 @@
+{
+  "episode": "No6__08",
+  "num_frames": 555,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 24,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 25,
+      "end_frame": 66,
+      "label": "PlaceRedSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 67,
+      "end_frame": 102,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 103,
+      "end_frame": 146,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 147,
+      "end_frame": 186,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 187,
+      "end_frame": 238,
+      "label": "StackContainers"
+    },
+    {
+      "start_frame": 239,
+      "end_frame": 275,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 276,
+      "end_frame": 308,
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 309,
+      "end_frame": 349,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 350,
+      "end_frame": 511,
+      "label": "WipeFloorWithSponge"
+    },
+    {
+      "start_frame": 512,
+      "end_frame": 554,
+      "label": "Transition"
+    }
+  ]
+}

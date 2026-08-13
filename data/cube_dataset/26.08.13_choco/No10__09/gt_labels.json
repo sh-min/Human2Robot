@@ -1,0 +1,62 @@
+{
+  "episode": "No10__09",
+  "num_frames": 490,
+  "fps": 30.0,
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 21,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 22,
+      "end_frame": 51,
+      "label": "PlaceRedSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 52,
+      "end_frame": 89,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 90,
+      "end_frame": 128,
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
+    },
+    {
+      "start_frame": 129,
+      "end_frame": 167,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 168,
+      "end_frame": 206,
+      "label": "HangCup"
+    },
+    {
+      "start_frame": 207,
+      "end_frame": 235,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 236,
+      "end_frame": 276,
+      "label": "StackContainers"
+    },
+    {
+      "start_frame": 277,
+      "end_frame": 310,
+      "label": "Transition"
+    },
+    {
+      "start_frame": 311,
+      "end_frame": 452,
+      "label": "WipeFloorWithSponge"
+    },
+    {
+      "start_frame": 453,
+      "end_frame": 489,
+      "label": "Transition"
+    }
+  ]
+}

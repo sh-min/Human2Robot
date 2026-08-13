@@ -4,7 +4,7 @@ Web-based GT labeling tool for long-horizon skill sequences.
 Usage:
     conda activate vjepa2-312
     cd /virtual_lab/ljw_rvlab/byeonggyeol/3dgs-visual-grounding/RFM_Proj
-    python -m skill_segmentor.annotation_tool --data_dir data/kitchen_dataset/0325 --port 7860
+    python -m skill_segmentor.annotation_tool --data_dir data/cube_dataset/0325 --port 7860
 
     # SSH tunnel from local machine:
     ssh -L 7860:localhost:7860 user@server
@@ -30,6 +30,30 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import gradio as gr
 from utils.labels import ACTION_LABELS
+from skill_classifier.action_semantics import load_action_semantics
+
+
+ACTION_SEMANTICS = load_action_semantics(
+    Path(__file__).resolve().parents[1] / "config/kitchen_action_semantics.yaml"
+)
+ACTION_DESCRIPTIONS = {
+    label: ACTION_SEMANTICS["actions"][label]["ko"] for label in ACTION_LABELS
+}
+VIDEO_SUFFIXES = (".mov", ".mp4", ".avi", ".mkv")
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+LABEL_PROFILES = {
+    "kitchen_milk": {
+        "labels": ["Cup", "Lock", "Milk", "Snack", "Sweep", "Trans"],
+        "descriptions": {
+            **{key: value for key, value in ACTION_DESCRIPTIONS.items() if key != "Choco"},
+            "Milk": "우유 버리기",
+        },
+    },
+    "kitchen_choco": {
+        "labels": list(ACTION_LABELS),
+        "descriptions": dict(ACTION_DESCRIPTIONS),
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -42,17 +66,28 @@ def discover_episodes(data_dir):
     for d in sorted(data_dir.iterdir()):
         if not d.is_dir():
             continue
-        rgb_dir = d / "rgb"
-        if not rgb_dir.is_dir():
-            continue
-        frames = sorted(rgb_dir.glob("*.png"))
-        if not frames:
+        rgb_path = d / "rgb"
+        frames = []
+        direct_video = None
+        if rgb_path.is_dir():
+            frames = sorted(
+                path for path in rgb_path.iterdir()
+                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+            )
+            if not frames:
+                continue
+            num_frames = len(frames)
+        elif rgb_path.is_file() and rgb_path.resolve().suffix.lower() in VIDEO_SUFFIXES:
+            direct_video = str(rgb_path.resolve())
+            num_frames = get_video_info(direct_video)["frames"]
+        else:
             continue
         episodes.append({
             "name": d.name,
             "path": str(d),
-            "rgb_dir": str(rgb_dir),
-            "num_frames": len(frames),
+            "rgb_dir": str(rgb_path) if rgb_path.is_dir() else None,
+            "direct_video": direct_video,
+            "num_frames": num_frames,
             "frame_names": [f.stem for f in frames],
         })
     return episodes
@@ -154,11 +189,11 @@ def validate_segments(num_frames, segments):
     return frames_to_ranges(unlabeled), frames_to_ranges(overlapping), len(unlabeled), len(overlapping)
 
 
-def validate_segments_for_save(num_frames, segments):
+def validate_segments_for_save(num_frames, segments, allowed_labels=None):
     """Validate user-provided segment values before writing a GT file."""
     if not isinstance(segments, list):
         raise ValueError("segments must be a list")
-    allowed_labels = set(ACTION_LABELS)
+    allowed_labels = set(ACTION_LABELS if allowed_labels is None else allowed_labels)
     normalized = []
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict):
@@ -210,9 +245,12 @@ def save_gt(episode_path, episode_name, num_frames, fps, segments):
 # HTML labeling panel  (no <script>, no onclick — JS injected via gr.Blocks)
 # ---------------------------------------------------------------------------
 
-def make_panel_html(action_labels: list) -> str:
+def make_panel_html(action_labels: list, descriptions=None) -> str:
+    descriptions = descriptions or {}
     buttons_html = "\n".join(
-        f'<button class="skill-btn" data-skill="{lbl}">{lbl}</button>'
+        f'<button class="skill-btn" data-skill="{lbl}" '
+        f'data-description="{descriptions.get(lbl, lbl)}">'
+        f'<b>{lbl}</b><br><small>{descriptions.get(lbl, lbl)}</small></button>'
         for lbl in action_labels
     )
     return f"""
@@ -387,6 +425,15 @@ PANEL_JS = """
     return found;
   }
 
+  function displaySkill(label) {
+    var button = Array.from(document.querySelectorAll('.skill-btn')).find(
+      function(candidate) { return candidate.dataset.skill === label; }
+    );
+    return button && button.dataset.description
+      ? label + ' \u2014 ' + button.dataset.description
+      : label;
+  }
+
   function initOverlay() {
     var container = document.querySelector('#video-player');
     if (!container) return;
@@ -416,12 +463,12 @@ PANEL_JS = """
       _ov.style.color = '#fef9c3';
       _ov.style.outline = '2px solid rgba(234,179,8,0.7)';
     } else if (labels.length === 1) {
-      _ov.textContent = '\u2713 ' + labels[0];
+      _ov.textContent = '\u2713 ' + displaySkill(labels[0]);
       _ov.style.background = 'rgba(21,128,61,0.88)';
       _ov.style.color = '#dcfce7';
       _ov.style.outline = '2px solid rgba(74,222,128,0.7)';
     } else {
-      _ov.textContent = '\u26A0 ' + labels.join(', ');
+      _ov.textContent = '\u26A0 ' + labels.map(displaySkill).join(', ');
       _ov.style.background = 'rgba(185,28,28,0.88)';
       _ov.style.color = '#fee2e2';
       _ov.style.outline = '2px solid rgba(248,113,113,0.7)';
@@ -489,7 +536,7 @@ PANEL_JS = """
     var el = document.getElementById('lbl-status');
     if (!el) return;
     if (_active) {
-      el.innerHTML = '&#128308; Recording: <b>' + _active + '</b> &mdash; started @ frame ' + _startF;
+      el.innerHTML = '&#128308; Recording: <b>' + displaySkill(_active) + '</b> &mdash; started @ frame ' + _startF;
       el.style.background = '#450a0a';
     } else {
       el.innerHTML = '&#9898; Not recording';
@@ -521,7 +568,7 @@ PANEL_JS = """
     var labels = getActionLabels();
     var rows = segs.map(function(s, i) {
       var opts = labels.map(function(lbl) {
-        return '<option value="' + lbl + '" style="background:#1e1e1e;color:#ffffff;"' + (s.label === lbl ? ' selected' : '') + '>' + lbl + '</option>';
+        return '<option value="' + lbl + '" style="background:#1e1e1e;color:#ffffff;"' + (s.label === lbl ? ' selected' : '') + '>' + displaySkill(lbl) + '</option>';
       }).join('');
       return '<tr style="border-bottom:1px solid #222;">' +
         '<td style="color:#6b7280;padding:3px 5px;text-align:right;">' + (i + 1) + '</td>' +
@@ -685,9 +732,30 @@ def _ensure_preview(ep, fps, rotation, view):
         video_path = _raw_video_path(ep["path"], rotation)
         if not os.path.exists(video_path):
             print(f"  Building primary video: {ep['name']} ({ep['num_frames']} frames)...")
-            build_rgb_video(
-                ep["rgb_dir"], ep["frame_names"], fps, video_path, rotation=rotation
-            )
+            if ep.get("direct_video"):
+                filters = {
+                    "none": None,
+                    "ccw": "transpose=2",
+                    "cw": "transpose=1",
+                    "180": "hflip,vflip",
+                }
+                import subprocess
+                command = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", ep["direct_video"],
+                ]
+                if filters[rotation]:
+                    command.extend(["-vf", filters[rotation]])
+                command.extend([
+                    "-an", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "22", "-pix_fmt", "yuv420p", video_path,
+                ])
+                subprocess.run(command, check=True)
+            else:
+                build_rgb_video(
+                    ep["rgb_dir"], ep["frame_names"], fps,
+                    video_path, rotation=rotation
+                )
     elif view == "stereo":
         if rotation != "none":
             raise ValueError("stereo preview currently requires --rotation none")
@@ -738,7 +806,19 @@ def _ensure_preview(ep, fps, rotation, view):
     return video_path, info
 
 
-def build_app(data_dir, fps, rotation="ccw", view="primary"):
+def build_app(
+    data_dir,
+    fps,
+    rotation="ccw",
+    view="primary",
+    action_labels=None,
+    action_descriptions=None,
+):
+    action_labels = list(ACTION_LABELS if action_labels is None else action_labels)
+    action_descriptions = (
+        dict(ACTION_DESCRIPTIONS)
+        if action_descriptions is None else dict(action_descriptions)
+    )
     episodes = discover_episodes(data_dir)
     if not episodes:
         raise ValueError(f"No episodes found in {data_dir}")
@@ -774,7 +854,9 @@ def build_app(data_dir, fps, rotation="ccw", view="primary"):
         ep = ep_map[ep_name]
         try:
             segments = json.loads(segs_json or "[]")
-            segments = validate_segments_for_save(ep["num_frames"], segments)
+            segments = validate_segments_for_save(
+                ep["num_frames"], segments, allowed_labels=action_labels
+            )
         except Exception as e:
             return f"❌ Validation error: {e}"
         video_path, video_info = _ensure_preview(ep, fps, rotation, view)
@@ -814,7 +896,7 @@ def build_app(data_dir, fps, rotation="ccw", view="primary"):
             )
 
         with gr.Row():
-            gr.HTML(make_panel_html(ACTION_LABELS))
+            gr.HTML(make_panel_html(action_labels, action_descriptions))
 
         with gr.Row():
             save_btn   = gr.Button("Save GT Labels", variant="primary", scale=1)
@@ -866,7 +948,7 @@ def build_app(data_dir, fps, rotation="ccw", view="primary"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="e.g. data/kitchen_dataset/0325")
+                        help="e.g. data/cube_dataset/0325")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--fps",  type=float, default=30.0,
                         help="FPS used only when building _raw_video.mp4 for the first time. "
@@ -883,9 +965,17 @@ def main():
         default="primary",
         help="Show the root RGB stream or a synchronized camera_1/camera_2 composite.",
     )
+    parser.add_argument(
+        "--label-profile",
+        choices=sorted(LABEL_PROFILES),
+        default="kitchen_choco",
+        help="Label vocabulary shown and accepted by the annotation tool.",
+    )
     args = parser.parse_args()
 
+    profile = LABEL_PROFILES[args.label_profile]
     print(f"Labeling tool for: {args.data_dir}")
+    print(f"Label profile: {args.label_profile} ({', '.join(profile['labels'])})")
     print(f"SSH tunnel : ssh -L {args.port}:localhost:{args.port} <server>")
     print(f"Browser    : http://localhost:{args.port}")
 
@@ -894,6 +984,8 @@ def main():
         args.fps,
         rotation=args.rotation,
         view=args.view,
+        action_labels=profile["labels"],
+        action_descriptions=profile["descriptions"],
     )
     app.launch(
         server_name="0.0.0.0",

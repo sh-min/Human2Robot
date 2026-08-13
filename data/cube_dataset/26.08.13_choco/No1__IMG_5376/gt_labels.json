@@ -6,57 +6,57 @@
     {
       "start_frame": 0,
       "end_frame": 18,
-      "label": "Trans"
+      "label": "Transition"
     },
     {
       "start_frame": 19,
       "end_frame": 63,
-      "label": "Snack"
+      "label": "PlaceRedSnackBoxInTrashBin"
     },
     {
       "start_frame": 64,
       "end_frame": 93,
-      "label": "Trans"
+      "label": "Transition"
     },
     {
       "start_frame": 94,
       "end_frame": 155,
-      "label": "Choco"
+      "label": "PlaceLightGreenSnackBoxInTrashBin"
     },
     {
       "start_frame": 156,
       "end_frame": 205,
-      "label": "Trans"
+      "label": "Transition"
     },
     {
       "start_frame": 206,
       "end_frame": 264,
-      "label": "Lock"
+      "label": "StackContainers"
     },
     {
       "start_frame": 265,
       "end_frame": 288,
-      "label": "Trans"
+      "label": "Transition"
     },
     {
       "start_frame": 289,
       "end_frame": 357,
-      "label": "Cup"
+      "label": "HangCup"
     },
     {
       "start_frame": 358,
       "end_frame": 385,
-      "label": "Trans"
+      "label": "Transition"
     },
     {
       "start_frame": 386,
       "end_frame": 560,
-      "label": "Sweep"
+      "label": "WipeFloorWithSponge"
     },
     {
       "start_frame": 561,
       "end_frame": 587,
-      "label": "Trans"
+      "label": "Transition"
     }
   ]
 }

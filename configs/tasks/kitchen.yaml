@@ -2,7 +2,7 @@ schema_version: 1
 task_id: kitchen
 instruction: manipulate kitchen objects
 
-action_labels: [Cup, Lock, Choco, Snack, Sweep, Trans]
+action_labels: [HangCup, StackContainers, PlaceLightGreenSnackBoxInTrashBin, PlaceRedSnackBoxInTrashBin, WipeFloorWithSponge, Transition]
 
 object_specs:
   - ../objects/cup_blue.yaml

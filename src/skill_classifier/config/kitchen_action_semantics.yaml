@@ -1,10 +1,9 @@
-# Semantic metadata for the kitchen skill labels.  The short labels remain
-# unchanged because they are the stable class IDs stored in gt_labels.json and
-# features.pt.  English object phrases are used for open-vocabulary grounding;
-# Korean descriptions are used in annotation/result visualizations.
+# Semantic metadata for the English kitchen action labels stored in
+# gt_labels.json. English object phrases are also used for open-vocabulary
+# grounding and annotation/result visualizations.
 
 schema_version: 1
-action_labels: [Cup, Lock, Choco, Snack, Sweep, Trans]
+action_labels: [HangCup, StackContainers, PlaceLightGreenSnackBoxInTrashBin, PlaceRedSnackBoxInTrashBin, WipeFloorWithSponge, Transition]
 
 objects:
   cup:
@@ -24,15 +23,15 @@ objects:
       - shallow purple rectangular plastic food container with lid
       - shallow silver rectangular metal food container
     max_instances: 2
-  snack_container:
-    ko: 과자 쓰레기
-    prompts: [yellow cylindrical potato chips can, snack can, chips container]
-    grounding_queries: [yellow cylindrical potato chips can]
+  light_green_snack_box:
+    ko: 연두색 과자 상자
+    prompts: [light green snack box, light green rectangular snack package]
+    grounding_queries: [light green snack box]
     max_instances: 1
-  choco_carton:
-    ko: 초코 우유팩
-    prompts: [chocolate milk carton, chocolate drink carton, choco carton]
-    grounding_queries: [chocolate milk carton]
+  red_snack_box:
+    ko: 빨간색 과자 상자
+    prompts: [red snack box, red rectangular snack package]
+    grounding_queries: [red snack box]
     max_instances: 1
   trash_bin:
     ko: 쓰레기통
@@ -51,39 +50,39 @@ objects:
     grounding_enabled: false
 
 actions:
-  Cup:
+  HangCup:
     ko: 컵 걸기
-    en: hang a cup on the cup holder
+    en: Hang the cup on the cup holder
     source_objects: [cup]
     target_objects: [cup_holder]
     tool_objects: []
-  Lock:
+  StackContainers:
     ko: 락앤락통 겹치기
-    en: stack one food container on another food container
+    en: Stack one food container on another food container
     source_objects: [food_container]
     target_objects: [food_container]
     tool_objects: []
-  Choco:
-    ko: 초코 버리기
-    en: throw the chocolate milk carton into the trash bin
-    source_objects: [choco_carton]
+  PlaceLightGreenSnackBoxInTrashBin:
+    ko: 연두색 과자 상자를 쓰레기통에 넣기
+    en: Place the light green snack box in the trash bin
+    source_objects: [light_green_snack_box]
     target_objects: [trash_bin]
     tool_objects: []
-  Snack:
-    ko: 과자 쓰레기 버리기
-    en: throw the snack container into the trash bin
-    source_objects: [snack_container]
+  PlaceRedSnackBoxInTrashBin:
+    ko: 빨간색 과자 상자를 쓰레기통에 넣기
+    en: Place the red snack box in the trash bin
+    source_objects: [red_snack_box]
     target_objects: [trash_bin]
     tool_objects: []
-  Sweep:
+  WipeFloorWithSponge:
     ko: 바닥 스펀지로 닦기
-    en: wipe the surface with a cleaning sponge
+    en: Wipe the floor with the sponge
     source_objects: []
     target_objects: [work_surface]
     tool_objects: [sponge]
-  Trans:
+  Transition:
     ko: 행동 사이 전환
-    en: transition between manipulation actions
+    en: Transition between actions
     source_objects: []
     target_objects: []
     tool_objects: []

@@ -1,0 +1,96 @@
+# Semantic metadata for the kitchen skill labels.  The short labels remain
+# unchanged because they are the stable class IDs stored in gt_labels.json and
+# features.pt.  English object phrases are used for open-vocabulary grounding;
+# Korean descriptions are used in annotation/result visualizations.
+
+schema_version: 1
+action_labels: [Cup, Lock, Milk, Snack, Sweep, Trans]
+
+objects:
+  cup:
+    ko: 컵
+    prompts: [cup, mug]
+    grounding_queries: [cup]
+    max_instances: 2
+  cup_holder:
+    ko: 컵 홀더
+    prompts: [green wire cup holder rack, cup holder, mug rack]
+    grounding_queries: [green wire cup holder rack]
+    max_instances: 1
+  food_container:
+    ko: 락앤락통
+    prompts: [shallow food storage container with lid, plastic food container, lunch box]
+    grounding_queries:
+      - shallow purple rectangular plastic food container with lid
+      - shallow silver rectangular metal food container
+    max_instances: 2
+  snack_container:
+    ko: 과자 쓰레기
+    prompts: [yellow cylindrical potato chips can, snack can, chips container]
+    grounding_queries: [yellow cylindrical potato chips can]
+    max_instances: 1
+  milk_carton:
+    ko: 우유팩
+    prompts: [green rectangular milk carton, milk carton, milk box]
+    grounding_queries: [green rectangular milk carton]
+    max_instances: 1
+  trash_bin:
+    ko: 쓰레기통
+    prompts: [large white rectangular trash bin, trash bin, waste bin]
+    grounding_queries: [large white rectangular trash bin]
+    max_instances: 1
+  sponge:
+    ko: 스펀지
+    prompts: [blue rectangular cleaning sponge, cleaning sponge, scrub sponge]
+    grounding_queries: [blue rectangular cleaning sponge]
+    max_instances: 1
+  work_surface:
+    ko: 바닥 또는 작업면
+    prompts: [floor surface, table surface, work surface]
+    max_instances: 1
+    grounding_enabled: false
+
+actions:
+  Cup:
+    ko: 컵 걸기
+    en: hang a cup on the cup holder
+    source_objects: [cup]
+    target_objects: [cup_holder]
+    tool_objects: []
+  Lock:
+    ko: 락앤락통 겹치기
+    en: stack one food container on another food container
+    source_objects: [food_container]
+    target_objects: [food_container]
+    tool_objects: []
+  Milk:
+    ko: 우유 버리기
+    en: throw the milk carton into the trash bin
+    source_objects: [milk_carton]
+    target_objects: [trash_bin]
+    tool_objects: []
+  Snack:
+    ko: 과자 쓰레기 버리기
+    en: throw the snack container into the trash bin
+    source_objects: [snack_container]
+    target_objects: [trash_bin]
+    tool_objects: []
+  Sweep:
+    ko: 바닥 스펀지로 닦기
+    en: wipe the surface with a cleaning sponge
+    source_objects: []
+    target_objects: [work_surface]
+    tool_objects: [sponge]
+  Trans:
+    ko: 행동 사이 전환
+    en: transition between manipulation actions
+    source_objects: []
+    target_objects: []
+    tool_objects: []
+
+conditioning_contract:
+  # Every clip receives the same object vocabulary.  Selecting only the
+  # ground-truth action sentence would leak the target label.
+  use_shared_object_bank_for_every_clip: true
+  forbid_ground_truth_selected_prompt: true
+  prompt_language: en

@@ -30,6 +30,34 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import gradio as gr
 from utils.labels import ACTION_LABELS
+from skill_classifier.action_semantics import load_action_semantics
+
+
+ACTION_SEMANTICS = load_action_semantics(
+    Path(__file__).resolve().parents[1] / "config/kitchen_action_semantics.yaml"
+)
+ACTION_DESCRIPTIONS = {
+    label: ACTION_SEMANTICS["actions"][label]["ko"] for label in ACTION_LABELS
+}
+VIDEO_SUFFIXES = (".mov", ".mp4", ".avi", ".mkv")
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+LABEL_PROFILES = {
+    "kitchen_milk": {
+        "labels": list(ACTION_LABELS),
+        "descriptions": dict(ACTION_DESCRIPTIONS),
+    },
+    "kitchen_choco": {
+        "labels": ["Cup", "Lock", "Choco", "Snack", "Sweep", "Trans"],
+        "descriptions": {
+            "Cup": "컵 걸기",
+            "Lock": "락앤락통 겹치기",
+            "Choco": "초코 버리기",
+            "Snack": "과자 쓰레기 버리기",
+            "Sweep": "바닥 스펀지로 닦기",
+            "Trans": "행동 사이 전환",
+        },
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -42,32 +70,67 @@ def discover_episodes(data_dir):
     for d in sorted(data_dir.iterdir()):
         if not d.is_dir():
             continue
-        rgb_dir = d / "rgb"
-        if not rgb_dir.is_dir():
-            continue
-        frames = sorted(rgb_dir.glob("*.png"))
-        if not frames:
+        rgb_path = d / "rgb"
+        frames = []
+        direct_video = None
+        if rgb_path.is_dir():
+            frames = sorted(
+                path for path in rgb_path.iterdir()
+                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+            )
+            if not frames:
+                continue
+            num_frames = len(frames)
+        elif rgb_path.is_file() and rgb_path.resolve().suffix.lower() in VIDEO_SUFFIXES:
+            direct_video = str(rgb_path.resolve())
+            num_frames = get_video_info(direct_video)["frames"]
+        else:
             continue
         episodes.append({
             "name": d.name,
             "path": str(d),
-            "rgb_dir": str(rgb_dir),
-            "num_frames": len(frames),
+            "rgb_dir": str(rgb_path) if rgb_path.is_dir() else None,
+            "direct_video": direct_video,
+            "num_frames": num_frames,
             "frame_names": [f.stem for f in frames],
         })
     return episodes
 
 
-def get_video_fps(video_path):
-    """Extract FPS from an existing video file."""
+def get_video_info(video_path):
+    """Return validated FPS, frame count, and dimensions for a preview video."""
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.release()
-    return fps if fps > 0 else 15.0
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"cannot open preview video: {video_path}")
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    finally:
+        cap.release()
+    if fps <= 0 or frames <= 0 or width <= 0 or height <= 0:
+        raise ValueError(
+            f"invalid preview metadata: fps={fps}, frames={frames}, "
+            f"size={width}x{height}"
+        )
+    return {"fps": fps, "frames": frames, "width": width, "height": height}
 
 
-def build_rgb_video(rgb_dir, frame_names, fps, out_path):
-    """Build a left-rotated H.264 video from raw RGB frames. Cached as _raw_video.mp4."""
+def get_video_fps(video_path):
+    return get_video_info(video_path)["fps"]
+
+
+def build_rgb_video(rgb_dir, frame_names, fps, out_path, rotation="ccw"):
+    """Build an H.264 preview from raw RGB frames with an explicit rotation."""
+    video_filters = {
+        "none": "",
+        "ccw": "-vf transpose=2 ",
+        "cw": "-vf transpose=1 ",
+        "180": "-vf hflip,vflip ",
+    }
+    if rotation not in video_filters:
+        raise ValueError(f"unsupported rotation: {rotation}")
     import tempfile
     list_fd, list_path = tempfile.mkstemp(suffix=".txt")
     try:
@@ -79,8 +142,9 @@ def build_rgb_video(rgb_dir, frame_names, fps, out_path):
                 f.write(f"duration {duration}\n")
         ret = os.system(
             f'ffmpeg -y -f concat -safe 0 -i "{list_path}" '
-            f'-vf transpose=2 -vcodec libx264 -r {fps} -crf 23 '
-            f'-pix_fmt yuv420p "{out_path}" -loglevel error'
+            f'{video_filters[rotation]}-vcodec libx264 -r {fps} -crf 23 '
+            f'-frames:v {len(frame_names)} -pix_fmt yuv420p "{out_path}" '
+            f'-loglevel error'
         )
         if ret != 0:
             raise RuntimeError(f"ffmpeg failed (exit {ret}) when building {out_path}")
@@ -129,6 +193,46 @@ def validate_segments(num_frames, segments):
     return frames_to_ranges(unlabeled), frames_to_ranges(overlapping), len(unlabeled), len(overlapping)
 
 
+def validate_segments_for_save(num_frames, segments, allowed_labels=None):
+    """Validate user-provided segment values before writing a GT file."""
+    if not isinstance(segments, list):
+        raise ValueError("segments must be a list")
+    allowed_labels = set(ACTION_LABELS if allowed_labels is None else allowed_labels)
+    normalized = []
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            raise ValueError(f"segment {index + 1} is not an object")
+        start = segment.get("start_frame")
+        end = segment.get("end_frame")
+        label = segment.get("label")
+        if (
+            isinstance(start, bool)
+            or isinstance(end, bool)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+        ):
+            raise ValueError(f"segment {index + 1} frame bounds must be integers")
+        if not 0 <= start <= end < num_frames:
+            raise ValueError(
+                f"segment {index + 1} is out of range: {start}-{end}; "
+                f"valid frames are 0-{num_frames - 1}"
+            )
+        if label not in allowed_labels:
+            raise ValueError(f"segment {index + 1} has unknown label: {label!r}")
+        normalized.append(
+            {"start_frame": start, "end_frame": end, "label": label}
+        )
+    normalized.sort(key=lambda segment: (segment["start_frame"], segment["end_frame"]))
+    for previous, current in zip(normalized, normalized[1:]):
+        if current["start_frame"] <= previous["end_frame"]:
+            raise ValueError(
+                "overlapping segments: "
+                f"{previous['start_frame']}-{previous['end_frame']} and "
+                f"{current['start_frame']}-{current['end_frame']}"
+            )
+    return normalized
+
+
 def save_gt(episode_path, episode_name, num_frames, fps, segments):
     gt_path = os.path.join(episode_path, "gt_labels.json")
     with open(gt_path, "w") as f:
@@ -145,9 +249,12 @@ def save_gt(episode_path, episode_name, num_frames, fps, segments):
 # HTML labeling panel  (no <script>, no onclick — JS injected via gr.Blocks)
 # ---------------------------------------------------------------------------
 
-def make_panel_html(action_labels: list) -> str:
+def make_panel_html(action_labels: list, descriptions=None) -> str:
+    descriptions = descriptions or {}
     buttons_html = "\n".join(
-        f'<button class="skill-btn" data-skill="{lbl}">{lbl}</button>'
+        f'<button class="skill-btn" data-skill="{lbl}" '
+        f'data-description="{descriptions.get(lbl, lbl)}">'
+        f'<b>{lbl}</b><br><small>{descriptions.get(lbl, lbl)}</small></button>'
         for lbl in action_labels
     )
     return f"""
@@ -254,24 +361,35 @@ def make_panel_html(action_labels: list) -> str:
 PANEL_JS = """
 (function() {
   var _fps = 15;
+  var _numFrames = 1;
   var _active = null;
   var _startF = null;
+  var _videoBound = null;
+  var _lastFrame = null;
+  var _lastPaused = null;
+  var _lastOverlayKey = null;
   window._lbl_segs = [];   // global — read by save_btn js= at click time
 
   function getVid() {
+    if (_videoBound && _videoBound.isConnected) return _videoBound;
     return document.querySelector('#video-player video') || document.querySelector('video');
+  }
+
+  function clampFrame(frame) {
+    return Math.max(0, Math.min(_numFrames - 1, frame));
   }
 
   function curFrame() {
     var v = getVid();
-    return v ? Math.floor(v.currentTime * _fps) : 0;
+    return v ? clampFrame(Math.floor(v.currentTime * _fps)) : 0;
   }
 
   function stepFrame(delta) {
     var v = getVid();
     if (!v) return;
     v.pause();
-    v.currentTime = Math.max(0, v.currentTime + delta / _fps);
+    var target = clampFrame(curFrame() + delta);
+    v.currentTime = (target + 0.5) / _fps;
   }
 
   var _speed = 1.0;
@@ -290,10 +408,13 @@ PANEL_JS = """
     if (v.paused) { v.playbackRate = _speed; v.play(); } else { v.pause(); }
   }
 
-  function syncPlayBtn() {
+  function syncPlayBtn(force) {
     var v = getVid();
     var btn = document.getElementById('lbl-playpause-btn');
     if (!btn) return;
+    var paused = !v || v.paused;
+    if (!force && paused === _lastPaused) return;
+    _lastPaused = paused;
     btn.innerHTML = (v && !v.paused) ? '&#9646;&#9646; Pause' : '&#9654; Play';
   }
 
@@ -306,6 +427,15 @@ PANEL_JS = """
       if (f >= segs[i].start_frame && f <= segs[i].end_frame) found.push(segs[i].label);
     }
     return found;
+  }
+
+  function displaySkill(label) {
+    var button = Array.from(document.querySelectorAll('.skill-btn')).find(
+      function(candidate) { return candidate.dataset.skill === label; }
+    );
+    return button && button.dataset.description
+      ? label + ' \u2014 ' + button.dataset.description
+      : label;
   }
 
   function initOverlay() {
@@ -325,45 +455,75 @@ PANEL_JS = """
     container.appendChild(_ov);
   }
 
-  function updateOverlay(f) {
+  function updateOverlay(f, force) {
     if (!_ov) return;
     var labels = getLabelsAtFrame(f);
+    var overlayKey = labels.length + ':' + labels.join('|');
+    if (!force && overlayKey === _lastOverlayKey) return;
+    _lastOverlayKey = overlayKey;
     if (labels.length === 0) {
       _ov.textContent = '\u26A0 No label';
       _ov.style.background = 'rgba(161,98,7,0.88)';
       _ov.style.color = '#fef9c3';
       _ov.style.outline = '2px solid rgba(234,179,8,0.7)';
     } else if (labels.length === 1) {
-      _ov.textContent = '\u2713 ' + labels[0];
+      _ov.textContent = '\u2713 ' + displaySkill(labels[0]);
       _ov.style.background = 'rgba(21,128,61,0.88)';
       _ov.style.color = '#dcfce7';
       _ov.style.outline = '2px solid rgba(74,222,128,0.7)';
     } else {
-      _ov.textContent = '\u26A0 ' + labels.join(', ');
+      _ov.textContent = '\u26A0 ' + labels.map(displaySkill).join(', ');
       _ov.style.background = 'rgba(185,28,28,0.88)';
       _ov.style.color = '#fee2e2';
       _ov.style.outline = '2px solid rgba(248,113,113,0.7)';
     }
   }
 
-  // Try to init overlay once video-player is in DOM (retry until found)
-  var _overlayInitInterval = setInterval(function() {
-    initOverlay();
-    if (_ov) clearInterval(_overlayInitInterval);
-  }, 500);
-
-  // Live frame/time counter + play button sync + overlay
-  setInterval(function() {
+  function renderVideoState(force) {
     var v = getVid();
     if (!v) return;
-    var f = Math.floor(v.currentTime * _fps);
+    var f = curFrame();
+    if (!force && f === _lastFrame) return;
+    _lastFrame = f;
     var fe = document.getElementById('lbl-frame');
     var te = document.getElementById('lbl-time');
     if (fe) fe.textContent = 'Frame: ' + f;
     if (te) te.textContent = 'Time: ' + v.currentTime.toFixed(2) + 's';
-    syncPlayBtn();
-    updateOverlay(f);
-  }, 100);
+    updateOverlay(f, force);
+  }
+
+  function bindVideoElement() {
+    var candidate = document.querySelector('#video-player video') || document.querySelector('video');
+    if (!candidate || candidate === _videoBound) return;
+    _videoBound = candidate;
+    _lastFrame = null;
+    _lastPaused = null;
+    _lastOverlayKey = null;
+    initOverlay();
+    candidate.addEventListener('play', function() { syncPlayBtn(true); });
+    candidate.addEventListener('pause', function() { syncPlayBtn(true); });
+    candidate.addEventListener('ended', function() { syncPlayBtn(true); renderVideoState(true); });
+    candidate.addEventListener('seeked', function() { renderVideoState(true); });
+    candidate.addEventListener('loadeddata', function() { renderVideoState(true); });
+    syncPlayBtn(true);
+    renderVideoState(true);
+
+    if (typeof candidate.requestVideoFrameCallback === 'function') {
+      var onVideoFrame = function() {
+        if (_videoBound !== candidate) return;
+        renderVideoState(false);
+        candidate.requestVideoFrameCallback(onVideoFrame);
+      };
+      candidate.requestVideoFrameCallback(onVideoFrame);
+    } else {
+      candidate.addEventListener('timeupdate', function() { renderVideoState(false); });
+    }
+  }
+
+  // Gradio may replace the <video> element when the episode changes.  Poll
+  // only for element replacement; frame UI updates are driven by decoded
+  // video frames and do not repaint the video layer on a fixed timer.
+  setInterval(bindVideoElement, 500);
 
   // Keyboard shortcuts: Space=play/pause, Left/Right=step frame
   document.addEventListener('keydown', function(e) {
@@ -380,7 +540,7 @@ PANEL_JS = """
     var el = document.getElementById('lbl-status');
     if (!el) return;
     if (_active) {
-      el.innerHTML = '&#128308; Recording: <b>' + _active + '</b> &mdash; started @ frame ' + _startF;
+      el.innerHTML = '&#128308; Recording: <b>' + displaySkill(_active) + '</b> &mdash; started @ frame ' + _startF;
       el.style.background = '#450a0a';
     } else {
       el.innerHTML = '&#9898; Not recording';
@@ -402,38 +562,48 @@ PANEL_JS = """
   function refreshSegs() {
     var el = document.getElementById('lbl-segs');
     if (!el) return;
+    _lastOverlayKey = null;
     var segs = window._lbl_segs;
     if (!segs.length) {
       el.innerHTML = '<span style="color:#555;padding:6px;display:block;">(empty)</span>';
+      updateOverlay(curFrame(), true);
       return;
     }
     var labels = getActionLabels();
     var rows = segs.map(function(s, i) {
       var opts = labels.map(function(lbl) {
-        return '<option value="' + lbl + '" style="background:#1e1e1e;color:#ffffff;"' + (s.label === lbl ? ' selected' : '') + '>' + lbl + '</option>';
+        return '<option value="' + lbl + '" style="background:#1e1e1e;color:#ffffff;"' + (s.label === lbl ? ' selected' : '') + '>' + displaySkill(lbl) + '</option>';
       }).join('');
       return '<tr style="border-bottom:1px solid #222;">' +
         '<td style="color:#6b7280;padding:3px 5px;text-align:right;">' + (i + 1) + '</td>' +
-        '<td style="padding:3px 3px;"><input type="number" min="0" value="' + s.start_frame + '" data-si="' + i + '" data-f="start_frame" style="' + INP + 'width:58px;"></td>' +
+        '<td style="padding:3px 3px;"><input type="number" min="0" max="' + (_numFrames - 1) + '" value="' + s.start_frame + '" data-si="' + i + '" data-f="start_frame" style="' + INP + 'width:58px;"></td>' +
         '<td style="color:#4b5563;padding:0 3px;">-</td>' +
-        '<td style="padding:3px 3px;"><input type="number" min="0" value="' + s.end_frame + '" data-si="' + i + '" data-f="end_frame" style="' + INP + 'width:58px;"></td>' +
+        '<td style="padding:3px 3px;"><input type="number" min="0" max="' + (_numFrames - 1) + '" value="' + s.end_frame + '" data-si="' + i + '" data-f="end_frame" style="' + INP + 'width:58px;"></td>' +
         '<td style="padding:3px 3px;"><select data-si="' + i + '" data-f="label" style="' + SEL + '">' + opts + '</select></td>' +
         '<td style="padding:3px 3px;"><button data-del="' + i + '" style="' + DEL + '">&#10005;</button></td>' +
         '</tr>';
     }).join('');
     el.innerHTML = '<table style="width:100%;border-collapse:collapse;">' + rows + '</table>';
     el.scrollTop = el.scrollHeight;
+    updateOverlay(curFrame(), true);
   }
 
   // Poll hidden textboxes for Python→JS updates (fps + episode change)
   var _lastSegs = null;
   var _lastFps  = null;
+  var _lastNumFrames = null;
   setInterval(function() {
     var fta = document.querySelector('#fps-hidden textarea');
     if (fta && fta.value !== _lastFps) {
       _lastFps = fta.value;
       var v = parseFloat(fta.value);
-      if (v > 0) _fps = v;
+      if (v > 0) { _fps = v; _lastFrame = null; }
+    }
+    var nfa = document.querySelector('#num-frames-hidden textarea');
+    if (nfa && nfa.value !== _lastNumFrames) {
+      _lastNumFrames = nfa.value;
+      var n = parseInt(nfa.value);
+      if (n > 0) { _numFrames = n; _lastFrame = null; }
     }
     var ta = document.querySelector('#segments-hidden textarea');
     if (!ta) return;
@@ -455,8 +625,13 @@ PANEL_JS = """
       window._lbl_segs[idx].label = e.target.value;
     } else {
       var v = parseInt(e.target.value);
-      if (!isNaN(v)) window._lbl_segs[idx][ds.f] = v;
+      if (!isNaN(v)) {
+        v = clampFrame(v);
+        e.target.value = v;
+        window._lbl_segs[idx][ds.f] = v;
+      }
     }
+    updateOverlay(curFrame(), true);
   }
   document.addEventListener('input',  onSegFieldChange);
   document.addEventListener('change', onSegFieldChange);
@@ -483,11 +658,15 @@ PANEL_JS = """
       if (_active === null) {
         _active = skill; _startF = f;
       } else if (_active === skill) {
-        window._lbl_segs.push({start_frame: _startF, end_frame: f, label: skill});
+        if (f >= _startF) {
+          window._lbl_segs.push({start_frame: _startF, end_frame: f, label: skill});
+        }
         _active = null; _startF = null;
         refreshSegs();
       } else {
-        window._lbl_segs.push({start_frame: _startF, end_frame: f - 1, label: _active});
+        if (f > _startF) {
+          window._lbl_segs.push({start_frame: _startF, end_frame: f - 1, label: _active});
+        }
         _active = skill; _startF = f;
         refreshSegs();
       }
@@ -513,22 +692,22 @@ PANEL_JS = """
 # JS run at save-button click time: reads window._lbl_segs directly (bypasses hidden textbox sync)
 SAVE_JS = "(ep_name, _segs_ignored) => [ep_name, JSON.stringify(window._lbl_segs || [])]"
 APP_CSS = """
-#segments-hidden, #fps-hidden {
+#segments-hidden, #fps-hidden, #num-frames-hidden {
   display: none !important;
 }
 
-/* Keep the labeling video compact and aligned to the left. */
+/* Preserve enough width to inspect both synchronized camera views. */
 #video-player {
-  width: min(100%, 640px) !important;
-  max-width: 640px !important;
+  width: min(100%, 1280px) !important;
+  max-width: 1280px !important;
   margin-left: 0 !important;
   margin-right: auto !important;
 }
 
 #video-player video {
   width: 100% !important;
-  max-width: 640px !important;
-  max-height: 360px !important;
+  max-width: 1280px !important;
+  max-height: 720px !important;
   object-fit: contain !important;
 }
 """
@@ -538,7 +717,112 @@ APP_CSS = """
 # Gradio app
 # ---------------------------------------------------------------------------
 
-def build_app(data_dir, fps):
+def _raw_video_path(episode_path, rotation):
+    # Retain the historical cache filename for the historical CCW default.
+    filename = "_raw_video.mp4" if rotation == "ccw" else f"_raw_video_{rotation}.mp4"
+    return os.path.join(episode_path, filename)
+
+
+def _stereo_video_path(episode_path, rotation, num_frames, fps):
+    fps_tag = f"{fps:g}".replace(".", "p")
+    filename = (
+        f"_annotation_stereo_v2_{rotation}_{num_frames}f_{fps_tag}fps.mp4"
+    )
+    return os.path.join(episode_path, filename)
+
+
+def _ensure_preview(ep, fps, rotation, view):
+    if view == "primary":
+        video_path = _raw_video_path(ep["path"], rotation)
+        if not os.path.exists(video_path):
+            print(f"  Building primary video: {ep['name']} ({ep['num_frames']} frames)...")
+            if ep.get("direct_video"):
+                filters = {
+                    "none": None,
+                    "ccw": "transpose=2",
+                    "cw": "transpose=1",
+                    "180": "hflip,vflip",
+                }
+                import subprocess
+                command = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", ep["direct_video"],
+                ]
+                if filters[rotation]:
+                    command.extend(["-vf", filters[rotation]])
+                command.extend([
+                    "-an", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "22", "-pix_fmt", "yuv420p", video_path,
+                ])
+                subprocess.run(command, check=True)
+            else:
+                build_rgb_video(
+                    ep["rgb_dir"], ep["frame_names"], fps,
+                    video_path, rotation=rotation
+                )
+    elif view == "stereo":
+        if rotation != "none":
+            raise ValueError("stereo preview currently requires --rotation none")
+        from data_preprocess.build_stereo_sync_preview import (
+            _read_pairs,
+            _rgb_paths,
+            build_preview,
+        )
+
+        episode = Path(ep["path"])
+        camera_1_paths = _rgb_paths(episode, 1)
+        camera_2_paths = _rgb_paths(episode, 2)
+        pairs = _read_pairs(episode / "stereo_pairs.csv")
+        counts = (ep["num_frames"], len(camera_1_paths), len(camera_2_paths), len(pairs))
+        if len(set(counts)) != 1:
+            raise ValueError(
+                "stereo preview requires identical frame counts: "
+                f"root/camera1/camera2/pairs={counts}"
+            )
+        video_path = _stereo_video_path(
+            ep["path"], rotation, ep["num_frames"], fps
+        )
+        if not os.path.exists(video_path):
+            print(f"  Building stereo video: {ep['name']} ({ep['num_frames']} pairs)...")
+            build_preview(
+                camera_1_paths,
+                camera_2_paths,
+                pairs,
+                Path(video_path),
+                fps,
+                panel_width=640,
+                panel_height=360,
+            )
+    else:
+        raise ValueError(view)
+
+    info = get_video_info(video_path)
+    if info["frames"] != ep["num_frames"]:
+        raise ValueError(
+            f"preview/frame mismatch: {info['frames']} != {ep['num_frames']} "
+            f"({video_path})"
+        )
+    if abs(info["fps"] - fps) > 0.05:
+        raise ValueError(
+            f"preview/FPS mismatch: {info['fps']:.6f} != {fps:.6f} "
+            f"({video_path})"
+        )
+    return video_path, info
+
+
+def build_app(
+    data_dir,
+    fps,
+    rotation="ccw",
+    view="primary",
+    action_labels=None,
+    action_descriptions=None,
+):
+    action_labels = list(ACTION_LABELS if action_labels is None else action_labels)
+    action_descriptions = (
+        dict(ACTION_DESCRIPTIONS)
+        if action_descriptions is None else dict(action_descriptions)
+    )
     episodes = discover_episodes(data_dir)
     if not episodes:
         raise ValueError(f"No episodes found in {data_dir}")
@@ -548,27 +832,39 @@ def build_app(data_dir, fps):
 
     def on_ep_change(ep_name):
         ep = ep_map[ep_name]
-        video_path = os.path.join(ep["path"], "_raw_video.mp4")
-        if not os.path.exists(video_path):
-            print(f"  Building video: {ep_name} ({ep['num_frames']} frames)...")
-            build_rgb_video(ep["rgb_dir"], ep["frame_names"], fps, video_path)
-            print(f"  Done: {video_path}")
-        detected_fps = get_video_fps(video_path)
+        video_path, video_info = _ensure_preview(ep, fps, rotation, view)
+        detected_fps = video_info["fps"]
         gt = load_gt(ep["path"])
+        if "num_frames" in gt and int(gt["num_frames"]) != ep["num_frames"]:
+            raise ValueError(
+                f"existing GT frame count does not match episode: "
+                f"{gt['num_frames']} != {ep['num_frames']}"
+            )
+        if "fps" in gt and abs(float(gt["fps"]) - detected_fps) > 0.05:
+            raise ValueError(
+                f"existing GT FPS does not match preview: "
+                f"{gt['fps']} != {detected_fps}"
+            )
         segs_json = json.dumps(gt["segments"])
-        info = f"{ep['num_frames']} frames  |  FPS: {detected_fps:.1f}"
+        info = (
+            f"{ep['num_frames']} common frames  |  FPS: {detected_fps:.1f}"
+            f"  |  view: {view}"
+        )
         if gt["segments"]:
             info += f"  |  {len(gt['segments'])} segments saved"
-        return video_path, segs_json, str(detected_fps), info
+        return video_path, segs_json, str(detected_fps), str(ep["num_frames"]), info
 
     def on_save(ep_name, segs_json):
         ep = ep_map[ep_name]
         try:
             segments = json.loads(segs_json or "[]")
+            segments = validate_segments_for_save(
+                ep["num_frames"], segments, allowed_labels=action_labels
+            )
         except Exception as e:
-            return f"❌ Parse error: {e}"
-        video_path = os.path.join(ep["path"], "_raw_video.mp4")
-        detected_fps = get_video_fps(video_path) if os.path.exists(video_path) else fps
+            return f"❌ Validation error: {e}"
+        video_path, video_info = _ensure_preview(ep, fps, rotation, view)
+        detected_fps = video_info["fps"]
         gt_path = save_gt(ep["path"], ep_name, ep["num_frames"], detected_fps, segments)
 
         msg = f"✅ Saved {len(segments)} segments → {gt_path}"
@@ -597,14 +893,14 @@ def build_app(data_dir, fps):
             ep_info = gr.Textbox(label="Info", interactive=False, scale=2)
 
         with gr.Row():
-            with gr.Column(scale=3):
-                video_comp = gr.Video(
-                    label="Raw RGB Video",
-                    elem_id="video-player",
-                    interactive=False,
-                )
-            with gr.Column(scale=1):
-                gr.HTML(make_panel_html(ACTION_LABELS))
+            video_comp = gr.Video(
+                label="Synchronized Stereo Video" if view == "stereo" else "Raw RGB Video",
+                elem_id="video-player",
+                interactive=False,
+            )
+
+        with gr.Row():
+            gr.HTML(make_panel_html(action_labels, action_descriptions))
 
         with gr.Row():
             save_btn   = gr.Button("Save GT Labels", variant="primary", scale=1)
@@ -618,11 +914,20 @@ def build_app(data_dir, fps):
         fps_hidden = gr.Textbox(
             value="15", elem_id="fps-hidden",
         )
+        num_frames_hidden = gr.Textbox(
+            value="1", elem_id="num-frames-hidden",
+        )
 
         ep_dropdown.change(
             on_ep_change,
             inputs=[ep_dropdown],
-            outputs=[video_comp, segments_hidden, fps_hidden, ep_info],
+            outputs=[
+                video_comp,
+                segments_hidden,
+                fps_hidden,
+                num_frames_hidden,
+                ep_info,
+            ],
         )
         save_btn.click(
             on_save,
@@ -632,7 +937,13 @@ def build_app(data_dir, fps):
         )
         app.load(
             lambda: on_ep_change(ep_names[0]),
-            outputs=[video_comp, segments_hidden, fps_hidden, ep_info],
+            outputs=[
+                video_comp,
+                segments_hidden,
+                fps_hidden,
+                num_frames_hidden,
+                ep_info,
+            ],
         )
 
     return app
@@ -646,13 +957,40 @@ def main():
     parser.add_argument("--fps",  type=float, default=30.0,
                         help="FPS used only when building _raw_video.mp4 for the first time. "
                              "After that, FPS is auto-detected from the video file.")
+    parser.add_argument(
+        "--rotation",
+        choices=["none", "ccw", "cw", "180"],
+        default="ccw",
+        help="Preview rotation applied while building the cached video (default: ccw).",
+    )
+    parser.add_argument(
+        "--view",
+        choices=["primary", "stereo"],
+        default="primary",
+        help="Show the root RGB stream or a synchronized camera_1/camera_2 composite.",
+    )
+    parser.add_argument(
+        "--label-profile",
+        choices=sorted(LABEL_PROFILES),
+        default="kitchen_milk",
+        help="Label vocabulary shown and accepted by the annotation tool.",
+    )
     args = parser.parse_args()
 
+    profile = LABEL_PROFILES[args.label_profile]
     print(f"Labeling tool for: {args.data_dir}")
+    print(f"Label profile: {args.label_profile} ({', '.join(profile['labels'])})")
     print(f"SSH tunnel : ssh -L {args.port}:localhost:{args.port} <server>")
     print(f"Browser    : http://localhost:{args.port}")
 
-    app = build_app(args.data_dir, args.fps)
+    app = build_app(
+        args.data_dir,
+        args.fps,
+        rotation=args.rotation,
+        view=args.view,
+        action_labels=profile["labels"],
+        action_descriptions=profile["descriptions"],
+    )
     app.launch(
         server_name="0.0.0.0",
         server_port=args.port,

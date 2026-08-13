@@ -5,7 +5,14 @@ from src.skill_classifier.train import resolve_action_labels
 
 class SkillClassifierLabelTests(unittest.TestCase):
     def test_resolves_dataset_scoped_choco_vocabulary(self):
-        labels = ["Cup", "Lock", "Choco", "Snack", "Sweep", "Trans"]
+        labels = [
+            "HangCup",
+            "StackContainers",
+            "PlaceLightGreenSnackBoxInTrashBin",
+            "PlaceRedSnackBoxInTrashBin",
+            "WipeFloorWithSponge",
+            "Transition",
+        ]
         recordings = [{"action_labels": labels}, {"action_labels": labels}]
         self.assertEqual(resolve_action_labels(recordings, labels), labels)
 

@@ -20,9 +20,19 @@ class ActionSemanticsTests(unittest.TestCase):
         config = load_action_semantics(SEMANTICS)
         self.assertEqual(
             config["action_labels"],
-            ["Cup", "Lock", "Milk", "Snack", "Sweep", "Trans"],
+            [
+                "HangCup",
+                "StackContainers",
+                "PlaceLightGreenSnackBoxInTrashBin",
+                "PlaceRedSnackBoxInTrashBin",
+                "WipeFloorWithSponge",
+                "Transition",
+            ],
         )
-        self.assertEqual(display_label(config, "Cup"), "Cup — 컵 걸기")
+        self.assertEqual(
+            display_label(config, "HangCup", language="en"),
+            "HangCup — Hang the cup on the cup holder",
+        )
         self.assertEqual(object_prompt_bank(config)[0]["name"], "cup")
         self.assertNotIn(
             "work_surface", [item["name"] for item in object_prompt_bank(config)]

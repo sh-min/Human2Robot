@@ -37,25 +37,25 @@ ACTION_SEMANTICS = load_action_semantics(
     Path(__file__).resolve().parents[1] / "config/kitchen_action_semantics.yaml"
 )
 ACTION_DESCRIPTIONS = {
-    label: ACTION_SEMANTICS["actions"][label]["ko"] for label in ACTION_LABELS
+    label: ACTION_SEMANTICS["actions"][label]["en"] for label in ACTION_LABELS
 }
 VIDEO_SUFFIXES = (".mov", ".mp4", ".avi", ".mkv")
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 LABEL_PROFILES = {
     "kitchen_milk": {
-        "labels": list(ACTION_LABELS),
-        "descriptions": dict(ACTION_DESCRIPTIONS),
+        "labels": ["Cup", "Lock", "Milk", "Snack", "Sweep", "Trans"],
+        "descriptions": {
+            "Cup": "Hang the cup on the cup holder",
+            "Lock": "Stack the food containers",
+            "Milk": "Throw away the milk carton",
+            "Snack": "Throw away the snack container",
+            "Sweep": "Wipe the floor with the sponge",
+            "Trans": "Transition between actions",
+        },
     },
     "kitchen_choco": {
-        "labels": ["Cup", "Lock", "Choco", "Snack", "Sweep", "Trans"],
-        "descriptions": {
-            "Cup": "컵 걸기",
-            "Lock": "락앤락통 겹치기",
-            "Choco": "초코 버리기",
-            "Snack": "과자 쓰레기 버리기",
-            "Sweep": "바닥 스펀지로 닦기",
-            "Trans": "행동 사이 전환",
-        },
+        "labels": list(ACTION_LABELS),
+        "descriptions": dict(ACTION_DESCRIPTIONS),
     },
 }
 

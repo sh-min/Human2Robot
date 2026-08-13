@@ -1,12 +1,12 @@
 """Skill label definitions shared across the pipeline."""
 
-TRANSITION_LABEL = "Trans"
+TRANSITION_LABEL = "Transition"
 
 ACTION_LABELS = [
-    "Cup",
-    "Lock",
-    "Milk",
-    "Snack",
-    "Sweep",
+    "HangCup",
+    "StackContainers",
+    "PlaceLightGreenSnackBoxInTrashBin",
+    "PlaceRedSnackBoxInTrashBin",
+    "WipeFloorWithSponge",
     TRANSITION_LABEL,
 ]

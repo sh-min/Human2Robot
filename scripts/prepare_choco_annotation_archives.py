@@ -85,7 +85,14 @@ def main():
             "schema_version": 1,
             "purpose": "2026-08-13 Choco annotation",
             "label_profile": "kitchen_choco",
-            "labels": ["Cup", "Lock", "Choco", "Snack", "Sweep", "Trans"],
+            "labels": [
+                "HangCup",
+                "StackContainers",
+                "PlaceLightGreenSnackBoxInTrashBin",
+                "PlaceRedSnackBoxInTrashBin",
+                "WipeFloorWithSponge",
+                "Transition",
+            ],
             "episodes": sorted(
                 [
                     {

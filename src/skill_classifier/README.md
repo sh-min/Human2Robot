@@ -1,6 +1,6 @@
 # skill_classifier
 
-Per-frame skill classifier for cube manipulation videos. Trains a temporal
+Per-frame skill classifier for kitchen manipulation videos. Trains a temporal
 classifier (Transformer or MLP) over a sliding window of features to predict
 the active skill at each frame.
 
@@ -88,4 +88,33 @@ Per-episode outputs:
 ## Labels
 
 6 classes from [`utils/labels.py`](../utils/labels.py):
-`Cup`, `Lock`, `Milk`, `Snack`, `Sweep`, and `Trans`.
+`HangCup`, `StackContainers`, `PlaceLightGreenSnackBoxInTrashBin`,
+`PlaceRedSnackBoxInTrashBin`, `WipeFloorWithSponge`, and `Transition`.
+
+The stored IDs and English action descriptions are defined by
+[`config/kitchen_action_semantics.yaml`](config/kitchen_action_semantics.yaml):
+
+| Stored ID | English action description |
+|---|---|
+| `HangCup` | Hang the cup on the cup holder |
+| `StackContainers` | Stack one food container on another food container |
+| `PlaceLightGreenSnackBoxInTrashBin` | Place the light green snack box in the trash bin |
+| `PlaceRedSnackBoxInTrashBin` | Place the red snack box in the trash bin |
+| `WipeFloorWithSponge` | Wipe the floor with the sponge |
+| `Transition` | Transition between actions |
+
+Legacy July datasets retain their original IDs and must use their matching
+dataset-scoped `action_labels` configuration.
+
+## Object-semantic V-JEPA experiment
+
+`data_preprocess.extract_vlm_sam_object_context` runs the same fixed object
+query bank on every clip. Grounding DINO Base provides text-conditioned boxes,
+SAM2 converts them to object masks, and the masks are aligned with the 24x24
+V-JEPA 2.1 patch grid. `object_mask_attention_mlp` fuses global V-JEPA spatial
+attention with per-object pooled features, mask occupancy, and grounding
+confidence.
+
+The correct action sentence is never selected from ground truth as an input.
+Doing that would leak the target label. Object context is stored in a sidecar
+beside `features.pt`, leaving the baseline bundle unchanged.

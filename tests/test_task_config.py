@@ -15,7 +15,14 @@ class TaskConfigTests(unittest.TestCase):
         self.assertEqual(spec["task_id"], "kitchen")
         self.assertEqual(
             spec["action_labels"],
-            ["Cup", "Lock", "Choco", "Snack", "Sweep", "Trans"],
+            [
+                "HangCup",
+                "StackContainers",
+                "PlaceLightGreenSnackBoxInTrashBin",
+                "PlaceRedSnackBoxInTrashBin",
+                "WipeFloorWithSponge",
+                "Transition",
+            ],
         )
         self.assertIn("milk_carton", spec["object_ids"])
         self.assertIn("cup_blue", spec["object_ids"])

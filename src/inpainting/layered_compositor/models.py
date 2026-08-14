@@ -34,8 +34,11 @@ class FrameInputs:
     object_mask: np.ndarray
     forced_object_mask: np.ndarray
     forced_robot_front_mask: np.ndarray
-    split_depth: float
+    # Scalar plane, or an (H, W) per-pixel split surface when the caller has a
+    # contact-derived depth map. Both broadcast against robot_depth.
+    split_depth: float | np.ndarray
     behind_robot_object_mask: np.ndarray | None = None
+    shadow_alpha: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -120,6 +121,29 @@ class LayeredCompositorTest(unittest.TestCase):
         )
         self.assertTrue(np.all(result.final[2, 2] == 100))
         self.assertTrue(np.all(result.final[0, 0] == 200))
+
+    def test_contact_shadow_only_darkens_the_uncovered_plate(self) -> None:
+        inputs = frame_inputs()
+        inputs.robot_mask[1, 1] = True
+        inputs.robot_depth[1, 1] = 0.0  # ordinary front robot
+        shadow = np.zeros((3, 3), dtype=np.float32)
+        shadow[0, 0] = 0.5  # falls on the plate
+        shadow[1, 1] = 0.5  # falls where the robot is drawn opaquely
+        inputs = replace(inputs, shadow_alpha=shadow)
+
+        result = compose_frame(
+            inputs,
+            StageConfig(
+                robot_edge_sigma=0,
+                object_edge_sigma=0,
+                forced_object_edge_sigma=0,
+            ),
+        )
+        self.assertTrue(np.all(result.stages[0][0, 0] == 5))
+        self.assertTrue(np.all(result.final[0, 0] == 5))
+        self.assertTrue(np.all(result.final[0, 1] == 10))
+        # A robot pixel is never tinted by its own shadow.
+        self.assertTrue(np.all(result.final[1, 1] == 100))
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                          "ffmpeg tools are required")

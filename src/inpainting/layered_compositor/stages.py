@@ -139,9 +139,18 @@ def build_layer_masks(inputs: FrameInputs, config: StageConfig) -> LayerMasks:
 
 
 def stage_1_background(inputs: FrameInputs) -> np.ndarray:
-    """Start from a human-free scene plate."""
+    """Start from a human-free scene plate, darkened by the robot's shadow.
 
-    return np.asarray(inputs.background, dtype=np.float32).copy()
+    The shadow belongs to this stage because it is cast *on the plate*: every
+    later layer draws opaque content over it, so a robot or object pixel is
+    never tinted by its own shadow.
+    """
+
+    plate = np.asarray(inputs.background, dtype=np.float32).copy()
+    if inputs.shadow_alpha is not None:
+        alpha = np.asarray(inputs.shadow_alpha, dtype=np.float32)[..., None]
+        plate *= 1.0 - np.clip(alpha, 0.0, 1.0)
+    return plate
 
 
 def stage_2_robot_behind(accumulator: np.ndarray, inputs: FrameInputs,

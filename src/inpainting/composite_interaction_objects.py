@@ -17,6 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from contact_shadow import contact_shadow_alpha, fit_support_plane
 from layered_compositor import (
     STAGE_SPECS,
     FrameInputs,
@@ -128,6 +129,13 @@ def main() -> None:
     )
     parser.add_argument("--output",
                         default="interaction_objects/video_overlay_object_occlusion.mp4")
+    parser.add_argument(
+        "--contact_split_depth", default=None,
+        help="Optional (T, H, W) depth map from build_contact_split_depth.py "
+             "replacing the single --threshold_joint plane. HaCo contact "
+             "vertices measure the object surface per pixel, so the thumb and "
+             "the curled fingers no longer share one front/behind plane.",
+    )
     parser.add_argument("--threshold_joint", type=int, default=5)
     parser.add_argument("--depth_bias", type=float, default=0.0)
     parser.add_argument("--depth_sigma", type=float, default=8.0)
@@ -141,6 +149,39 @@ def main() -> None:
     )
     parser.add_argument("--object_edge_sigma", type=float, default=0.8)
     parser.add_argument("--force_front_edge_sigma", type=float, default=0.45)
+    parser.add_argument(
+        "--shadow_depth", default=None,
+        help="Metric scene depth .npy (depth_processor/depth_aligned.npy). "
+             "Given, the robot casts a geometry-grounded contact shadow on the "
+             "support plane in stage 1; omitted, the robot is drawn unshadowed.",
+    )
+    parser.add_argument("--shadow_opacity", type=float, default=0.55,
+                        help="Maximum darkening of the contact shadow, 0..1.")
+    parser.add_argument("--shadow_blur", type=float, default=6.0,
+                        help="Gaussian sigma (px) softening the shadow footprint.")
+    parser.add_argument("--shadow_soft_opacity", type=float, default=0.0,
+                        help="Second, wider shadow pass composited under the "
+                             "first. A real contact shadow is dark and sharp "
+                             "where the robot touches down and fades out well "
+                             "beyond that; one Gaussian cannot be both.")
+    parser.add_argument("--shadow_soft_blur", type=float, default=16.0)
+    parser.add_argument("--shadow_bands", type=int, default=0,
+                        help="Split the footprint into this many height slices "
+                             "so the arm well above the desk casts its own "
+                             "soft shadow instead of being normalised away by "
+                             "the hand resting near it. 0 keeps one pass.")
+    parser.add_argument("--shadow_penumbra", type=float, default=70.0,
+                        help="Extra blur (px) per metre of height, with "
+                             "--shadow_bands.")
+    parser.add_argument("--shadow_falloff", type=float, default=0.30,
+                        help="Height (m) over which a slice's darkening decays, "
+                             "with --shadow_bands.")
+    parser.add_argument(
+        "--light_dir", type=float, nargs=3, default=None,
+        help="Override the light travel direction in the camera frame; "
+             "defaults to scene_lighting.LIGHT_DIR_CAM, the same direction the "
+             "renderer shades the robot with.",
+    )
     parser.add_argument(
         "--video_codec", choices=("h264", "mp4v"), default="h264",
         help="Output codec. h264 is the default because VS Code and browser "
@@ -176,6 +217,10 @@ def main() -> None:
         np.load(processed / args.behind_robot_object_mask, mmap_mode="r")
         if args.behind_robot_object_mask is not None else None
     )
+    contact_split = (
+        np.load(processed / args.contact_split_depth, mmap_mode="r")
+        if args.contact_split_depth is not None else None
+    )
     pose = np.load(args.hawor_npz)
     frame_count = min(
         len(robot_rgb), len(robot_depth), len(robot_mask), len(object_mask),
@@ -189,11 +234,28 @@ def main() -> None:
         frame_count = min(frame_count, len(force_robot_front))
     if behind_robot_object is not None:
         frame_count = min(frame_count, len(behind_robot_object))
+    if contact_split is not None:
+        frame_count = min(frame_count, len(contact_split))
     if object_source_cap is not None:
         frame_count = min(
             frame_count,
             int(object_source_cap.get(cv2.CAP_PROP_FRAME_COUNT)),
         )
+    # Contact shadow needs metric scene depth in the same camera frame as the
+    # robot depth buffer.  Without it the robot floats above the table.
+    scene_depth = None
+    shadow_plane = None
+    focal = float(pose["img_focal"])
+    principal = (width / 2.0, height / 2.0)
+    if args.shadow_depth is not None:
+        depth_path = processed / args.shadow_depth
+        if not depth_path.exists():
+            raise RuntimeError(f"contact shadow depth not found: {depth_path}")
+        scene_depth = np.load(depth_path, mmap_mode="r")
+        frame_count = min(frame_count, len(scene_depth))
+        print(f"[shadow] on: {depth_path.name}, opacity={args.shadow_opacity}, "
+              f"blur={args.shadow_blur}px, focal={focal:.1f}")
+
     z_split = _fill_and_smooth_depth(
         pose["joints_left"], pose["joints_right"], pose["valid"], frame_count,
         args.threshold_joint, args.depth_sigma,
@@ -310,6 +372,33 @@ def main() -> None:
 
         robot_frame = np.asarray(robot_rgb[idx])
         visible_robot = np.asarray(robot_mask[idx], dtype=bool)
+        shadow_alpha = None
+        if scene_depth is not None:
+            depth_frame = np.asarray(scene_depth[idx], dtype=np.float32)
+            # The plane is EMA-smoothed against the previous frame, so a single
+            # bad RANSAC fit cannot make the shadow jump.
+            shadow_plane = fit_support_plane(
+                depth_frame, visible_robot, focal, *principal,
+                prev=shadow_plane,
+            )
+            shadow_alpha = contact_shadow_alpha(
+                depth_frame,
+                np.asarray(robot_depth[idx], dtype=np.float32),
+                visible_robot, shadow_plane, focal, *principal,
+                light_dir=args.light_dir, opacity=args.shadow_opacity,
+                blur=args.shadow_blur, bands=args.shadow_bands,
+                penumbra=args.shadow_penumbra, falloff=args.shadow_falloff,
+            )
+            if args.shadow_soft_opacity > 0:
+                wide = contact_shadow_alpha(
+                    depth_frame,
+                    np.asarray(robot_depth[idx], dtype=np.float32),
+                    visible_robot, shadow_plane, focal, *principal,
+                    light_dir=args.light_dir,
+                    opacity=args.shadow_soft_opacity,
+                    blur=args.shadow_soft_blur,
+                )
+                shadow_alpha = 1.0 - (1.0 - shadow_alpha) * (1.0 - wide)
         frame_inputs = FrameInputs(
             background=background,
             robot_rgb=robot_frame,
@@ -326,11 +415,14 @@ def main() -> None:
                 np.asarray(force_robot_front[idx], dtype=bool)
                 if force_robot_front is not None else np.zeros_like(visible_robot)
             ),
-            split_depth=float(z_split[idx]),
+            split_depth=(np.asarray(contact_split[idx], dtype=np.float32)
+                         if contact_split is not None
+                         else float(z_split[idx])),
             behind_robot_object_mask=(
                 np.asarray(behind_robot_object[idx], dtype=bool)
                 if behind_robot_object is not None else None
             ),
+            shadow_alpha=shadow_alpha,
         )
         composite = compose_frame(frame_inputs, stage_config)
         progressive_stages = [

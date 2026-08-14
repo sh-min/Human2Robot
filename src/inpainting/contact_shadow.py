@@ -81,10 +81,19 @@ def fit_support_plane(scene_depth, robot_mask, F, cx, cy, *,
 
 def contact_shadow_alpha(scene_depth, robot_depth, robot_mask, plane,
                          F, cx, cy, *, light_dir=None, opacity=0.6,
-                         blur=6.0, plane_tol=0.06, gain=3.0):
+                         blur=6.0, plane_tol=0.06, gain=3.0,
+                         bands=0, band_max=0.9, penumbra=70.0, falloff=0.30):
     """Per-pixel darkening in [0, opacity]: the robot's footprint projected onto
     *plane* along *light_dir*, restricted to pixels where the visible surface
     really is that plane (not the wall, an object, or the robot itself).
+
+    With ``bands`` > 1 the footprint is split by how far each robot point sits
+    above the plane and each slice is shadowed on its own terms: penumbra
+    widening with height (``penumbra`` px per metre) and strength decaying with
+    it (``falloff`` metres). One accumulator cannot do this — it is normalised
+    by its peak, which the hand resting near the desk always wins, so the arm
+    a half metre up contributes almost nothing. Slices composite as independent
+    occluders.
     """
     H, W = scene_depth.shape
     if plane is None:
@@ -105,11 +114,28 @@ def contact_shadow_alpha(scene_depth, robot_depth, robot_mask, plane,
     us = np.round(Sp[:, 0] * F / z + cx).astype(int)
     vs = np.round(Sp[:, 1] * F / z + cy).astype(int)
     ok = (us >= 0) & (us < W) & (vs >= 0) & (vs < H) & (z > 0)
-    acc = np.zeros((H, W), np.float32)
-    np.add.at(acc, (vs[ok], us[ok]), 1.0)
-    acc = gaussian_filter(acc, blur)
-    acc /= acc.max() + 1e-6
-    alpha = np.clip(acc * opacity * gain, 0, opacity)
+    if bands > 1:
+        edges = np.linspace(0.0, band_max, bands + 1)
+        height = np.clip(t[ok], 0.0, band_max)
+        transmit = np.ones((H, W), np.float32)
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sel = (height >= lo) & (height < hi)
+            if sel.sum() < 50:
+                continue
+            acc = np.zeros((H, W), np.float32)
+            np.add.at(acc, (vs[ok][sel], us[ok][sel]), 1.0)
+            mid = 0.5 * (lo + hi)
+            acc = gaussian_filter(acc, blur + penumbra * mid)
+            acc /= acc.max() + 1e-6
+            share = np.exp(-mid / falloff)
+            transmit *= 1.0 - np.clip(acc * gain, 0, 1.0) * share
+        alpha = (1.0 - transmit) * opacity
+    else:
+        acc = np.zeros((H, W), np.float32)
+        np.add.at(acc, (vs[ok], us[ok]), 1.0)
+        acc = gaussian_filter(acc, blur)
+        acc /= acc.max() + 1e-6
+        alpha = np.clip(acc * opacity * gain, 0, opacity)
 
     # z where each pixel's ray meets the plane; keep shadow only where the
     # visible surface sits there (so it lands on the table, not the far wall).

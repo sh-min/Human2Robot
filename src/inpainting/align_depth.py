@@ -30,9 +30,12 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+from scipy.ndimage import median_filter
 
 Z_MIN, Z_MAX = 0.05, 10.0   # meters
 EPS = 1e-6
+A_TOL = 3.0                 # per-frame `a` must stay within this factor of global
+SMOOTH_WIN = 15             # frames, temporal median over the fitted (a, b)
 
 
 def _sample_bilinear(img: np.ndarray, uv: np.ndarray) -> np.ndarray:
@@ -61,27 +64,65 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed_demo", type=Path, required=True)
+    ap.add_argument(
+        "--hawor_npz", type=Path, default=None,
+        help="Anchor on this retargeting npz (joints_left/joints_right and "
+             "img_focal) instead of hand_processor/hand_data_*.npz. Required "
+             "when the depth feeds the compositor: the robot render and the "
+             "depth split are built on these joints, and the two hand sources "
+             "do not share a metric scale.",
+    )
     args = ap.parse_args()
 
     pd = args.processed_demo
     depth_raw = np.load(pd / "depth_processor" / "depth_raw.npy").astype(np.float32)
     T, H, W = depth_raw.shape
 
-    hd_l = np.load(pd / "hand_processor" / "hand_data_left.npz")
-    hd_r = np.load(pd / "hand_processor" / "hand_data_right.npz")
-    T_use = min(T, hd_l["kpts_2d"].shape[0], hd_r["kpts_2d"].shape[0])
+    if args.hawor_npz is not None:
+        pose = np.load(args.hawor_npz)
+        joints = (pose["joints_left"], pose["joints_right"])
+        hand_valid = pose["valid"].astype(bool)
+        focal = float(pose["img_focal"])
+        cx, cy = W / 2.0, H / 2.0
+        T_use = min(T, joints[0].shape[0], joints[1].shape[0])
+        print(f"[info] anchoring on {args.hawor_npz.name} (focal={focal:.1f})")
+
+        def frame_anchors(t: int) -> tuple[list, list]:
+            uv_list, z_list = [], []
+            for hand in (0, 1):
+                if not hand_valid[hand, t]:
+                    continue
+                joint = joints[hand][t]
+                z = joint[:, 2]
+                usable = z > Z_MIN
+                if not usable.any():
+                    continue
+                uv_list.append(np.stack([
+                    focal * joint[usable, 0] / z[usable] + cx,
+                    focal * joint[usable, 1] / z[usable] + cy,
+                ], axis=1))
+                z_list.append(z[usable])
+            return uv_list, z_list
+    else:
+        hd_l = np.load(pd / "hand_processor" / "hand_data_left.npz")
+        hd_r = np.load(pd / "hand_processor" / "hand_data_right.npz")
+        T_use = min(T, hd_l["kpts_2d"].shape[0], hd_r["kpts_2d"].shape[0])
+
+        def frame_anchors(t: int) -> tuple[list, list]:
+            uv_list, z_list = [], []
+            for hd in (hd_l, hd_r):
+                if hd["hand_detected"][t]:
+                    uv_list.append(hd["kpts_2d"][t])
+                    z_list.append(hd["kpts_3d"][t, :, 2])
+            return uv_list, z_list
 
     a_arr = np.full(T_use, np.nan, dtype=np.float32)
     b_arr = np.full(T_use, np.nan, dtype=np.float32)
+    pooled_d: list[np.ndarray] = []
+    pooled_inv_z: list[np.ndarray] = []
 
     for t in range(T_use):
-        uv_list, z_list = [], []
-        if hd_l["hand_detected"][t]:
-            uv_list.append(hd_l["kpts_2d"][t])
-            z_list.append(hd_l["kpts_3d"][t, :, 2])
-        if hd_r["hand_detected"][t]:
-            uv_list.append(hd_r["kpts_2d"][t])
-            z_list.append(hd_r["kpts_3d"][t, :, 2])
+        uv_list, z_list = frame_anchors(t)
         if not uv_list:
             continue
         uv = np.concatenate(uv_list, axis=0)
@@ -92,16 +133,32 @@ def main() -> None:
             continue
         d = _sample_bilinear(depth_raw[t], uv[keep])
         a_arr[t], b_arr[t] = _fit_ab(d, 1.0 / z[keep])
+        pooled_d.append(d)
+        pooled_inv_z.append(1.0 / z[keep])
 
-    valid = ~np.isnan(a_arr)
-    if not valid.any():
+    if not pooled_d:
         raise RuntimeError("No frame had ≥3 valid hand anchors — cannot align depth.")
-    a_med = float(np.median(a_arr[valid]))
-    b_med = float(np.median(b_arr[valid]))
-    a_arr[~valid] = a_med
-    b_arr[~valid] = b_med
-    print(f"[info] aligned {valid.sum()}/{T_use} frames; "
-          f"median (a, b) = ({a_med:.3f}, {b_med:.3f})")
+
+    # One frame's 21 joints span a narrow inverse-depth range, so the two
+    # parameters are barely identifiable and noise can even flip the sign of
+    # `a`.  Pooling every frame's anchors spans the whole trajectory instead,
+    # which conditions the fit; the per-frame solution is then only kept where
+    # it is physical and close to that global one.
+    a_glob, b_glob = _fit_ab(np.concatenate(pooled_d),
+                             np.concatenate(pooled_inv_z))
+    valid = (np.isfinite(a_arr) & (a_arr > 0)
+             & (a_arr > a_glob / A_TOL) & (a_arr < a_glob * A_TOL))
+    a_arr[~valid] = a_glob
+    b_arr[~valid] = b_glob
+    print(f"[info] global (a, b) = ({a_glob:.3f}, {b_glob:.3f}); "
+          f"kept {int(valid.sum())}/{T_use} per-frame fits, "
+          f"{int((~valid).sum())} fell back to global")
+
+    # DA-V2's relative scale drifts slowly for a static camera, so a temporal
+    # median removes the remaining single-frame outliers without lagging.
+    if T_use >= SMOOTH_WIN:
+        a_arr = median_filter(a_arr, size=SMOOTH_WIN, mode="nearest")
+        b_arr = median_filter(b_arr, size=SMOOTH_WIN, mode="nearest")
 
     # Z_metric = a / (d_pred - b). Where (d_pred - b) ≤ 0 we get nonsense — clip.
     inv_z_pred = (depth_raw[:T_use] - b_arr[:, None, None]) / np.maximum(a_arr[:, None, None], EPS)

@@ -30,7 +30,9 @@ DIFFUSION_VAS_MASK_CKPT = os.path.join(DIFFUSION_VAS_CKPT_DIR, "diffusion-vas-am
 DIFFUSION_VAS_RGB_CKPT  = os.path.join(DIFFUSION_VAS_CKPT_DIR, "diffusion-vas-content-completion")
 
 # Depth Anything V2 checkpoints live under /ckpt per the global CLAUDE.md convention.
-DEPTH_ANYTHING_CKPT_DIR = "/result/skill2policy/ckpt/depth_anything"
+# DEPTH_ANYTHING_CKPT_DIR overrides that on machines without /result.
+DEPTH_ANYTHING_CKPT_DIR = os.environ.get(
+    "DEPTH_ANYTHING_CKPT_DIR", "/result/skill2policy/ckpt/depth_anything")
 DEPTH_ANYTHING_CKPTS = {
     "vits": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vits.pth"),
     "vitb": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vitb.pth"),
@@ -69,6 +71,23 @@ EMBODIMENTS = {
         wrist_offset="wrist_offset_xhand_{hand}.npy",
         forearm_sign=+1,
         mjcf="src/sim/mujoco_sim/assets/xhand_{hand}/xhand_{hand}.xml",
+    ),
+    # RobotEra's own XHAND1 release. Same 12 actuated joints as "xhand" (same
+    # names, same order), so a pkl retargeted for xhand drives it unchanged;
+    # what differs is the model — the real two-tone shell instead of the
+    # SolidWorks export's stray orange/peach, and the finger linkage bars as
+    # their own links. Its root frame is rotated 180 deg about (1,-1,0) from
+    # ours, folded into a left_hand_base_link mount joint in the URDF so
+    # R_mano_xhand_left still applies.
+    "xhand1": dict(
+        urdf="{root}/xhand1/xhand_{hand}.urdf".format(
+            root=XHAND_URDF_ROOT, hand="{hand}"),
+        r_mano="R_mano_xhand_{hand}.npy",
+        wrist_offset="wrist_offset_xhand_{hand}.npy",
+        forearm_sign=+1,
+        # The colours are per-vertex in the meshes (white palm / dark back),
+        # which a per-link MJCF rgba cannot express, so there is no table.
+        mjcf=None,
     ),
     "inspire": dict(
         urdf="{root}/inspire_hand/inspire_hand_{hand}.urdf".format(

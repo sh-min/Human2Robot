@@ -75,6 +75,8 @@ conda run -n diffusion_vas pip install "transformers==4.44.2"
 |---|---|---|
 | `third_party/sam2`              | facebookresearch/sam2     | 손/팔 (M_hand) + cube modal segmentation |
 | `third_party/E2FGVI`            | MCG-NKU/E2FGVI            | flow-guided 영상 inpainting |
+| `third_party/ProPainter`        | sczhou/ProPainter         | 최종 배경 플레이트 (`export_propainter_masks` → ProPainter → `assemble_propainter_background`) |
+| `third_party/lama`              | advimman/lama             | 단일 프레임 inpainting. 수동으로만 돌렸고 파이프라인 스크립트에는 연결돼 있지 않다. 가중치는 `third_party/lama/big-lama/` (커밋 안 함) |
 | `third_party/Depth-Anything-V2` | DepthAnything/Depth-Anything-V2 | monocular depth |
 | `third_party/diffusion-vas`     | Kaihua-Chen/diffusion-vas | cube video amodal segmentation |
 

@@ -31,3 +31,9 @@
 [submodule "third_party/Isaac-GR00T"]
 	path = third_party/Isaac-GR00T
 	url = https://github.com/NVIDIA/Isaac-GR00T.git
+[submodule "third_party/ProPainter"]
+	path = third_party/ProPainter
+	url = https://github.com/sczhou/ProPainter.git
+[submodule "third_party/lama"]
+	path = third_party/lama
+	url = https://github.com/advimman/lama.git

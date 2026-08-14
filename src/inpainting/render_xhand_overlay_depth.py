@@ -44,6 +44,7 @@ from scipy.spatial.transform import Rotation
 
 from _paths import (XHAND_URDF_LEFT, XHAND_URDF_RIGHT, R_MANO_XHAND,
                     EMBODIMENT_NAMES, forearm_sign)
+import surface_shading
 from render_xhand_overlay import (compute_fk, parse_urdf, parse_mjcf_rgba,
                                   T_CV2GL, XHAND_XML, build_side_align,
                                   hand_root_pose, load_side_urdf,
@@ -163,8 +164,34 @@ def _arm_link_poses_pyrender(side, wrist_pos_cv, R_cam_xhand, sign=+1):
     return poses
 
 
+RB5_MESH_DIR = REPO / "third_party/rb5_850e/meshes/visual"
+
+
+def _load_rb5_meshes() -> dict:
+    """RB5-850e visual meshes, keyed by link name."""
+    out = {}
+    for idx in range(7):
+        mesh = trimesh.load(str(RB5_MESH_DIR / f"link{idx}.dae"), force="mesh")
+        if isinstance(mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+        out[f"link{idx}"] = [mesh]
+    return out
+
+
+def _rb5_link_poses_pyrender(link_poses_cv) -> dict:
+    """One frame of RB5 link placements (camera frame) -> pyrender poses.
+
+    The URDF visuals sit at their link origin, so the link frame is the mesh
+    pose; only the OpenCV -> OpenGL flip is applied.
+    """
+    convert = np.eye(4)
+    convert[:3, :3] = T_CV2GL
+    return {f"link{idx}": convert @ np.asarray(pose, dtype=np.float64)
+            for idx, pose in enumerate(link_poses_cv)}
+
+
 def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer, side_align,
-                       light=None):
+                       light=None, surface="default"):
     """Return (rgb (H,W,3) uint8, depth (H,W) float32 meters, mask (H,W) bool).
 
     *light*: None keeps the legacy neutral rig; otherwise a dict from
@@ -203,7 +230,7 @@ def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer, side_align,
             if lname not in link_T:
                 continue
             for mesh, T_vis in items:
-                pr_mesh = pyrender.Mesh.from_trimesh(mesh.copy(), smooth=False)
+                pr_mesh = surface_shading.to_pyrender(mesh, surface)
                 scene.add(pr_mesh, pose=link_T[lname] @ T_vis)
 
     # Lower arm links
@@ -212,7 +239,7 @@ def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer, side_align,
             if lname not in link_poses:
                 continue
             for mesh in parts:
-                pr_mesh = pyrender.Mesh.from_trimesh(mesh.copy(), smooth=False)
+                pr_mesh = surface_shading.to_pyrender(mesh, surface)
                 scene.add(pr_mesh, pose=link_poses[lname])
 
     color, depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
@@ -239,6 +266,13 @@ def main() -> None:
                     help="auto: tint the robot lighting to match the scene "
                          "(default). none: legacy neutral rig, reproduces prior "
                          "output.")
+    ap.add_argument("--arm", choices=["rby1", "rb5"], default="rby1",
+                    help="Lower-arm geometry drawn behind the hand. rby1 is the "
+                         "wrist-attached forearm stub; rb5 draws the whole "
+                         "RB5-850e arm from --rb5_npz.")
+    ap.add_argument("--rb5_npz", type=Path, default=None,
+                    help="rb5_build_overlay_input.py output; supplies "
+                         "link_poses (T,7,4,4) in the OpenCV camera frame.")
     ap.add_argument("--light_dir", type=float, nargs=3, default=None,
                     metavar=("X", "Y", "Z"),
                     help="Override light travel direction in the camera frame "
@@ -255,10 +289,24 @@ def main() -> None:
     ap.add_argument("--smooth_wrist_win", type=int, default=21,
                     help="Savgol window (frames) for wrist pos + orientation. "
                          "Odd, larger because wrist estimation is jitterier.")
+    ap.add_argument("--surface", choices=surface_shading.SURFACE_MODES,
+                    default="default",
+                    help="Robot surface treatment. default reproduces prior "
+                         "output. cavity bakes per-vertex cavity shading, "
+                         "darkening the seams and screw bosses the STL "
+                         "geometry already contains but flat lighting hides. "
+                         "The xhand meshes are STL, so no real texture map "
+                         "exists to load.")
+    ap.add_argument("--cavity_strength", type=float, default=0.55,
+                    help="How dark the deepest crevice gets, 0..1.")
     ap.add_argument("--start_frame", type=int, default=0,
                     help="First source frame to render (default: 0).")
     ap.add_argument("--max_frames", type=int, default=None,
                     help="Optional number of frames to render.")
+    ap.add_argument(
+        "--part_links", nargs="+", default=None,
+        help="Link-name substrings selected by --thumb_mask_only. Defaults to "
+             "the thumb; pass e.g. index mid to mask other fingers.")
     ap.add_argument(
         "--thumb_mask_only", action="store_true",
         help="Render only XHand thumb links and write robot_thumb_mask.npy. "
@@ -337,8 +385,30 @@ def main() -> None:
         side_cfg[s] = load_side_urdf(embodiment_of[s], s)
         arm_mesh_cfg[s] = _load_lower_arm_meshes(s)
     side_align = build_side_align(embodiment_of)
+    rb5_meshes = rb5_link_poses = None
+    if args.arm == "rb5":
+        if args.rb5_npz is None:
+            raise SystemExit("--arm rb5 needs --rb5_npz")
+        rb5_link_poses = np.load(args.rb5_npz)["link_poses"]
+        rb5_meshes = _load_rb5_meshes()
+        print(f"RB5-850e arm: {len(rb5_meshes)} links, "
+              f"{len(rb5_link_poses)} frames")
     print("URDF loaded for:", {s: embodiment_of[s] for s in side_cfg})
     print("Arm meshes loaded for:", list(arm_mesh_cfg.keys()))
+
+    if args.surface != "default":
+        # Pose-independent, so bake once instead of per frame.
+        prep = lambda m: surface_shading.prepare(m, args.surface,
+                                                 strength=args.cavity_strength)
+        for _, link_meshes in side_cfg.values():
+            for lname, items in link_meshes.items():
+                link_meshes[lname] = [(prep(m), T_vis) for m, T_vis in items]
+        for meshes in list(arm_mesh_cfg.values()) + ([rb5_meshes]
+                                                     if rb5_meshes else []):
+            for lname, parts in meshes.items():
+                meshes[lname] = [prep(m) for m in parts]
+        print(f"[surface] {args.surface}, cavity strength "
+              f"{args.cavity_strength}")
 
     light = None
     if args.relight == "auto":
@@ -383,9 +453,10 @@ def main() -> None:
             R_mano = Rotation.from_rotvec(go[h_idx, t]).as_matrix()
             render_meshes = link_meshes
             if args.thumb_mask_only:
+                keywords = args.part_links or ("thumb",)
                 render_meshes = {
                     name: items for name, items in link_meshes.items()
-                    if "thumb" in name
+                    if any(key in name for key in keywords)
                 }
             hands_data.append(
                 (s, wrist_pos, R_mano, qpos_dict, joints_tree, render_meshes)
@@ -395,14 +466,20 @@ def main() -> None:
             _, R_cam_hand = hand_root_pose(R_mano, wrist_pos, side_align[s])
             link_poses = _arm_link_poses_pyrender(
                 s, wrist_pos, R_cam_hand, sign=forearm_sign(embodiment_of[s]))
-            if not args.thumb_mask_only:
+            if not args.thumb_mask_only and args.arm == "rby1":
                 arm_scene_data.append((link_poses, arm_mesh_cfg[s]))
+
+        if args.arm == "rb5" and not args.thumb_mask_only and t < len(rb5_link_poses):
+            arm_scene_data.append(
+                (_rb5_link_poses_pyrender(rb5_link_poses[t]), rb5_meshes)
+            )
 
         if not hands_data:
             continue
 
         rgb, depth, mask = _render_robot_rgbd(hands_data, arm_scene_data,
-                                              camera, renderer, side_align, light)
+                                              camera, renderer, side_align, light,
+                                              surface=args.surface)
         if args.thumb_mask_only:
             if full_depth is not None and t < len(full_depth):
                 depth_delta = np.abs(

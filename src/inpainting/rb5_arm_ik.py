@@ -27,6 +27,29 @@ EE_FRAME = "link6"
 JOINT_NAMES = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
 
 
+LINK_NAMES = tuple(f"link{i}" for i in range(7))
+
+
+def link_poses(model, data, q_seq, T_cam_base):
+    """Per-frame link placements in the camera frame, ready for a renderer.
+
+    The URDF gives every visual mesh an identity origin, so a link's frame is
+    also its mesh pose — no extra offset to apply.
+    """
+    fids = [model.getFrameId(name) for name in LINK_NAMES]
+    out = np.tile(np.eye(4), (len(q_seq), len(fids), 1, 1))
+    for t, q in enumerate(q_seq):
+        pin.forwardKinematics(model, data, np.asarray(q, dtype=np.float64))
+        pin.updateFramePlacements(model, data)
+        for k, fid in enumerate(fids):
+            placement = data.oMf[fid]
+            link = np.eye(4)
+            link[:3, :3] = placement.rotation
+            link[:3, 3] = placement.translation
+            out[t, k] = T_cam_base @ link
+    return out
+
+
 def load_model():
     model = pin.buildModelFromUrdf(RB5_URDF)
     data = model.createData()

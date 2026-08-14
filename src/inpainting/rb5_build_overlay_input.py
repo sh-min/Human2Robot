@@ -61,6 +61,9 @@ def main():
     ap.add_argument("--w_ori", type=float, default=1.0,
                     help="orientation-tracking weight (0=position-only smooth arm; "
                          "1=follow the wrist orientation, more jitter near singularities).")
+    ap.add_argument("--snap_flange", action="store_true",
+                    help="Force the flange onto its IK target after smoothing so "
+                         "the hand cannot drift off the wrist.")
     ap.add_argument("--smooth_win", type=int, default=21,
                     help="savgol window (odd) on the joint trajectory; larger tames jitter.")
     args = ap.parse_args()
@@ -133,7 +136,20 @@ def main():
 
     Tcb = np.eye(4); Tcb[:3, :3] = T_cam_base.rotation; Tcb[:3, 3] = T_cam_base.translation
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    links = ik.link_poses(model, data, q, Tcb)
+    if args.snap_flange:
+        # Smoothing the joint trajectory moves the flange off its IK target, and
+        # a hand bolted to that flange then floats. Overriding the last link with
+        # the exact target makes the mate rigid; the residual sits at the wrist3
+        # joint, which is a round housing where a millimetre does not show.
+        offset = np.linalg.norm(links[:, 6, :3, 3] - flange[:, :3, 3], axis=1)
+        links[:, 6] = flange
+        print(f"[rb5] flange snapped to the hand mount "
+              f"(was median {np.median(offset)*1000:.1f} mm, "
+              f"max {offset.max()*1000:.1f} mm off)")
     np.savez(args.out, rb5_q=q.astype(np.float32), T_cam_base=Tcb.astype(np.float64),
+             link_poses=links.astype(np.float32),
+             link_names=np.asarray(ik.LINK_NAMES),
              wrist_pos=wrist_pos.astype(np.float64), wrist_rot=wrist_rot.astype(np.float64),
              qpos=qpos.astype(np.float32), valid=valid, img_focal=focal, side=args.side)
     json.dump({"joint_names": jnames}, open(os.path.splitext(args.out)[0] + "_jointnames.json", "w"))

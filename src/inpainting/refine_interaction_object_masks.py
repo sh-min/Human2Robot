@@ -88,6 +88,8 @@ def _extract_visible_sponge(
     cap = cv2.VideoCapture(str(video))
     close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     support_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
+    near_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    carried = np.zeros(track.shape[1:], dtype=bool)
     x0, y0, x1, y1 = static_box
     static_support = np.zeros(track.shape[1:], dtype=bool)
     static_support[
@@ -99,28 +101,39 @@ def _extract_visible_sponge(
         ok, frame = cap.read()
         if not ok:
             break
-        if track[frame_idx].any():
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            hue, sat, val = cv2.split(hsv)
-            green = (hue >= 32) & (hue <= 100) & (sat >= 25) & (val >= 20)
-            yellow = (hue >= 15) & (hue <= 42) & (sat >= 50) & (val >= 65)
-            support = cv2.dilate(track[frame_idx].astype(np.uint8),
-                                 support_kernel, iterations=1).astype(bool)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hue, sat, val = cv2.split(hsv)
+        green = (hue >= 32) & (hue <= 100) & (sat >= 25) & (val >= 20)
+        yellow = (hue >= 15) & (hue <= 42) & (sat >= 50) & (val >= 65)
+        # While the hand wraps the sponge, SAM's component collapses to a
+        # sliver and a track-only support crops the sponge to that sliver.
+        # Inside the interaction interval the previous frame's silhouette also
+        # supports the colour cue, so the sponge survives the grasp.
+        anchor = np.asarray(track[frame_idx], dtype=bool)
+        if start <= frame_idx <= end:
+            anchor = anchor | carried
+        if anchor.any():
+            support = cv2.dilate(anchor.astype(np.uint8), support_kernel,
+                                 iterations=1).astype(bool)
+            near = cv2.dilate(anchor.astype(np.uint8), near_kernel,
+                              iterations=1).astype(bool)
         else:
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            hue, sat, val = cv2.split(hsv)
-            green = (hue >= 32) & (hue <= 100) & (sat >= 25) & (val >= 20)
-            yellow = (hue >= 15) & (hue <= 42) & (sat >= 50) & (val >= 65)
             support = static_support
+            near = static_support
         if support.any():
             colour = ((green | yellow) & support).astype(np.uint8)
             colour = cv2.morphologyEx(colour, cv2.MORPH_CLOSE, close_kernel)
             count, labels, stats, _ = cv2.connectedComponentsWithStats(colour, 8)
             visible = np.zeros_like(colour, dtype=bool)
             for label in range(1, count):
-                if stats[label, cv2.CC_STAT_AREA] >= 12:
-                    visible |= labels == label
+                blob = labels == label
+                # Only blobs touching the anchor: the carried silhouette must
+                # not let a different green object (mint box, Chocobi) in.
+                if stats[label, cv2.CC_STAT_AREA] >= 12 and (blob & near).any():
+                    visible |= blob
             result[frame_idx] = _fill_small_holes(visible)
+            if start <= frame_idx <= end and result[frame_idx].any():
+                carried = result[frame_idx]
         frame_idx += 1
     cap.release()
     return result
@@ -233,8 +246,17 @@ def main() -> None:
         mug_force &= ~thumb_clear
         force &= ~thumb_clear
 
+    # The sponge is grasped in the same power grip: the four fingers curl
+    # behind it while the thumb closes across its face.  Force its silhouette
+    # over the robot for its own interaction interval only — outside it the
+    # sponge is a static object that must stay behind the robot.
+    sponge_force = np.zeros_like(force)
+    sponge_start = int(sponge_segment["start_frame"])
+    sponge_end = min(int(sponge_segment["end_frame"]), len(sponge_force) - 1)
+    sponge_force[sponge_start:sponge_end + 1] = sponge[sponge_start:sponge_end + 1]
+
     rigid_force = mug_force | mint_force
-    force |= rigid_force
+    force |= rigid_force | sponge_force
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.save(args.output_dir / "object_mask_refined.npy", refined)
@@ -247,6 +269,7 @@ def main() -> None:
     _preview(args.video, green, sponge,
              args.output_dir / "contact_mask_refinement_preview.mp4", fps)
     print(f"[info] chocobi px={int(green.sum())}, rigid grasp px={int(rigid_force.sum())}, "
+          f"sponge grasp px={int(sponge_force.sum())}, "
           f"force-front px={int(force.sum())}")
     print(
         f"[info] sponge px={int(sponge.sum())}, "

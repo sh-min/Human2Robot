@@ -23,7 +23,34 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
+
+
+def _component_hulls(visible: np.ndarray, min_area: int = 200) -> np.ndarray:
+    """Union of the convex hull of every visible object component.
+
+    Completion *inside* an object's own hull is the object closing back over
+    the fingers that grip it — the cup rim the four fingers curl behind.
+    Completion reaching *outside* the hull is the smear left where the human
+    arm used to be, which is where the robot arm now is.  The first must stay
+    in front, the second must go behind, and the hull separates them without a
+    per-object distance threshold.
+    """
+    hull = np.zeros(visible.shape, dtype=np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        visible.astype(np.uint8), 8
+    )
+    for label in range(1, count):
+        if stats[label, cv2.CC_STAT_AREA] < min_area:
+            continue
+        contours, _ = cv2.findContours(
+            (labels == label).astype(np.uint8), cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        for contour in contours:
+            cv2.drawContours(hull, [cv2.convexHull(contour)], -1, 1, -1)
+    return hull.astype(bool)
 
 
 def main() -> None:
@@ -47,6 +74,11 @@ def main() -> None:
                              "own grasp. Use where the robot's fingers are "
                              "rendered outside the object's visible silhouette, "
                              "so only the completion can hide them.")
+    parser.add_argument("--keep_completion_in_hull", action="store_true",
+                        help="Keep completion that lies inside the convex hull "
+                             "of the object component it belongs to. Without "
+                             "it a grasped object loses the silhouette its own "
+                             "fingers grip into, and the robot shows through.")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -104,6 +136,8 @@ def main() -> None:
             behind = np.zeros_like(frame)
         else:
             behind = frame & ~visible
+            if args.keep_completion_in_hull and behind.any():
+                behind &= ~_component_hulls(visible)
         completion_px += int(behind.sum())
         if held is not None and not (hold_start <= frame_idx <= hold_end):
             loose = frame & held

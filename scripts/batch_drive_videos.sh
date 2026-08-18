@@ -59,6 +59,15 @@ for entry in "${CLIPS[@]}"; do
     if [[ -f "$src" ]]; then
       cp "$src" "$target"
       say "$num $name  완료 -> $(basename "$target")"
+      # 10 GB of intermediates per clip would fill the disk over twenty of them.
+      # The result and the plate stay; the arrays can be rebuilt from the clip.
+      demo="/home/rkd02/s2p/inpaint_test/processed/${num}_${name}/0"
+      rm -rf "$demo/overlay_rb5_mnt" "$demo/depth_processor" \
+             "$demo/propainter_input_frames" "$demo/propainter_results_640" \
+             "$demo/segmentation_processor/propainter_masks" \
+             "$demo/interaction_objects/objsrc_completed.mkv" \
+             "$demo/video_rgb_imgs.mkv" "$demo/rgb_hawor/extracted_images"
+      say "$num $name  중간 산출물 정리, 남은 공간 $(df -h /home/rkd02/s2p | awk 'NR==2{print $4}')"
     else
       say "$num $name  합성 산출물 없음"
     fi

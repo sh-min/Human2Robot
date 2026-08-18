@@ -2,7 +2,7 @@
 
 47번 위에서 그림자 계산만 바꿨다. 베이스·손 모델·플레이트·나머지 합성 설정은 47번과 같다.
 
-원본 결과 폴더: `results/48_2026-08-14_팔그림자_높이대역`
+원본 결과 폴더: `results/video/48_2026-08-14_팔그림자_높이대역`
 
 ## 결과
 
@@ -83,13 +83,15 @@ $PY_RT -u src/inpainting/rb5_build_overlay_input.py \
   --img_w 1280 --img_h 720 --base_override $D/base_inward.npy \
   --smooth_win 5 --snap_flange --out $D/rb5_in2.npz
 
-# 2) XHAND1 손 + RB5 팔 렌더 → overlay_rb5_x3_cut
+# 2) XHAND1 손 + RB5 팔 렌더 → overlay_rb5_x3
 PYOPENGL_PLATFORM=egl $PY -u src/inpainting/render_xhand_overlay_depth.py \
   --processed_demo $D --hawor_npz $D/rgb_hawor_full/retarget_input.npz \
   --right_pkl $D/rgb_hawor/qpos_xhand_right.pkl \
   --left_pkl $D/rgb_hawor_full/qpos_xhand_left_smooth.pkl \
   --hand left --arm rb5 --rb5_npz $D/rb5_in2.npz \
   --left_embodiment xhand1 --output_subdir overlay_rb5_x3
+
+# 2b) 손끝 컷 → overlay_rb5_x3_cut   ※ 스크립트 없음, 아래 "손끝 컷" 참고
 
 # 3) 사람 그림자 제거한 배경 플레이트 (47번)
 $PY -u src/inpainting/remove_cast_shadow.py \
@@ -124,6 +126,24 @@ joint의 스케일이 약 3배 달라서 `--hawor_npz`를 주고 다시 정렬�
 $PY -u src/inpainting/align_depth.py --processed_demo $D \
   --hawor_npz $D/rgb_hawor_full/retarget_input.npz
 ```
+
+## 손끝 컷 (`overlay_rb5_x3_cut`) — 재현 안 되는 한 단계
+
+합성이 읽는 `--robot_dir overlay_rb5_x3_cut`은 렌더 출력 `overlay_rb5_x3`을 44·45번에서
+하던 대로 손본 것이다("검지·중지 마스크 + f312~336 끝 1/3 컷"). **이 컷을 만든 스크립트는
+남아 있지 않다.** 두 디렉터리를 직접 비교해서 무엇이 달라졌는지는 확정해 뒀다:
+
+- `robot_rgb.npy`, `robot_depth.npy`는 **바이트 단위로 동일하다.** 컷은 `robot_mask.npy`만 건드린다.
+- 달라지는 프레임은 **f312 ~ f336, 정확히 25개**. 나머지 528프레임은 완전히 같다.
+- 프레임마다 지워지는 건 손끝 쪽 **연결성분 하나**뿐이다 — f312 1,708 px(전체 64,133 px의 2.7%),
+  f320 1,646 px, f336 313 px. 컷 구간 시작이 가장 크고 끝으로 갈수록 줄어든다.
+- 지워진 자리의 rgb·depth는 그대로 남아 있다(예: f312 depth 0.663 m). 마스크에서만 빠지므로
+  합성 단계에서 그 픽셀이 로봇으로 안 쳐지는 것이다.
+
+지금 이 캐시가 디스크에 있어서 위 4단계는 그대로 돌아간다. 캐시가 없어지면 이 컷은 다시
+만들어야 하고, 다시 만든다면 렌더러의 파트 마스크 기능을 쓰면 된다
+(`--part_links index mid --thumb_mask_only`로 검지·중지 링크 마스크를 뽑고, 그 마스크의 끝
+1/3을 f312~336의 `robot_mask`에서 뺀다). 다만 위 픽셀 수와 정확히 맞는지는 확인 안 했다.
 
 ## 관련 코드
 

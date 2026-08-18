@@ -138,8 +138,15 @@ fi
 
 if run_stage plate; then
   say "background plate (ProPainter 640 -> full res)"
+  # Protect the tracked objects. The keypoint augmentation grows the human mask
+  # past the hand silhouette and swallows whatever it is holding or brushing
+  # past, and the inpainter then erases that object from the plate for good.
+  # An earlier attempt at protection left skin fragments, but that was before
+  # the object track had the human mask subtracted from it -- this mask cannot
+  # contain hand pixels, so protecting it only keeps real object pixels.
   "$PY_INPAINT" -u src/inpainting/export_propainter_masks.py \
     --mask "$D/segmentation_processor/masks_arm_augmented.npy" \
+    --protect_mask "$D/interaction_objects/object_mask.npy" \
     --output_dir "$D/segmentation_processor/propainter_masks"
   mkdir -p "$D/propainter_input_frames"; cp "$D/rgb"/*.jpg "$D/propainter_input_frames/"
   ( cd third_party/ProPainter && "$PY_INPAINT" -u inference_propainter.py \
@@ -151,6 +158,7 @@ if run_stage plate; then
     --source_video "$D/video_L.mp4" \
     --propainter_video "$D/propainter_results_640/propainter_input_frames/inpaint_out.mp4" \
     --mask "$D/segmentation_processor/masks_arm_augmented.npy" \
+    --protect_mask "$D/interaction_objects/object_mask.npy" \
     --output "$D/inpaint_processor/plate_propainter.mkv"
 
   if [[ $DIFFUERASER -eq 1 ]]; then

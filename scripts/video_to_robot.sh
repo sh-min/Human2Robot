@@ -228,6 +228,16 @@ if run_stage composite; then
 
   OBJ_SOURCE="interaction_objects/objsrc_completed.mkv"
   FORCE_MASK="contact/force_front_haco.npy"
+  if [[ "$PASTE_SEGMENTS" == "auto" ]]; then
+    # Decide from the masks which grasps the completion failed to rebuild,
+    # rather than naming them per clip.
+    PASTE_SEGMENTS="$("$PY_INPAINT" -u src/inpainting/select_paste_segments.py \
+      --segments_json "$CFG" \
+      --modal_mask "$D/interaction_objects/object_mask.npy" \
+      --completed_mask "$D/interaction_objects/object_mask_completed.npy" \
+      --verbose | tail -1)"
+    echo "[paste] auto-selected: ${PASTE_SEGMENTS:-(none)}"
+  fi
   if [[ -n "$PASTE_SEGMENTS" ]]; then
     # An object whose visible pixels are only its rim and handle cannot be
     # completed from its own convex hull -- the hull spans the gap instead of

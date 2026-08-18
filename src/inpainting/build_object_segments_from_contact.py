@@ -71,8 +71,9 @@ def project(verts: np.ndarray, focal: float, width: int, height: int
 
 
 def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
-                  human: np.ndarray, count: int,
-                  colour_margin: float) -> list[list[int]]:
+                  human: np.ndarray, count: int, colour_margin: float,
+                  contact_uv: tuple[np.ndarray, np.ndarray] | None = None
+                  ) -> list[list[int]]:
     """Points inside *box* that read as object rather than hand or table.
 
     The support surface is measured in a ring just outside the box rather than
@@ -103,8 +104,27 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
     labelled = cv2.connectedComponents(candidate.astype(np.uint8))[1]
     counts = np.bincount(labelled.ravel())
     counts[0] = 0
-    biggest = int(np.argmax(counts))
-    component = labelled == biggest
+
+    # Prefer the blob the fingers are on. Inside a box drawn around a grasp
+    # there is often more non-table colour behind the object than in it -- a
+    # dish rack, another item on the bench -- and taking the largest blob then
+    # seeds SAM2 on the background, which tracks the wrong thing for the whole
+    # interval. Contact says which blob is held.
+    chosen = None
+    if contact_uv is not None and len(contact_uv[0]):
+        u, v = contact_uv
+        inside = (u >= x0) & (u <= x1) & (v >= y0) & (v <= y1)
+        if inside.any():
+            hits = np.bincount(
+                labelled[np.clip(v[inside] - y0, 0, labelled.shape[0] - 1),
+                         np.clip(u[inside] - x0, 0, labelled.shape[1] - 1)],
+                minlength=len(counts))
+            hits[0] = 0
+            if hits.max() > 0:
+                chosen = int(np.argmax(hits))
+    if chosen is None:
+        chosen = int(np.argmax(counts))
+    component = labelled == chosen
 
     # Prompt well inside the object. A point on the boundary is ambiguous
     # between the object and the hand holding it, and SAM2 answers accordingly.
@@ -209,7 +229,7 @@ def main() -> None:
         frame = cv2.imread(str(frames[seed]))
         human_seed = np.asarray(human[seed], dtype=bool)
         positive = object_points(frame, box, human_seed, args.positive_points,
-                                 args.colour_margin)
+                                 args.colour_margin, contact_uv=(u, v))
         ys, xs = np.nonzero(human_seed[box[1]:box[3] + 1, box[0]:box[2] + 1])
         negative = []
         if len(xs):

@@ -16,6 +16,7 @@ mkdir -p "$OUT" "$WORK"
 
 # number:drive_id:name
 CLIPS=(
+  "2:1JZCRMH7dv21g92hu0erXzhjTuJMfM7lI:IMG_5394"
   "4:1KjixrQKEeroxMlOXzuBwcWdOmBAdzJMy:IMG_5397"
   "5:1QgWDEG7SvAdtE-Y-ewNqbbEAUfV0cOeO:IMG_5398"
   "6:1pk3mjxwV64zdUyigYqBOqxvHlA2RvHEv:IMG_5399"

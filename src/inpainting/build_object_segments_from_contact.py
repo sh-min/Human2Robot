@@ -138,7 +138,7 @@ def main() -> None:
     parser.add_argument("--bridge_frames", type=int, default=6,
                         help="Gaps this short are closed; a grip that flickers "
                              "for a few frames is still one grasp.")
-    parser.add_argument("--lead_frames", type=int, default=15,
+    parser.add_argument("--lead_frames", type=int, default=30,
                         help="Start each tracked interval this many frames "
                              "before contact. The object has to exist as a "
                              "layer while the hand is still closing on it, or "

@@ -4,7 +4,7 @@
   "segments": [
     {
       "name": "object_01",
-      "start_frame": 20,
+      "start_frame": 5,
       "end_frame": 95,
       "contact_frames": [
         35,
@@ -40,7 +40,7 @@
     },
     {
       "name": "object_02",
-      "start_frame": 99,
+      "start_frame": 96,
       "end_frame": 166,
       "contact_frames": [
         114,
@@ -76,7 +76,7 @@
     },
     {
       "name": "object_03",
-      "start_frame": 183,
+      "start_frame": 168,
       "end_frame": 247,
       "contact_frames": [
         198,
@@ -153,7 +153,7 @@
     },
     {
       "name": "object_05",
-      "start_frame": 327,
+      "start_frame": 323,
       "end_frame": 554,
       "contact_frames": [
         342,

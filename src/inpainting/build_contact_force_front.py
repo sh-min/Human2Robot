@@ -49,8 +49,18 @@ def main() -> None:
                              "RGB, so the mask is clipped to object interior.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--robot_mask", type=Path, default=None,
-                        help="Optional (T, H, W) bool, for reporting how much "
-                             "robot the mask actually hides.")
+                        help="(T, H, W) bool. Reports how much robot the mask "
+                             "hides, and drives the lead-in: during the approach "
+                             "the trigger is the rendered robot overlapping the "
+                             "object, not the human vertices, because those two "
+                             "part company before the grasp closes.")
+    parser.add_argument("--thumb_mask", type=Path, default=None,
+                        help="(T, H, W) bool, subtracted from --robot_mask so "
+                             "the thumb never triggers the lead-in.")
+    parser.add_argument("--lead_overlap_px", type=int, default=120,
+                        help="Robot-on-object pixels that count as occluded. "
+                             "Once the fingers are this far behind the object "
+                             "they are hidden on that frame, with no wait.")
     parser.add_argument("--fingers", nargs="+", default=list(FINGERS[1:]),
                         choices=list(FINGERS),
                         help="Fingers whose contact hides the robot. The thumb "
@@ -76,7 +86,7 @@ def main() -> None:
     parser.add_argument("--close_px", type=float, default=9.0,
                         help="Morphological close, to fuse neighbouring "
                              "fingertips into one patch instead of blobs.")
-    parser.add_argument("--lead_frames", type=int, default=15,
+    parser.add_argument("--lead_frames", type=int, default=30,
                         help="Start hiding this many frames before contact is "
                              "detected. Fingers pass behind an object while "
                              "they are still closing on it, so a mask that "
@@ -143,6 +153,10 @@ def main() -> None:
         prob = gaussian_filter1d(prob, args.prob_sigma_t, axis=0, mode="nearest")
 
     verts = {side: hawor[f"verts_{side}"] for side in SIDES}
+    robot = (np.load(args.robot_mask, mmap_mode="r")
+             if args.robot_mask is not None else None)
+    thumb = (np.load(args.thumb_mask, mmap_mode="r")
+             if args.thumb_mask is not None else None)
     patch = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (int(2 * args.patch_px) + 1,) * 2)
     closer = (cv2.getStructuringElement(
@@ -201,6 +215,18 @@ def main() -> None:
             if not inside.any():
                 continue
             seeds[v[inside], u[inside]] = 1
+
+        if lead[t] and robot is not None:
+            # During the approach the human vertices and the composited robot
+            # have already drifted apart, so ask the robot itself: any of its
+            # non-thumb pixels sitting on the object means those fingers are
+            # behind it on this frame, and they go behind on this frame.
+            arm = np.array(robot[t], dtype=bool)
+            if thumb is not None:
+                arm &= ~np.asarray(thumb[t], dtype=bool)
+            behind = arm & np.asarray(objects[t], dtype=bool)
+            if behind.sum() >= args.lead_overlap_px:
+                seeds = np.maximum(seeds, behind.astype(np.uint8))
 
         seeds_per_frame[t] = int(seeds.sum())
         if not seeds.any():

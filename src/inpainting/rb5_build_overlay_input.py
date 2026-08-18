@@ -50,8 +50,10 @@ def main():
                     help="place the base so it projects OFF the frame past this "
                          "edge, so only the arm reaches in (video 46's look). "
                          "Takes precedence over --base_place.")
-    ap.add_argument("--base_offscreen_margin", type=int, default=40,
-                    help="pixels the base must clear the edge by.")
+    ap.add_argument("--base_clear_m", type=float, default=0.22,
+                    help="metres of base body that must clear the frame edge "
+                         "(pedestal radius plus the first link's swing). Given "
+                         "in metres, not pixels, so it holds at any depth.")
     ap.add_argument("--base_place",
                     choices=["bottomright", "bottomleft", "topright", "topleft"],
                     default=None,
@@ -69,7 +71,22 @@ def main():
                          "1=follow the wrist orientation, more jitter near singularities).")
     ap.add_argument("--snap_flange", action="store_true",
                     help="Force the flange onto its IK target after smoothing so "
-                         "the hand cannot drift off the wrist.")
+                         "the hand cannot drift off the wrist. Teleports link6 "
+                         "away from where the joints actually put it, so the "
+                         "wrist3 mate opens up by the residual; prefer "
+                         "--mount_hand, which moves the hand instead.")
+    ap.add_argument("--mount_hand", action="store_true",
+                    help="Write the hand mount taken from the arm's own forward "
+                         "kinematics, so the renderer bolts the hand to the "
+                         "flange instead of to the human wrist. The hand can "
+                         "then never separate from the arm, and every joint "
+                         "angle stays the one the IK solved inside the limits. "
+                         "Where the IK cannot reach, the hand lags the human "
+                         "wrist rather than the arm tearing apart.")
+    ap.add_argument("--reproject", type=int, default=0,
+                    help="Re-solve IK from the smoothed pose this many times, to "
+                         "pull the flange back onto the wrist that smoothing "
+                         "moved it off. Costs a little smoothness.")
     ap.add_argument("--smooth_win", type=int, default=21,
                     help="savgol window (odd) on the joint trajectory; larger tames jitter.")
     args = ap.parse_args()
@@ -128,7 +145,7 @@ def main():
         T_cam_base = ik.place_offscreen(flange, wrist_pos, valid, model, data, fid,
                                         side=args.base_offscreen, focal=focal,
                                         img_w=args.img_w, img_h=args.img_h,
-                                        margin_px=args.base_offscreen_margin,
+                                        clear_m=args.base_clear_m,
                                         w_ori=args.w_ori, mount=args.mount)
     elif args.base_place is not None:            # opt-in corner search
         T_cam_base = ik.place_corner(flange, wrist_pos, valid, model, data, fid,
@@ -140,7 +157,8 @@ def main():
         T_cam_base = pin.SE3(R, t)
         print(f"[rb5] default base ({args.side}, {args.mount}): t_cam={t.round(3).tolist()}")
     q, perr, reach = ik.solve_sequence(flange, valid, T_cam_base, model, data, fid,
-                                       w_ori=args.w_ori, smooth_win=args.smooth_win)
+                                       w_ori=args.w_ori, smooth_win=args.smooth_win,
+                                       reproject=args.reproject)
     dq = np.abs(np.diff(q[valid], axis=0)).sum(1)
     print(f"[rb5] reachable {reach[valid].mean()*100:.0f}%  pos-err med "
           f"{np.nanmedian(perr[valid])*1000:.1f}mm  base(cam)={T_cam_base.translation.round(3)}  "
@@ -159,7 +177,30 @@ def main():
         print(f"[rb5] flange snapped to the hand mount "
               f"(was median {np.median(offset)*1000:.1f} mm, "
               f"max {offset.max()*1000:.1f} mm off)")
+    mount_pos, mount_rot = wrist_pos, wrist_rot
+    if args.mount_hand:
+        # Read the mate back off the arm. flange R was built as
+        # [x_hand, z_hand, cross(x_hand, z_hand)], so the hand frame comes back
+        # as [x, -z_col, y_col], and the wrist sits FLANGE_TCP behind the face
+        # along the hand's +z. Doing it this way means the hand is placed by the
+        # arm, not alongside it: the two cannot drift apart no matter how far
+        # the IK fell short of the human wrist.
+        fk = links[:, 6]
+        x_hand = fk[:, :3, 0]
+        z_hand = fk[:, :3, 1]
+        y_hand = -fk[:, :3, 2]
+        mount_rot = np.stack([x_hand, y_hand, z_hand], axis=2)
+        mount_pos = fk[:, :3, 3] - FLANGE_TCP * z_hand
+        drift = np.linalg.norm(mount_pos[valid] - wrist_pos[valid], axis=1)
+        print(f"[rb5] hand mounted on the arm flange; it now trails the human "
+              f"wrist by median {np.median(drift)*1000:.1f} mm, "
+              f"p95 {np.percentile(drift, 95)*1000:.1f} mm, "
+              f"max {drift.max()*1000:.1f} mm")
+
     np.savez(args.out, rb5_q=q.astype(np.float32), T_cam_base=Tcb.astype(np.float64),
+             hand_mount_pos=mount_pos.astype(np.float64),
+             hand_mount_rot=mount_rot.astype(np.float64),
+             hand_mounted=bool(args.mount_hand),
              link_poses=links.astype(np.float32),
              link_names=np.asarray(ik.LINK_NAMES),
              wrist_pos=wrist_pos.astype(np.float64), wrist_rot=wrist_rot.astype(np.float64),

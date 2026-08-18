@@ -386,13 +386,24 @@ def main() -> None:
         arm_mesh_cfg[s] = _load_lower_arm_meshes(s)
     side_align = build_side_align(embodiment_of)
     rb5_meshes = rb5_link_poses = None
+    rb5_hand_mount = rb5_mount_side = None
     if args.arm == "rb5":
         if args.rb5_npz is None:
             raise SystemExit("--arm rb5 needs --rb5_npz")
-        rb5_link_poses = np.load(args.rb5_npz)["link_poses"]
+        rb5_npz = np.load(args.rb5_npz)
+        rb5_link_poses = rb5_npz["link_poses"]
         rb5_meshes = _load_rb5_meshes()
         print(f"RB5-850e arm: {len(rb5_meshes)} links, "
               f"{len(rb5_link_poses)} frames")
+        if bool(rb5_npz.get("hand_mounted", False)):
+            # The hand is bolted to the arm's flange, so it has to be posed from
+            # that flange and not from the HaWoR wrist. The two are smoothed on
+            # different windows -- and the arm only reaches where the IK could --
+            # so driving them separately is what lets the mate come apart.
+            rb5_hand_mount = (rb5_npz["hand_mount_pos"], rb5_npz["hand_mount_rot"])
+            rb5_mount_side = str(rb5_npz["side"])
+            print(f"[rb5] {rb5_mount_side} hand posed from the arm flange, "
+                  f"not the HaWoR wrist")
     print("URDF loaded for:", {s: embodiment_of[s] for s in side_cfg})
     print("Arm meshes loaded for:", list(arm_mesh_cfg.keys()))
 
@@ -451,6 +462,13 @@ def main() -> None:
             qpos_dict = {jn: float(qdata[i]) for i, jn in enumerate(jnames)}
             wrist_pos = (joints_right if s == "right" else joints_left)[t, 0, :]
             R_mano = Rotation.from_rotvec(go[h_idx, t]).as_matrix()
+            if rb5_hand_mount is not None and s == rb5_mount_side:
+                mount_pos, mount_rot = rb5_hand_mount
+                if t < len(mount_pos):
+                    # hand_root_pose rebuilds R_cam_hand as R_mano @ R_align, so
+                    # feed it the R_mano that lands on the flange's hand frame.
+                    wrist_pos = mount_pos[t]
+                    R_mano = mount_rot[t] @ side_align[s][0].T
             render_meshes = link_meshes
             if args.thumb_mask_only:
                 keywords = args.part_links or ("thumb",)

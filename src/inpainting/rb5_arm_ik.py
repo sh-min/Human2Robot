@@ -149,17 +149,22 @@ _OFFSCREEN = {"left": -1, "right": +1}
 
 
 def place_offscreen(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
-                    side="left", focal, img_w=1920, img_h=1080, margin_px=40,
-                    w_ori=1.0, n_sub=100, mount="floor", verbose=True):
+                    side="left", focal, img_w=1920, img_h=1080, clear_m=0.22,
+                    w_ori=1.0, n_sub=250, mount="floor", verbose=True):
     """Place the base so it projects OUTSIDE the frame, past the given edge.
 
     ``place_corner`` puts the base in a corner of the image, where its pedestal
     stays visible. A robot that is meant to be standing beside the workspace
     reads better when only its arm reaches in, which is what video 46 settled on
     after moving the base by hand. Same search as the corner version, with the
-    projection constraint inverted: keep placements whose base projects at least
-    *margin_px* beyond the edge and that still reach the whole trajectory,
-    preferring the deepest (a base further back gives a slimmer arm).
+    projection constraint inverted: keep placements whose base clears the edge and
+    that still reach the whole trajectory, preferring the deepest (a base further
+    back gives a slimmer arm).
+
+    The base is a body, not a point, so the clearance is given in metres
+    (*clear_m*, the pedestal's radius plus the first link's swing) and converted
+    to pixels per candidate using its own depth. A fixed pixel margin lets a
+    deep base pass while its cylinder still pokes into the frame.
     """
     if side not in _OFFSCREEN:
         raise ValueError(f"side must be one of {list(_OFFSCREEN)}")
@@ -171,18 +176,32 @@ def place_offscreen(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
     R = _R_cam_base(mount)
     c = np.mean(wrist_pos_cam[valid], axis=0)
 
+    # Every frame's target, not the subsample the IK is scored on: a base can
+    # look fine on 100 sampled frames and still leave the arm stretched short at
+    # the few where the human reaches furthest, which is exactly where a mounted
+    # hand visibly lags.
+    targets = flange_poses[np.asarray(valid, bool)][:, :3, 3]
+    reach_limit = reach_radius(model, data, fid) * 0.99
+
     best = None
-    tried = reachable = 0
-    for adx in np.linspace(0.35, 1.10, 9):
-        for ady in np.linspace(0.15, 0.55, 5):
-            for dz in np.linspace(0.2, 1.0, 6):
+    tried = reachable = far = 0
+    # Clearing the base body off-frame is a tight constraint, so the grid has to
+    # be wide enough to still contain placements that reach: pushed far to the
+    # side, the base has to come forward or level with the work to compensate.
+    for adx in np.linspace(0.35, 1.40, 12):
+        for ady in np.linspace(0.00, 0.70, 8):
+            for dz in np.linspace(0.10, 1.20, 9):
                 bp = c + np.array([sx * adx, ady, dz])
                 if bp[2] <= 1e-3:
                     continue
                 u = focal * bp[0] / bp[2] + img_w / 2
-                if sx < 0 and u > -margin_px:
+                clear_px = focal * clear_m / bp[2]
+                if sx < 0 and u + clear_px > 0:
                     continue
-                if sx > 0 and u < img_w + margin_px:
+                if sx > 0 and u - clear_px < img_w:
+                    continue
+                if np.linalg.norm(targets - bp, axis=1).max() > reach_limit:
+                    far += 1
                     continue
                 tried += 1
                 Tcb = pin.SE3(R, bp)
@@ -192,10 +211,16 @@ def place_offscreen(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
                     continue
                 reachable += 1
                 p90 = float(np.nanpercentile(perr, 90))
+                worst = float(np.nanmax(perr))
                 jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
-                cost = p90 * 1000.0 + 25.0 * jit - 15.0 * float(bp[2])
+                # The worst frame counts, not just the 90th percentile. With the
+                # hand bolted to the flange, a base that cannot quite reach the
+                # furthest pose does not bend the arm -- it drags the hand off
+                # the object, which is the one artefact worth paying depth for.
+                cost = (p90 * 1000.0 + 4.0 * worst * 1000.0
+                        + 25.0 * jit - 15.0 * float(bp[2]))
                 if best is None or cost < best[0]:
-                    best = (cost, Tcb, bp, u, p90 * 1000, jit)
+                    best = (cost, Tcb, bp, u, p90 * 1000, jit, worst * 1000)
     if best is None:
         if verbose:
             print(f"[offscreen-{side}] no reachable base off the {side} edge "
@@ -206,8 +231,11 @@ def place_offscreen(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
                             verbose=verbose)
     if verbose:
         print(f"[offscreen-{side}] base(cam)={best[2].round(3)} u={best[3]:.0f}px "
-              f"(frame 0..{img_w}) p90-err {best[4]:.1f}mm jitter {best[5]*100:.1f}% "
-              f"| {reachable}/{tried} off-frame placements reachable")
+              f"(+-{focal * clear_m / best[2][2]:.0f}px body) "
+              f"(frame 0..{img_w}) p90-err {best[4]:.1f}mm worst {best[6]:.1f}mm "
+              f"jitter {best[5]*100:.1f}% "
+              f"| {reachable}/{tried} reachable, {far} rejected for leaving the "
+              f"furthest frame out of reach")
     return best[1]
 
 
@@ -282,7 +310,7 @@ def solve_ik(model, data, fid, q0, target: pin.SE3, *, w_ori=0.0,
 
 
 def solve_sequence(wrist_poses_cam, valid, T_cam_base, model, data, fid, *,
-                   w_ori=0.0, smooth_win=11):
+                   w_ori=0.0, smooth_win=11, reproject=0):
     """wrist_poses_cam: (T,4,4) flange target in cam frame. Position-only IK by
     default + savgol smoothing of the joint trajectory. Unreachable targets are
     clamped onto the reach sphere so the arm stops extending (no jitter).
@@ -309,4 +337,20 @@ def solve_sequence(wrist_poses_cam, valid, T_cam_base, model, data, fid, *,
     if smooth_win and v.sum() > smooth_win:
         q[v] = np.clip(savgol_filter(q[v], smooth_win, 2, axis=0),
                        model.lowerPositionLimit, model.upperPositionLimit)
+        # Smoothing moves the joints off their IK solution, and the flange moves
+        # with them -- by tens of millimetres at the fast frames. Re-solving from
+        # the smoothed pose pulls the flange back onto the wrist while staying in
+        # the smoothed pose's basin, so the trajectory keeps most of its
+        # smoothness instead of snapping back to the raw per-frame solution.
+        for _ in range(max(0, reproject)):
+            for t in np.flatnonzero(v):
+                tgt = T_base_cam * pin.SE3(wrist_poses_cam[t][:3, :3],
+                                           wrist_poses_cam[t][:3, 3])
+                p = tgt.translation
+                r = float(np.linalg.norm(p))
+                if r > reach:
+                    tgt = pin.SE3(tgt.rotation, p * (reach / r))
+                q[t], perr[t] = solve_ik(model, data, fid, q[t], tgt, w_ori=w_ori)
+            q[v] = np.clip(q[v], model.lowerPositionLimit,
+                           model.upperPositionLimit)
     return q, perr, reachable

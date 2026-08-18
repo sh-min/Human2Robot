@@ -174,18 +174,20 @@ def main() -> None:
     # grasp is; a bare "any vertex over threshold" test is true almost always
     # and would find no starts at all.
     lead = np.zeros(frame_count, dtype=bool)
-    if args.lead_frames > 0:
-        state_path = args.contact_dir / "finger_contact.npz"
-        if not state_path.exists():
-            raise FileNotFoundError(
-                f"{state_path} is needed for --lead_frames; run "
-                f"aggregate_finger_contact.py first, or pass --lead_frames 0")
+    held = np.zeros(frame_count, dtype=bool)
+    state_path = args.contact_dir / "finger_contact.npz"
+    if state_path.exists():
         state = np.load(state_path)["state"][:frame_count, :, 1:]
         held = (state.sum(axis=2) >= args.lead_min_fingers).any(axis=1)
-        starts = np.flatnonzero(held & ~np.roll(held, 1))
-        for start in starts:
-            lead[max(0, start - args.lead_frames):start] = True
-        lead &= ~held
+        if args.lead_frames > 0:
+            starts = np.flatnonzero(held & ~np.roll(held, 1))
+            for start in starts:
+                lead[max(0, start - args.lead_frames):start] = True
+            lead &= ~held
+    elif args.lead_frames > 0:
+        raise FileNotFoundError(
+            f"{state_path} is needed for --lead_frames; run "
+            f"aggregate_finger_contact.py first, or pass --lead_frames 0")
 
     hidden = np.zeros(frame_count, dtype=np.int64)
     seeds_per_frame = np.zeros(frame_count, dtype=np.int64)
@@ -216,11 +218,15 @@ def main() -> None:
                 continue
             seeds[v[inside], u[inside]] = 1
 
-        if lead[t] and robot is not None:
-            # During the approach the human vertices and the composited robot
-            # have already drifted apart, so ask the robot itself: any of its
-            # non-thumb pixels sitting on the object means those fingers are
-            # behind it on this frame, and they go behind on this frame.
+        if (lead[t] or held[t]) and robot is not None:
+            # Ask the robot itself, not just the human vertices. The vertices
+            # decide which object is held, but they only land on the object mask
+            # when the two agree closely; a mask that is slightly off, or a hand
+            # that has drifted from the retargeted robot, leaves the projection
+            # outside the object and nothing gets hidden -- while HaCo is
+            # reporting a firm four-finger grasp. Wherever the robot's non-thumb
+            # pixels sit on the object, those fingers are behind it, so the
+            # overlap seeds the mask directly.
             arm = np.array(robot[t], dtype=bool)
             if thumb is not None:
                 arm &= ~np.asarray(thumb[t], dtype=bool)

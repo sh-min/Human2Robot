@@ -18,7 +18,8 @@
 set -euo pipefail
 
 VIDEO="" ; NAME="" ; SIDE="left" ; BASE_EDGE="left" ; OVERRIDES=""
-FROM="start" ; WIDTH=1280 ; HEIGHT=720 ; DIFFUERASER=0
+FROM="frames" ; WIDTH=1280 ; HEIGHT=720 ; DIFFUERASER=0
+PLATE_W=640 ; PLATE_H=360 ; BASE_FROM="" ; PASTE_SEGMENTS=""
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROCESSED_ROOT="${PROCESSED_ROOT:-/home/rkd02/s2p/inpaint_test/processed}"
 RESULTS_ROOT="${RESULTS_ROOT:-/home/rkd02/s2p/results}"
@@ -38,6 +39,9 @@ while [[ $# -gt 0 ]]; do
     --overrides)  OVERRIDES="$2"; shift 2 ;;
     --from)       FROM="$2"; shift 2 ;;
     --diffueraser) DIFFUERASER=1; shift ;;
+    --plate_size) PLATE_W="$2"; PLATE_H=$(( $2 * 9 / 16 )); shift 2 ;;
+    --base_from)  BASE_FROM="$2"; shift 2 ;;
+    --paste)      PASTE_SEGMENTS="$2"; shift 2 ;;
     -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -141,7 +145,7 @@ if run_stage plate; then
   ( cd third_party/ProPainter && "$PY_INPAINT" -u inference_propainter.py \
       --video "$D/propainter_input_frames" \
       --mask "$D/segmentation_processor/propainter_masks" \
-      --output "$D/propainter_results_640" --width 640 --height 360 \
+      --output "$D/propainter_results_640" --width "$PLATE_W" --height "$PLATE_H" \
       --subvideo_length 50 --fp16 --save_fps 30 )
   "$PY_INPAINT" -u src/inpainting/assemble_propainter_background.py \
     --source_video "$D/video_L.mp4" \
@@ -180,10 +184,20 @@ fi
 
 if run_stage robot; then
   say "robot: base off-frame, hand bolted to the flange, render"
+  # Reusing a base from another clip of the same rig skips the 864-candidate IK
+  # search. Only the placement is reused -- this clip still solves its own joint
+  # trajectory, because the arm has to follow this clip's wrist.
+  BASE_ARGS=(--base_offscreen "$BASE_EDGE")
+  if [[ -n "$BASE_FROM" ]]; then
+    "$PY_INPAINT" -c "import sys,numpy as np; np.save(sys.argv[2], np.load(sys.argv[1])['T_cam_base'])" \
+      "$BASE_FROM" "$D/base_reused.npy"
+    echo "[base] reusing placement from $BASE_FROM"
+    BASE_ARGS=(--base_override "$D/base_reused.npy")
+  fi
   "$PY_RETARGET" -u src/inpainting/rb5_build_overlay_input.py \
     --hawor_npz "$D/rgb_hawor/retarget_input.npz" \
     --pkl "$D/rgb_hawor/qpos_xhand_contact_${SIDE}_smooth.pkl" --side "$SIDE" \
-    --img_w "$WIDTH" --img_h "$HEIGHT" --base_offscreen "$BASE_EDGE" \
+    --img_w "$WIDTH" --img_h "$HEIGHT" "${BASE_ARGS[@]}" \
     --smooth_win 5 --mount_hand --out "$D/rb5_mounted.npz"
   for extra in "" "--thumb_mask_only"; do
     PYOPENGL_PLATFORM=egl "$PY_INPAINT" -u src/inpainting/render_xhand_overlay_depth.py \
@@ -204,17 +218,50 @@ if run_stage composite; then
     --thumb_mask "$D/overlay_rb5_mnt/robot_thumb_mask.npy" \
     --output "$D/contact/force_front_haco.npy"
 
+  OBJ_SOURCE="interaction_objects/objsrc_completed.mkv"
+  FORCE_MASK="contact/force_front_haco.npy"
+  if [[ -n "$PASTE_SEGMENTS" ]]; then
+    # An object whose visible pixels are only its rim and handle cannot be
+    # completed from its own convex hull -- the hull spans the gap instead of
+    # the body. These objects are rigid and fully visible before the hand
+    # reaches them, so a clean frame is warped onto the occluded ones.
+    say "paste from clean reference frames: $PASTE_SEGMENTS"
+    "$PY_INPAINT" -u src/inpainting/paste_object_from_reference.py \
+      --source_video "$D/video_L.mp4" \
+      --object_source_video "$D/interaction_objects/objsrc_completed.mkv" \
+      --object_mask "$D/interaction_objects/object_mask_completed.npy" \
+      --modal_mask "$D/interaction_objects/object_mask.npy" \
+      --robot_mask "$D/overlay_rb5_mnt/robot_mask.npy" \
+      --thumb_mask "$D/overlay_rb5_mnt/robot_thumb_mask.npy" \
+      --segments_json "$CFG" --segments $PASTE_SEGMENTS \
+      --feather 3.0 --hull_smooth 9 \
+      --output_video "$D/interaction_objects/objsrc_pasted.mkv" \
+      --output_force_mask "$D/interaction_objects/force_front_pasted.npy"
+    "$PY_INPAINT" -c "
+import numpy as np, sys
+a = np.load(sys.argv[1], mmap_mode='r'); b = np.load(sys.argv[2], mmap_mode='r')
+out = np.lib.format.open_memmap(sys.argv[3], mode='w+', dtype=bool, shape=a.shape)
+for t in range(len(a)):
+    out[t] = np.asarray(a[t]) | (np.asarray(b[t]) if t < len(b) else False)
+out.flush()
+print(f'[ok] {sys.argv[3]}')
+" "$D/contact/force_front_haco.npy" "$D/interaction_objects/force_front_pasted.npy" \
+  "$D/contact/force_front_combined.npy"
+    OBJ_SOURCE="interaction_objects/objsrc_pasted.mkv"
+    FORCE_MASK="contact/force_front_combined.npy"
+  fi
+
   for BG in propainter diffueraser; do
     plate="$D/inpaint_processor/plate_${BG}.mkv"
     [[ -f "$plate" ]] || continue
     out="$R/${NAME}_robot_${BG}.mp4"
     "$PY_INPAINT" -u src/inpainting/composite_interaction_objects.py --processed_demo "$D" \
       --hawor_npz "$D/rgb_hawor/retarget_input.npz" \
-      --object_source_video interaction_objects/objsrc_completed.mkv \
+      --object_source_video "$OBJ_SOURCE" \
       --background_video "inpaint_processor/plate_${BG}.mkv" \
       --object_mask interaction_objects/object_mask_completed.npy \
       --robot_dir overlay_rb5_mnt \
-      --force_front_mask contact/force_front_haco.npy \
+      --force_front_mask "$FORCE_MASK" \
       --force_robot_front_mask overlay_rb5_mnt/robot_thumb_mask.npy \
       --force_robot_front_dilate 2 \
       --shadow_depth depth_processor/depth_aligned.npy \

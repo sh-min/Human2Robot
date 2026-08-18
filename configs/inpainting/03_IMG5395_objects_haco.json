@@ -1,0 +1,201 @@
+{
+  "source": "build_object_segments_from_contact.py",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
+  "segments": [
+    {
+      "name": "object_01",
+      "start_frame": 0,
+      "end_frame": 80,
+      "contact_frames": [
+        17,
+        72
+      ],
+      "seed_frame": 44,
+      "box": [
+        435,
+        130,
+        620,
+        275
+      ],
+      "positive_points": [
+        [
+          500,
+          210
+        ],
+        [
+          555,
+          215
+        ]
+      ],
+      "negative_points": [
+        [
+          412,
+          232
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          645,
+          168
+        ]
+      ],
+      "note": "\ub0a8\uc0c9 \uba38\uadf8. \uc74c\uc131 \uc810\uc744 \ucef5 \ubab8\ud1b5 \uc67c\ucabd\uc5d0 \ucc0d\uc5b4 SAM2\uac00 \uc624\ub978\ucabd \uc808\ubc18\ub9cc \uc7a1\uc558\ub2e4. \uc190 \ucabd\uc73c\ub85c \ube90\ub2e4."
+    },
+    {
+      "name": "object_02",
+      "start_frame": 81,
+      "end_frame": 150,
+      "contact_frames": [
+        97,
+        142
+      ],
+      "seed_frame": 110,
+      "box": [
+        480,
+        425,
+        700,
+        645
+      ],
+      "positive_points": [
+        [
+          600,
+          500
+        ],
+        [
+          590,
+          570
+        ]
+      ],
+      "negative_points": [
+        [
+          505,
+          560
+        ],
+        [
+          540,
+          610
+        ],
+        [
+          640,
+          430
+        ]
+      ],
+      "note": "\ucd08\ucf54\ube44\ud329 \u2014 \uc2dc\ub4dc\uac00 f139(\ub4e4\uc5b4\uc62c\ub9b0 \ub4a4)\ub77c \uc5ed\ubc29\ud5a5 \ucd94\uc801\uc774 f81~135\uc5d0\uc11c \uc2e4\ud328\ud588\ub2e4. \ucc45\uc0c1 \uc704\uc5d0 \uc788\uc744 \ub54c\ub85c \ub2f9\uae40."
+    },
+    {
+      "name": "object_03",
+      "start_frame": 154,
+      "end_frame": 236,
+      "contact_frames": [
+        184,
+        228
+      ],
+      "seed_frame": 212,
+      "box": [
+        690,
+        135,
+        925,
+        340
+      ],
+      "positive_points": [
+        [
+          840,
+          200
+        ],
+        [
+          880,
+          250
+        ]
+      ],
+      "negative_points": [
+        [
+          730,
+          250
+        ],
+        [
+          790,
+          300
+        ],
+        [
+          700,
+          170
+        ]
+      ],
+      "note": "\uc624\ub728 \uc0c1\uc790 \u2014 \ub4a4\uc758 \uc2dd\uae30\uac74\uc870\ub300\u00b7\uba38\uadf8\uac00 \ud568\uaed8 \uc7a1\ud614\ub2e4."
+    },
+    {
+      "name": "object_04",
+      "start_frame": 237,
+      "end_frame": 334,
+      "contact_frames": [
+        261,
+        326
+      ],
+      "seed_frame": 323,
+      "box": [
+        304,
+        146,
+        566,
+        289
+      ],
+      "positive_points": [
+        [
+          304,
+          193
+        ],
+        [
+          566,
+          250
+        ]
+      ],
+      "negative_points": [
+        [
+          355,
+          229
+        ],
+        [
+          307,
+          257
+        ]
+      ]
+    },
+    {
+      "name": "object_05",
+      "start_frame": 335,
+      "end_frame": 527,
+      "contact_frames": [
+        355,
+        519
+      ],
+      "seed_frame": 475,
+      "box": [
+        169,
+        472,
+        436,
+        647
+      ],
+      "positive_points": [
+        [
+          352,
+          645
+        ],
+        [
+          399,
+          601
+        ]
+      ],
+      "negative_points": [
+        [
+          332,
+          556
+        ],
+        [
+          176,
+          588
+        ]
+      ]
+    }
+  ]
+}

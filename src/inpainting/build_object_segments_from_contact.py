@@ -138,6 +138,15 @@ def main() -> None:
     parser.add_argument("--bridge_frames", type=int, default=6,
                         help="Gaps this short are closed; a grip that flickers "
                              "for a few frames is still one grasp.")
+    parser.add_argument("--lead_frames", type=int, default=15,
+                        help="Start each tracked interval this many frames "
+                             "before contact. The object has to exist as a "
+                             "layer while the hand is still closing on it, or "
+                             "the compositor has nothing to draw over the "
+                             "approaching robot and the fingers cross in front.")
+    parser.add_argument("--trail_frames", type=int, default=8,
+                        help="Keep tracking this long after contact ends, so "
+                             "the object does not pop as the hand lets go.")
     parser.add_argument("--margin_px", type=int, default=45,
                         help="Grown around the projected contact points. The "
                              "object extends well past where fingers touch it.")
@@ -146,6 +155,15 @@ def main() -> None:
     parser.add_argument("--colour_margin", type=float, default=45.0,
                         help="Distance from the support-surface colour before a "
                              "pixel counts as object.")
+    parser.add_argument("--overrides", type=Path, default=None,
+                        help="JSON mapping a segment name to fields that "
+                             "replace the generated ones, e.g. "
+                             '{\"object_04\": {\"box\": [...], '
+                             '\"positive_points\": [[x, y]]}}. Colour cannot '
+                             "separate an object from a table it matches, so "
+                             "those few need prompts by hand; keeping them in "
+                             "their own file means regenerating does not "
+                             "silently drop the correction.")
     args = parser.parse_args()
 
     hawor = np.load(args.hawor_npz)
@@ -171,6 +189,13 @@ def main() -> None:
     segments = []
     for index, (start, end) in enumerate(runs):
         seed = start + int(np.argmax(score[start:end + 1, 1:].sum(axis=1)))
+        # Widen the tracked interval around the contact. SAM2 propagates both
+        # ways from the seed, so this costs only tracking time, and the seed
+        # stays where the grip is strongest.
+        tracked_start = max(0, start - args.lead_frames)
+        tracked_end = min(frame_count - 1, end + args.trail_frames)
+        if index and segments:
+            tracked_start = max(tracked_start, segments[-1]["end_frame"] + 1)
         u, v = project(verts[seed][non_thumb], focal, width, height)
         if not len(u):
             print(f"[warn] f{start}-{end}: no contact vertex projects into "
@@ -194,15 +219,29 @@ def main() -> None:
 
         segments.append({
             "name": f"object_{index + 1:02d}",
-            "start_frame": int(start),
-            "end_frame": int(end),
+            "start_frame": int(tracked_start),
+            "end_frame": int(tracked_end),
+            "contact_frames": [int(start), int(end)],
             "seed_frame": int(seed),
             "box": [int(c) for c in box],
             "positive_points": positive,
             "negative_points": negative,
         })
-        print(f"[seg] {segments[-1]['name']}: f{start}-{end} seed={seed} "
-              f"box={box} +{len(positive)} -{len(negative)}")
+        print(f"[seg] {segments[-1]['name']}: track f{tracked_start}-{tracked_end} "
+              f"(contact f{start}-{end}) seed={seed} box={box} "
+              f"+{len(positive)} -{len(negative)}")
+
+    if args.overrides is not None:
+        edits = json.loads(args.overrides.read_text(encoding="utf-8"))
+        for segment in segments:
+            patch = edits.get(segment["name"])
+            if patch:
+                segment.update(patch)
+                print(f"[override] {segment['name']}: "
+                      f"{', '.join(sorted(patch))}")
+        unknown = set(edits) - {s["name"] for s in segments}
+        for name in sorted(unknown):
+            print(f"[warn] override for {name!r} matches no segment")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({

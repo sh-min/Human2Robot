@@ -1,11 +1,15 @@
 {
   "source": "build_object_segments_from_contact.py",
-  "notes": "HaCo contact intervals, left hand, min_fingers=2 | object_04 prompts hand-corrected (translucent container)",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
   "segments": [
     {
       "name": "object_01",
-      "start_frame": 35,
-      "end_frame": 87,
+      "start_frame": 20,
+      "end_frame": 95,
+      "contact_frames": [
+        35,
+        87
+      ],
       "seed_frame": 66,
       "box": [
         350,
@@ -36,8 +40,12 @@
     },
     {
       "name": "object_02",
-      "start_frame": 114,
-      "end_frame": 158,
+      "start_frame": 99,
+      "end_frame": 166,
+      "contact_frames": [
+        114,
+        158
+      ],
       "seed_frame": 131,
       "box": [
         280,
@@ -68,8 +76,12 @@
     },
     {
       "name": "object_03",
-      "start_frame": 198,
-      "end_frame": 239,
+      "start_frame": 183,
+      "end_frame": 247,
+      "contact_frames": [
+        198,
+        239
+      ],
       "seed_frame": 230,
       "box": [
         605,
@@ -100,8 +112,12 @@
     },
     {
       "name": "object_04",
-      "start_frame": 258,
-      "end_frame": 314,
+      "start_frame": 248,
+      "end_frame": 322,
+      "contact_frames": [
+        258,
+        314
+      ],
       "seed_frame": 275,
       "box": [
         345,
@@ -133,12 +149,16 @@
           290
         ]
       ],
-      "note": "반투명 용기 — 책상과 색이 같아 자동 프롬프트 실패, 손으로 지정"
+      "note": "\ubc18\ud22c\uba85 \uc6a9\uae30 \u2014 \ucc45\uc0c1\uacfc \uc0c9\uc774 \uac19\uc544 \uc0c9 \uae30\ubc18 \ud504\ub86c\ud504\ud2b8\uac00 \ube48 \ucc45\uc0c1\uc744 \ubb3c\uc5c8\ub2e4. \uc190\uc73c\ub85c \uc9c0\uc815."
     },
     {
       "name": "object_05",
-      "start_frame": 342,
-      "end_frame": 546,
+      "start_frame": 327,
+      "end_frame": 554,
+      "contact_frames": [
+        342,
+        546
+      ],
       "seed_frame": 497,
       "box": [
         79,

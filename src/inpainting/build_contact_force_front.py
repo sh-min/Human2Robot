@@ -76,6 +76,19 @@ def main() -> None:
     parser.add_argument("--close_px", type=float, default=9.0,
                         help="Morphological close, to fuse neighbouring "
                              "fingertips into one patch instead of blobs.")
+    parser.add_argument("--lead_frames", type=int, default=15,
+                        help="Start hiding this many frames before contact is "
+                             "detected. Fingers pass behind an object while "
+                             "they are still closing on it, so a mask that "
+                             "waits for the contact probability leaves them "
+                             "drawn over the object during the approach. Lead "
+                             "frames only take effect where the projected "
+                             "fingers already overlap the object, so this "
+                             "cannot hide anything the hand has not reached.")
+    parser.add_argument("--lead_min_fingers", type=int, default=2,
+                        help="Non-thumb fingers whose contact state marks a "
+                             "grasp, for locating where the lead-in starts. "
+                             "Match build_object_segments_from_contact.py.")
     parser.add_argument("--min_px", type=int, default=150,
                         help="Frames whose mask is smaller than this are "
                              "cleared; a handful of pixels is noise, not a "
@@ -140,8 +153,29 @@ def main() -> None:
         args.output, mode="w+", dtype=bool,
         shape=(frame_count, height, width))
 
+    # Where a grasp begins, and the run of frames just before it: during the
+    # approach the contact probability has not crossed yet, but the fingers are
+    # closing and already pass behind the object. Grasp starts come from the
+    # same per-finger state the object spec uses, so the two agree on when a
+    # grasp is; a bare "any vertex over threshold" test is true almost always
+    # and would find no starts at all.
+    lead = np.zeros(frame_count, dtype=bool)
+    if args.lead_frames > 0:
+        state_path = args.contact_dir / "finger_contact.npz"
+        if not state_path.exists():
+            raise FileNotFoundError(
+                f"{state_path} is needed for --lead_frames; run "
+                f"aggregate_finger_contact.py first, or pass --lead_frames 0")
+        state = np.load(state_path)["state"][:frame_count, :, 1:]
+        held = (state.sum(axis=2) >= args.lead_min_fingers).any(axis=1)
+        starts = np.flatnonzero(held & ~np.roll(held, 1))
+        for start in starts:
+            lead[max(0, start - args.lead_frames):start] = True
+        lead &= ~held
+
     hidden = np.zeros(frame_count, dtype=np.int64)
     seeds_per_frame = np.zeros(frame_count, dtype=np.int64)
+    lead_used = 0
     for t in range(frame_count):
         seeds = np.zeros((height, width), dtype=np.uint8)
         for side_idx, side in enumerate(SIDES):
@@ -149,6 +183,10 @@ def main() -> None:
                 continue
             wanted = np.isin(labels[side], list(keep_fingers))
             keep = wanted & (prob[t, side_idx] >= args.contact_threshold)
+            if lead[t]:
+                # No vertex clears the threshold yet, so take the whole finger
+                # and let the object-overlap test below decide.
+                keep = wanted
             if not keep.any():
                 continue
             pts = verts[side][t][keep]
@@ -191,12 +229,16 @@ def main() -> None:
             mask[:] = False
         out[t] = mask
         hidden[t] = int(mask.sum())
+        if lead[t] and mask.any():
+            lead_used += 1
 
     out.flush()
 
     active = hidden > 0
     print(f"[ok] {args.output}  frames={frame_count}  "
-          f"grasp frames={int(active.sum())}/{frame_count}")
+          f"grasp frames={int(active.sum())}/{frame_count}  "
+          f"(of which {lead_used} are approach frames added by --lead_frames "
+          f"{args.lead_frames})")
     if active.any():
         print(f"     contact seeds/frame: mean={seeds_per_frame[active].mean():.0f}"
               f"  mask px/frame: mean={hidden[active].mean():.0f} "

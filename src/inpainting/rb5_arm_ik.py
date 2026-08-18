@@ -145,6 +145,72 @@ _CORNER = {
 }
 
 
+_OFFSCREEN = {"left": -1, "right": +1}
+
+
+def place_offscreen(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
+                    side="left", focal, img_w=1920, img_h=1080, margin_px=40,
+                    w_ori=1.0, n_sub=100, mount="floor", verbose=True):
+    """Place the base so it projects OUTSIDE the frame, past the given edge.
+
+    ``place_corner`` puts the base in a corner of the image, where its pedestal
+    stays visible. A robot that is meant to be standing beside the workspace
+    reads better when only its arm reaches in, which is what video 46 settled on
+    after moving the base by hand. Same search as the corner version, with the
+    projection constraint inverted: keep placements whose base projects at least
+    *margin_px* beyond the edge and that still reach the whole trajectory,
+    preferring the deepest (a base further back gives a slimmer arm).
+    """
+    if side not in _OFFSCREEN:
+        raise ValueError(f"side must be one of {list(_OFFSCREEN)}")
+    sx = _OFFSCREEN[side]
+    vi = np.flatnonzero(valid)
+    sub = vi[:: max(1, len(vi) // n_sub)]
+    sub_fl = flange_poses[sub]
+    sub_valid = np.ones(len(sub), bool)
+    R = _R_cam_base(mount)
+    c = np.mean(wrist_pos_cam[valid], axis=0)
+
+    best = None
+    tried = reachable = 0
+    for adx in np.linspace(0.35, 1.10, 9):
+        for ady in np.linspace(0.15, 0.55, 5):
+            for dz in np.linspace(0.2, 1.0, 6):
+                bp = c + np.array([sx * adx, ady, dz])
+                if bp[2] <= 1e-3:
+                    continue
+                u = focal * bp[0] / bp[2] + img_w / 2
+                if sx < 0 and u > -margin_px:
+                    continue
+                if sx > 0 and u < img_w + margin_px:
+                    continue
+                tried += 1
+                Tcb = pin.SE3(R, bp)
+                q, perr, rok = solve_sequence(sub_fl, sub_valid, Tcb, model, data,
+                                              fid, w_ori=w_ori, smooth_win=0)
+                if rok.mean() < 0.99:
+                    continue
+                reachable += 1
+                p90 = float(np.nanpercentile(perr, 90))
+                jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
+                cost = p90 * 1000.0 + 25.0 * jit - 15.0 * float(bp[2])
+                if best is None or cost < best[0]:
+                    best = (cost, Tcb, bp, u, p90 * 1000, jit)
+    if best is None:
+        if verbose:
+            print(f"[offscreen-{side}] no reachable base off the {side} edge "
+                  f"({tried} placements projected off-frame); corner fallback")
+        return place_corner(flange_poses, wrist_pos_cam, valid, model, data, fid,
+                            corner=f"bottom{side}", focal=focal, img_w=img_w,
+                            img_h=img_h, w_ori=w_ori, n_sub=n_sub,
+                            verbose=verbose)
+    if verbose:
+        print(f"[offscreen-{side}] base(cam)={best[2].round(3)} u={best[3]:.0f}px "
+              f"(frame 0..{img_w}) p90-err {best[4]:.1f}mm jitter {best[5]*100:.1f}% "
+              f"| {reachable}/{tried} off-frame placements reachable")
+    return best[1]
+
+
 def place_corner(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
                  corner="bottomright", focal, img_w=1920, img_h=1080,
                  w_ori=1.0, n_sub=100, verbose=True):

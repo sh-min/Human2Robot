@@ -46,6 +46,12 @@ def main():
     ap.add_argument("--optimize_base", action="store_true",
                     help="search base placements for the lowest reach-error + jitter "
                          "anywhere (instead of the default bottom-right placement).")
+    ap.add_argument("--base_offscreen", choices=["left", "right"], default=None,
+                    help="place the base so it projects OFF the frame past this "
+                         "edge, so only the arm reaches in (video 46's look). "
+                         "Takes precedence over --base_place.")
+    ap.add_argument("--base_offscreen_margin", type=int, default=40,
+                    help="pixels the base must clear the edge by.")
     ap.add_argument("--base_place",
                     choices=["bottomright", "bottomleft", "topright", "topleft"],
                     default=None,
@@ -118,6 +124,12 @@ def main():
     elif any(s != 0.0 for s in shift):           # manual floor auto-fit + nudge
         T_cam_base = ik.auto_fit_base(wrist_pos[valid], model, data, fid,
                                       shift=shift, mount=args.mount)
+    elif args.base_offscreen is not None:        # off-frame search (arm only)
+        T_cam_base = ik.place_offscreen(flange, wrist_pos, valid, model, data, fid,
+                                        side=args.base_offscreen, focal=focal,
+                                        img_w=args.img_w, img_h=args.img_h,
+                                        margin_px=args.base_offscreen_margin,
+                                        w_ori=args.w_ori, mount=args.mount)
     elif args.base_place is not None:            # opt-in corner search
         T_cam_base = ik.place_corner(flange, wrist_pos, valid, model, data, fid,
                                      corner=args.base_place, focal=focal,

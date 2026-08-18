@@ -118,7 +118,10 @@ def main() -> None:
     parser.add_argument("--robot_mask", type=Path, required=True)
     parser.add_argument("--thumb_mask", type=Path, default=None)
     parser.add_argument("--segments_json", type=Path, required=True)
-    parser.add_argument("--segments", required=True)
+    parser.add_argument("--segments", required=True, nargs="+",
+                        help="Segment names, separated by commas or spaces. "
+                             "Both are accepted because the caller may be "
+                             "passing a list it built itself.")
     parser.add_argument("--reference_frames", default="",
                         help="Comma-separated per-segment reference frame. "
                              "Only used with --reference_mode fixed.")
@@ -148,7 +151,8 @@ def main() -> None:
     thumb = np.load(args.thumb_mask, mmap_mode="r") if args.thumb_mask else None
     segments = {item["name"]: item for item in json.loads(
         args.segments_json.read_text(encoding="utf-8"))["segments"]}
-    names = [n.strip() for n in args.segments.split(",") if n.strip()]
+    names = [n.strip() for item in args.segments for n in item.split(",")
+             if n.strip()]
     overrides = [int(v) for v in args.reference_frames.split(",") if v.strip()]
 
     source = cv2.VideoCapture(str(args.source_video))

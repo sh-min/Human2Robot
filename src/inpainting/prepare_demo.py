@@ -23,25 +23,46 @@ Usage (video file):
 """
 import argparse
 import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
 import mediapy as media
-import numpy as np
-from PIL import Image, ImageFile
-
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def _build_from_frames(frames_dir: Path, dst_mp4: Path, fps: float, glob: str) -> int:
     paths = sorted(frames_dir.glob(glob))
+    selected_glob = glob
     if not paths:
         paths = sorted(frames_dir.glob("*.png"))
+        selected_glob = "*.png"
     if not paths:
         raise FileNotFoundError(f"No images matched in {frames_dir}")
-    frames = np.stack([np.array(Image.open(p).convert("RGB")) for p in paths])
     dst_mp4.parent.mkdir(parents=True, exist_ok=True)
-    media.write_video(str(dst_mp4), frames, fps=fps, codec="libx264")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-framerate",
+            str(fps),
+            "-pattern_type",
+            "glob",
+            "-i",
+            str(frames_dir / selected_glob),
+            "-frames:v",
+            str(len(paths)),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(dst_mp4),
+        ],
+        check=True,
+    )
     return len(paths)
 
 
@@ -95,16 +116,15 @@ def main() -> None:
         raise FileNotFoundError(f"--input not a dir or file: {args.input}")
 
     processed_dir = args.processed_root / args.demo_name / args.demo_num
-    if processed_dir.exists() and not args.overwrite:
-        print(f"[skip] {processed_dir} already copied")
-    elif processed_dir.exists():
-        processed_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(raw_mp4, processed_dir / "video_L.mp4")
-        print(f"[ok] refreshed {processed_dir / 'video_L.mp4'}")
+    processed_mp4 = processed_dir / "video_L.mp4"
+    if processed_mp4.exists() and not args.overwrite:
+        print(f"[skip] {processed_mp4} already copied")
     else:
-        processed_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(raw_dir, processed_dir)
-        print(f"[ok] copied raw demo -> {processed_dir}")
+        existed = processed_mp4.exists()
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(raw_mp4, processed_mp4)
+        action = "refreshed" if existed else "copied"
+        print(f"[ok] {action} {processed_mp4}")
 
 
 if __name__ == "__main__":

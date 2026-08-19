@@ -64,6 +64,14 @@ def main() -> None:
     ap.add_argument("--hawor_npz", type=Path, required=True)
     ap.add_argument("--overwrite", action="store_true",
                     help="Rewrite video_rgb_imgs.mkv even when it exists")
+    ap.add_argument(
+        "--skip_rgb_copy",
+        action="store_true",
+        help=(
+            "Skip the lossless video_rgb_imgs.mkv copy when only prompt data "
+            "is needed (for example, annotated-object segmentation)."
+        ),
+    )
     args = ap.parse_args()
 
     # Discover video dimensions
@@ -120,7 +128,9 @@ def main() -> None:
 
     # E2FGVI's hand_inpaint stage reads video_rgb_imgs.mkv (ffv1), not video_L.mp4
     dst = args.processed_demo / "video_rgb_imgs.mkv"
-    if dst.exists() and not args.overwrite:
+    if args.skip_rgb_copy:
+        print(f"[skip] lossless RGB copy not requested: {dst}")
+    elif dst.exists() and not args.overwrite:
         print(f"[skip] {dst} exists")
     else:
         frames = media.read_video(str(video_path))

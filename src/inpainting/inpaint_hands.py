@@ -23,6 +23,7 @@ import argparse
 import gc
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -256,7 +257,19 @@ def main() -> None:
         print(f"[info] upscaled inpaint back to {w0}x{h0}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    media.write_video(str(out_path), comp, fps=args.fps, codec="ffv1")
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f".{out_path.stem}.",
+        suffix=out_path.suffix,
+        dir=out_path.parent,
+        delete=False,
+    )
+    temporary_output = Path(handle.name)
+    handle.close()
+    try:
+        media.write_video(str(temporary_output), comp, fps=args.fps, codec="ffv1")
+        temporary_output.replace(out_path)
+    finally:
+        temporary_output.unlink(missing_ok=True)
     print(f"[ok] wrote {out_path}")
 
 

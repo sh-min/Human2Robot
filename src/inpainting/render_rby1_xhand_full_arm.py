@@ -39,6 +39,7 @@ import numpy as np
 import pinocchio as pin
 import pyrender
 import trimesh
+from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from _paths import XHAND_URDF_LEFT, XHAND_URDF_RIGHT
@@ -59,6 +60,15 @@ _T_HEAD2_CAM = pin.SE3(
 )
 _CV_TO_MJ = pin.SE3(np.diag([1.0, -1.0, -1.0]), np.zeros(3))
 _T_WRIST_ARM6 = pin.SE3(np.eye(3), np.array([0.0, 0.0, 0.1261]))
+
+# Reachable elbow-down seeds.  The arm has one redundant DoF, so a neutral
+# zero seed can converge to an elbow-inverted branch even when the wrist pose
+# itself is correct.  These seeds only select the natural branch; subsequent
+# frames are warm-started from the previous solution.
+_SAFE_ARM_QPOS = {
+    "left": np.array([-1.2, 0.4, -1.2, -1.0, 0.0, 1.2, 0.8]),
+    "right": np.array([-1.2, -0.4, 1.2, -1.0, 0.0, 1.2, -0.8]),
+}
 
 # Arm link → mesh file mapping (from the composed MJCF).
 ARM_LINK_MESHES = {
@@ -189,24 +199,66 @@ def cam_to_world(p_cv, R_cv, T_world_mjcam):
 
 
 def solve_arm_ik(model, data, q0, side, target,
-                 max_iters=200, damping=1e-2, step_scale=0.5,
+                 max_iters=100, damping=1e-2, step_scale=0.5,
                  tol_pos=1e-3, tol_ori=1e-2):
+    """Solve one arm without allowing multi-turn or branch-flip poses.
+
+    The previous DLS loop integrated unconstrained joint updates.  It could
+    therefore match the wrist with physically impossible angles and visibly
+    twist the elbow/forearm.  A bounded solve keeps every joint inside the
+    robot limits.  A small previous-frame term resolves the redundant arm DoF
+    continuously while leaving wrist position/orientation as the main target.
+    """
     q = q0.copy()
     fid = model.getFrameId(f"link_{side}_arm_6")
     dof = _arm_dof_idx(model, side)
-    eye6 = np.eye(6)
-    for _ in range(max_iters):
+    lower = model.lowerPositionLimit[dof].astype(np.float64) + 1e-7
+    upper = model.upperPositionLimit[dof].astype(np.float64) - 1e-7
+    previous = np.clip(q[dof], lower, upper)
+    orientation_weight = 0.12
+    continuity_weight = 0.004
+
+    def residual(x):
+        q[dof] = x
         pin.forwardKinematics(model, data, q)
         pin.updateFramePlacements(model, data)
-        err6 = pin.log6(data.oMf[fid].inverse() * target).vector
-        if np.linalg.norm(err6[:3]) < tol_pos and np.linalg.norm(err6[3:]) < tol_ori:
-            break
-        J_full = pin.computeFrameJacobian(model, data, q, fid, pin.LOCAL)
-        J = J_full[:, dof]
-        dq = J.T @ np.linalg.solve(J @ J.T + (damping ** 2) * eye6, err6)
-        v = np.zeros(model.nv)
-        v[dof] = step_scale * dq
-        q = pin.integrate(model, q, v)
+        current = data.oMf[fid]
+        position = current.translation - target.translation
+        orientation = pin.log3(current.rotation.T @ target.rotation)
+        continuity = continuity_weight * (x - previous)
+        return np.concatenate([
+            position,
+            orientation_weight * orientation,
+            continuity,
+        ])
+
+    def run(start, evaluations):
+        return least_squares(
+            residual,
+            np.clip(start, lower, upper),
+            bounds=(lower, upper),
+            max_nfev=evaluations,
+            xtol=1e-8,
+            ftol=1e-8,
+            gtol=1e-8,
+        )
+
+    solutions = [run(previous, max_iters)]
+    target_error = residual(solutions[0].x)
+    if (
+        np.linalg.norm(target_error[:3]) > max(tol_pos, 5e-3)
+        or np.linalg.norm(target_error[3:6]) / orientation_weight
+        > max(tol_ori, np.radians(3.0))
+    ):
+        # Retry alternate starts only if the warm-started branch cannot reach
+        # the target.  Continuity remains part of each candidate's score.
+        solutions.extend([
+            run(_SAFE_ARM_QPOS[side], max_iters * 2),
+            run(0.5 * (lower + upper), max_iters * 2),
+        ])
+
+    solution = min(solutions, key=lambda item: np.linalg.norm(residual(item.x)))
+    q[dof] = solution.x
     return q
 
 
@@ -256,6 +308,7 @@ def render_robot(
     camera, renderer,
 ):
     scene = pyrender.Scene(ambient_light=[0.3, 0.3, 0.3], bg_color=[0., 0., 0., 0.])
+    seg_node_map = {}
     scene.add(camera, pose=np.eye(4))
     scene.add(pyrender.DirectionalLight(color=[1., 1., 1.], intensity=3.0), pose=np.eye(4))
     pl_pose = np.eye(4); pl_pose[:3, 3] = [0.3, -0.3, -0.5]
@@ -272,7 +325,19 @@ def render_robot(
                 continue
             for mesh, T_vis in items:
                 pr_mesh = pyrender.Mesh.from_trimesh(mesh.copy(), smooth=False)
-                scene.add(pr_mesh, pose=link_T[lname] @ T_vis)
+                node = scene.add(pr_mesh, pose=link_T[lname] @ T_vis)
+                # Semantic IDs match composite_rb5_contact_occlusion.py:
+                # thumb, index, middle, ring, pinky = 1..5.  Palm/wrist and
+                # arm remain zero so HaCo can only hide finger geometry.
+                lower_name = lname.lower()
+                label = 0
+                for finger_id, token in enumerate(
+                    ("thumb", "index", "mid", "ring", "pinky"), start=1
+                ):
+                    if token in lower_name:
+                        label = finger_id
+                        break
+                seg_node_map[node] = np.array([label, 0, 0], dtype=np.uint8)
 
     # Arms: link poses are already in MuJoCo camera frame (= OpenGL convention)
     # from T_cam_world * T_world_link, so use them directly — no T_CV2GL.
@@ -283,11 +348,19 @@ def render_robot(
             T_pr = link_poses_gl[lname]
             for mesh in parts:
                 pr_mesh = pyrender.Mesh.from_trimesh(mesh.copy(), smooth=False)
-                scene.add(pr_mesh, pose=T_pr)
+                node = scene.add(pr_mesh, pose=T_pr)
+                seg_node_map[node] = np.array([0, 0, 0], dtype=np.uint8)
 
     color, depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
     mask = depth > 0
-    return color[..., :3], mask
+    semantic, _ = renderer.render(
+        scene,
+        flags=pyrender.RenderFlags.SEG,
+        seg_node_map=seg_node_map,
+    )
+    finger_labels = semantic[..., 0].astype(np.uint8)
+    finger_labels[~mask] = 0
+    return color[..., :3], mask, depth.astype(np.float32), finger_labels
 
 
 def main() -> None:
@@ -308,12 +381,29 @@ def main() -> None:
     ap.add_argument("--aux_output_dir", type=Path, default=None,
                     help="Robot-only video, mask, and render metadata directory. "
                          "Default: <processed_demo>/overlay_processor_arm")
+    ap.add_argument(
+        "--compositor_output_dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional compact RGB-D/semantic array bundle for the HaCo "
+            "contact-occlusion compositor."
+        ),
+    )
+    ap.add_argument(
+        "--compositor_scale",
+        type=float,
+        default=0.25,
+        help="Resolution scale for --compositor_output_dir (default: 0.25).",
+    )
     ap.add_argument("--require_smoothed", action="store_true",
                     help="Fail unless both PKLs contain smoothed finger qpos, "
                          "wrist position, and wrist orientation metadata.")
     ap.add_argument("--head_pitch", type=float, default=0.6)
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
+    if not 0.0 < args.compositor_scale <= 1.0:
+        ap.error("--compositor_scale must be in (0, 1]")
 
     # --- Load HaWoR data ---
     ri = np.load(args.hawor_npz)
@@ -419,6 +509,16 @@ def main() -> None:
     pin_model = pin.buildModelFromMJCF(str(SCENE))
     pin_data = pin_model.createData()
     q_home = np.zeros(pin_model.nq)
+    # Start each redundant arm on its reachable elbow-down branch.  This does
+    # not alter the tracked wrist/hand trajectory; it only selects the arm
+    # configuration used to reach that trajectory.
+    for side in ("right", "left"):
+        arm_dof = _arm_dof_idx(pin_model, side)
+        q_home[arm_dof] = np.clip(
+            _SAFE_ARM_QPOS[side],
+            pin_model.lowerPositionLimit[arm_dof],
+            pin_model.upperPositionLimit[arm_dof],
+        )
     # Set head_1 pitch
     for i in range(pin_model.njoints):
         if pin_model.names[i] == "head_1":
@@ -433,6 +533,40 @@ def main() -> None:
     q_prev = q_home.copy()
     robot_only_frames = []
     robot_masks = []
+    compositor_arrays = None
+    if args.compositor_output_dir is not None:
+        compositor_dir = args.compositor_output_dir.resolve()
+        compositor_dir.mkdir(parents=True, exist_ok=True)
+        compositor_width = max(1, int(round(img_w * args.compositor_scale)))
+        compositor_height = max(1, int(round(img_h * args.compositor_scale)))
+        compositor_shape = (T_use, compositor_height, compositor_width)
+        compositor_arrays = {
+            "rgb": np.lib.format.open_memmap(
+                compositor_dir / "robot_rgb.npy",
+                mode="w+", dtype=np.uint8,
+                shape=(*compositor_shape, 3),
+            ),
+            "depth": np.lib.format.open_memmap(
+                compositor_dir / "robot_depth.npy",
+                mode="w+", dtype=np.float32,
+                shape=compositor_shape,
+            ),
+            "mask": np.lib.format.open_memmap(
+                compositor_dir / "robot_mask.npy",
+                mode="w+", dtype=bool,
+                shape=compositor_shape,
+            ),
+            "finger_mask": np.lib.format.open_memmap(
+                compositor_dir / "robot_finger_mask.npy",
+                mode="w+", dtype=bool,
+                shape=compositor_shape,
+            ),
+            "labels": np.lib.format.open_memmap(
+                compositor_dir / "robot_finger_labels.npy",
+                mode="w+", dtype=np.uint8,
+                shape=compositor_shape,
+            ),
+        }
 
     for t in range(T_use):
         hands_data = []
@@ -486,8 +620,9 @@ def main() -> None:
         q_prev = q_ik
 
         if hands_data:
-            rgb, robot_mask = render_robot(hands_data, arm_meshes_data,
-                                           camera, pr_renderer)
+            rgb, robot_mask, robot_depth, finger_labels = render_robot(
+                hands_data, arm_meshes_data, camera, pr_renderer
+            )
             out = bg_frames[t].copy()
             # Do not intersect with the human hand/arm mask.  That mask was
             # consumed by E2FGVI and must not constrain the robot silhouette.
@@ -496,6 +631,30 @@ def main() -> None:
         else:
             rgb = np.zeros((img_h, img_w, 3), dtype=np.uint8)
             robot_mask = np.zeros((img_h, img_w), dtype=bool)
+            robot_depth = np.zeros((img_h, img_w), dtype=np.float32)
+            finger_labels = np.zeros((img_h, img_w), dtype=np.uint8)
+
+        if compositor_arrays is not None:
+            size = (compositor_width, compositor_height)
+            small_mask = cv2.resize(
+                robot_mask.astype(np.uint8), size,
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+            small_labels = cv2.resize(
+                finger_labels, size, interpolation=cv2.INTER_NEAREST
+            ).astype(np.uint8)
+            small_mask |= small_labels > 0
+            small_rgb = cv2.resize(rgb, size, interpolation=cv2.INTER_AREA)
+            small_rgb[~small_mask] = 0
+            small_depth = cv2.resize(
+                robot_depth, size, interpolation=cv2.INTER_NEAREST
+            ).astype(np.float32)
+            small_depth[~small_mask] = 0.0
+            compositor_arrays["rgb"][t] = small_rgb
+            compositor_arrays["depth"][t] = small_depth
+            compositor_arrays["mask"][t] = small_mask
+            compositor_arrays["finger_mask"][t] = small_labels > 0
+            compositor_arrays["labels"][t] = small_labels
 
         ronly = np.zeros((img_h, img_w, 3), dtype=np.uint8)
         ronly[robot_mask] = rgb[robot_mask]
@@ -506,6 +665,31 @@ def main() -> None:
             print(f"  {t+1}/{T_use}")
 
     pr_renderer.delete()
+
+    if compositor_arrays is not None:
+        for array in compositor_arrays.values():
+            array.flush()
+        dominant_side = (
+            "left" if int(left_valid[:T_use].sum()) >= int(right_valid[:T_use].sum())
+            else "right"
+        )
+        (compositor_dir / "manifest.json").write_text(json.dumps({
+            "schema_version": 1,
+            "renderer": "pyrender_rby1_xhand_arm_stabilized",
+            "side": dominant_side,
+            "frames": int(T_use),
+            "width": int(compositor_width),
+            "height": int(compositor_height),
+            "source_width": int(img_w),
+            "source_height": int(img_h),
+            "fps": int(args.fps),
+            "finger_labels": {
+                "thumb": 1, "index": 2, "middle": 3, "ring": 4, "pinky": 5,
+            },
+            "arm_ik_joint_limits": True,
+            "arm_ik_temporal_continuity": True,
+        }, indent=2))
+        print(f"[ok] wrote HaCo compositor arrays: {compositor_dir}")
 
     out_dir = (
         args.aux_output_dir
@@ -536,6 +720,9 @@ def main() -> None:
             "smoothing" in qr and "smoothing" in ql
         ),
         "arm_ik_uses_smoothed_wrist_pose": True,
+        "arm_ik_joint_limits": True,
+        "arm_ik_temporal_continuity": True,
+        "arm_ik_natural_elbow_seed": True,
         "frames": int(T_use),
         "fps": args.fps,
     }, indent=2))

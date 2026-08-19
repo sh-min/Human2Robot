@@ -596,7 +596,13 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     output = args.output or (out_dir / "masks_arm.npy")
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output, masks)
+    temporary = output.with_name(f".{output.name}.tmp")
+    try:
+        with temporary.open("wb") as stream:
+            np.save(stream, masks)
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
     print(f"[ok] wrote {output}")
 
     if not args.keep_tmp:

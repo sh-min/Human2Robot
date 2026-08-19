@@ -317,6 +317,66 @@ acc = α_front  · robot_rgb + (1-α_front)  · acc       # front-MCP layer
 | 5 (idx-MCP) | 0.279 | 2.29 | **기본값** — 균형 |
 | 9 (mid-MCP) | 0.305 | 4.24 | cube가 robot 사이만 보임 |
 
+## 로봇 팔 base 위치 기준 (GitHub published overlay)
+
+Stage 5의 기본 렌더러는 `pyrender`이다. XHand와 RBY1 하박
+(arm3–arm6)을 HaWoR 손목에 기하학적으로 붙이며, 화면 좌표로 별도
+이동하지 않는다. 공개 결과와 동일한 배치 상수는
+`EE_OFFSET_Z=0.1261`, `_ARM3_OFFSET=[0.031, 0, 0.256]`이다.
+
+`isaac`은 RB5-850 base를 `rb5_arm_ik.auto_fit_base()`로 데모별 탐색하므로
+위치가 달라질 수 있다. RB5 배치 실험에서만 `--render_backend isaac`을
+명시하고, 일반 파이프라인은 `pyrender`로 통일한다.
+
+입력 PKL은 retargeting이 생성한 `qpos_xhand_*_smooth.pkl`을 사용하고,
+기본 렌더 인자 `--smooth_win 15`, `--smooth_wrist_win 21`,
+`--relight auto`를 유지한다.
+
+## 영상 안에서 바뀌는 상호작용 객체
+
+조작 대상이 시간에 따라 바뀌는 영상은 각 구간과 SAM2 seed prompt를 JSON으로
+정의한 뒤 하나의 modal object mask로 합칩니다.
+
+```bash
+python src/inpainting/segment_interaction_objects.py \
+  --processed_demo <processed_demo> \
+  --segments_json configs/inpainting/v0729_01_objects.json
+
+python src/inpainting/composite_interaction_objects.py \
+  --processed_demo <processed_demo> \
+  --hawor_npz <processed_demo>/rgb_hawor/retarget_input.npz
+```
+
+합성 순서는 `인페인팅 배경 → MCP 뒤 로봇 → 원본 RGB 객체 → MCP 앞 로봇`입니다.
+객체 원본 픽셀은 인페인팅 이후 복원하며, 기본 설정은 로봇 raster 밖으로 edge
+blur가 번지지 않게 해 움직이는 검은 halo를 억제합니다.
+
+주요 출력은 다음과 같습니다.
+
+```text
+interaction_objects/object_mask.npy
+interaction_objects/object_mask_preview.mp4
+interaction_objects/video_overlay_object_occlusion.mp4
+```
+
+합성 뒤 원본 픽셀을 보수적으로 복구하려면 다음 도구를 사용합니다.
+
+```bash
+python src/inpainting/recover_source_after_composite.py \
+  --original_video <processed_demo>/video_L.mp4 \
+  --composite_video <processed_demo>/interaction_objects/video_overlay_object_occlusion.mp4 \
+  --background_video <processed_demo>/inpaint_processor/video_human_inpaint.mkv \
+  --human_mask <processed_demo>/segmentation_processor/masks_arm.npy \
+  --inpaint_mask <processed_demo>/segmentation_processor/masks_arm_robot_residual.npy \
+  --robot_mask <processed_demo>/overlay_processor/robot_mask.npy \
+  --visible_object_mask <processed_demo>/interaction_objects/object_mask.npy \
+  --output <processed_demo>/interaction_objects/video_overlay_source_recovered.mkv
+```
+
+`render_xhand_overlay_moderngl.py`는 pyrender EGL 초기화가 실패하는 환경을 위한
+ModernGL 대체 렌더러입니다. 긴 720p 영상도 RGB·depth·mask를 memmap으로 바로
+저장하므로 전체 결과를 메모리에 올리지 않습니다.
+
 ## 알려진 함정
 
 ### 1. SAM2 checkpoint 누락
@@ -352,6 +412,15 @@ pyrender가 PyOpenGL을 3.1.0으로 silently downgrade. 3.1.0은 `OpenGL.EGL.EGL
 `amodal_cube.py`는 per-window checkpoint를 `_amodal_ckpt/`에 저장. OOM으로 죽어도
 다시 돌리면 완료된 window부터 자동 resume. GPU ~15 GB 이상 필요.
 
+## 동기화된 4x2 비교 영상
+
+`make_video_comparison_grid.py`는 `--video LABEL PATH`를 표시 순서대로 정확히 8번
+받아 프레임 동기화된 H.264 비교 영상을 만든다. 각 원본은 640x360으로 유지되며,
+라벨은 영상과 겹치지 않는 별도의 40px 검은 헤더에 표시된다. 따라서 최종 출력은
+2560x800이다. 입력 8개의 프레임 수, FPS, 길이가 다르면 렌더링 전에 실패한다.
+
+기존 CLI는 그대로이며 이미 존재하는 출력 파일을 바꾸려면 `--overwrite`를 사용한다.
+
 ## 파일 구조
 
 ```
@@ -378,6 +447,7 @@ src/inpainting/
 ├── regularize_and_cut_cube.py         #     legacy cube mask cleanup (not in pipeline)
 ├── render_rby1_xhand_full_arm.py      #     local full 7-DOF RBY1 arm + XHand overlay
 ├── visualize_pipeline_grid.py         #     raw/mask/background/robot/final comparison
+├── make_video_comparison_grid.py      #     synchronized labelled 4x2 comparison (2560x800)
 │
 ├── render_xhand_overlay.py            #     shared render helpers: embodiment resolve + URDF/MJCF parse + FK (imported by render_xhand_overlay_depth)
 │

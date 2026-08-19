@@ -35,7 +35,7 @@ DEFAULT_BASE_T = {"left": (-0.624, 0.396, 0.638), "right": (0.624, 0.396, 0.638)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hawor_npz", required=True)
-    ap.add_argument("--pkl", required=True, help="qpos_xhand_right(_smooth).pkl")
+    ap.add_argument("--pkl", required=True, help="qpos_xhand_<side>(_smooth).pkl")
     ap.add_argument("--side", default="right", choices=["right", "left"])
     ap.add_argument("--out", default="/result/skill2policy/rb5_overlay_input.npz")
     ap.add_argument("--base_override", default=None,
@@ -65,6 +65,9 @@ def main():
                     help="savgol window (odd) on the joint trajectory; larger tames jitter.")
     args = ap.parse_args()
 
+    if args.img_w <= 0 or args.img_h <= 0:
+        raise ValueError(f"invalid image size: {args.img_w}x{args.img_h}")
+
     import pickle
     ri = np.load(args.hawor_npz)
     hidx = 1 if args.side == "right" else 0
@@ -76,12 +79,42 @@ def main():
     qpos = np.asarray(dq["data"]); jnames = list(dq["joint_names"])
 
     T = joints.shape[0]
+    if not valid.any():
+        raise ValueError(f"HaWoR contains no valid {args.side} frames")
+    pkl_side = dq.get("hand")
+    if pkl_side is not None and pkl_side != args.side:
+        raise ValueError(
+            f"retarget pkl side {pkl_side!r} does not match --side {args.side!r}"
+        )
+    embodiment = dq.get("embodiment", "xhand")
+    if embodiment != "xhand":
+        raise ValueError(f"Isaac RB5 overlay requires an xhand pkl, got {embodiment!r}")
+    pkl_valid = np.asarray(dq.get("valid", valid), dtype=bool)
+    if pkl_valid.shape != valid.shape or not np.array_equal(pkl_valid, valid):
+        raise ValueError("retarget pkl validity does not match the HaWoR trajectory")
+    if qpos.shape != (T, len(jnames)):
+        raise ValueError(
+            f"qpos/joint-name contract mismatch: qpos={qpos.shape}, "
+            f"T={T}, joint_names={len(jnames)}"
+        )
+    if len(jnames) != 12 or len(set(jnames)) != len(jnames):
+        raise ValueError(f"XHand renderer requires 12 unique joints, got {jnames}")
     # Use the smoothed wrist from the retarget pkl (retarget --smooth smooths
     # wrist_pos + wrist_quat with proper quaternion unwrap). wrist_quat is
     # R_cam_xhand as scipy .as_quat() (xyzw). This smooths both the hand
     # placement and the RB5 IK target.
     wrist_pos = np.asarray(dq["wrist_pos"], np.float64)
-    wrist_rot = Rotation.from_quat(np.asarray(dq["wrist_quat"], np.float64)).as_matrix()
+    wrist_quat = np.asarray(dq["wrist_quat"], np.float64)
+    if wrist_pos.shape != (T, 3) or wrist_quat.shape != (T, 4):
+        raise ValueError(
+            f"wrist trajectory mismatch: pos={wrist_pos.shape}, quat={wrist_quat.shape}, T={T}"
+        )
+    if not (np.isfinite(qpos).all() and np.isfinite(wrist_pos).all() and np.isfinite(wrist_quat).all()):
+        raise ValueError("retarget pkl contains non-finite trajectory values")
+    quat_norm = np.linalg.norm(wrist_quat, axis=1)
+    if np.any(quat_norm < 1e-6):
+        raise ValueError("retarget pkl contains a zero-length wrist quaternion")
+    wrist_rot = Rotation.from_quat(wrist_quat).as_matrix()
 
     # Build the RB5 flange (link6) IK target so the flange MOUNTING FACE mates flush
     # with the xhand mount plate (right_arm_flange_link), like bolting the hand on.
@@ -132,11 +165,16 @@ def main():
           f"w_ori={args.w_ori} jitter-snaps>0.3rad={(dq>0.3).mean()*100:.1f}%")
 
     Tcb = np.eye(4); Tcb[:3, :3] = T_cam_base.rotation; Tcb[:3, 3] = T_cam_base.translation
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    Path(args.out).resolve().parent.mkdir(parents=True, exist_ok=True)
     np.savez(args.out, rb5_q=q.astype(np.float32), T_cam_base=Tcb.astype(np.float64),
              wrist_pos=wrist_pos.astype(np.float64), wrist_rot=wrist_rot.astype(np.float64),
-             qpos=qpos.astype(np.float32), valid=valid, img_focal=focal, side=args.side)
-    json.dump({"joint_names": jnames}, open(os.path.splitext(args.out)[0] + "_jointnames.json", "w"))
+             qpos=qpos.astype(np.float32), valid=valid, img_focal=focal,
+             img_width=np.int32(args.img_w), img_height=np.int32(args.img_h),
+             side=args.side)
+    json.dump(
+        {"joint_names": jnames, "side": args.side, "embodiment": embodiment},
+        open(os.path.splitext(args.out)[0] + "_jointnames.json", "w"),
+    )
     print(f"[ok] wrote {args.out}  T={T}")
 
 

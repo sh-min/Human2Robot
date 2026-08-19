@@ -220,6 +220,49 @@ def _render_robot_rgbd(hands_data, arm_scene_data, camera, renderer, side_align,
     return color[..., :3], depth.astype(np.float32), mask
 
 
+def _render_thumb_depths(hands_data, camera, renderer, side_align):
+    """Render each XHand thumb alone for visible-pixel identification.
+
+    Visibility against the complete robot is resolved by the caller using the
+    full-scene depth.  Separate side buffers let contact compositors promote
+    only the thumb associated with a tracked interaction object.
+    """
+    outputs = {}
+    for target_side in ("right", "left"):
+        scene = pyrender.Scene(
+            ambient_light=[0.3, 0.3, 0.3],
+            bg_color=[0.0, 0.0, 0.0, 0.0],
+        )
+        scene.add(camera, pose=np.eye(4))
+        added = False
+        for side, wrist_pos, R_mano, qpos_dict, joints_tree, link_meshes in hands_data:
+            if side != target_side:
+                continue
+            T_root, _ = hand_root_pose(R_mano, wrist_pos, side_align[side])
+            link_T = compute_fk(joints_tree, qpos_dict, T_root)
+            thumb_links = {
+                f"{side}_hand_thumb_bend_link",
+                f"{side}_hand_thumb_rota_link1",
+                f"{side}_hand_thumb_rota_link2",
+                f"{side}_hand_thumb_rota_tip",
+            }
+            for lname in thumb_links:
+                if lname not in link_T or lname not in link_meshes:
+                    continue
+                for mesh, T_vis in link_meshes[lname]:
+                    scene.add(
+                        pyrender.Mesh.from_trimesh(mesh.copy(), smooth=False),
+                        pose=link_T[lname] @ T_vis,
+                    )
+                    added = True
+        if added:
+            depth = renderer.render(scene, flags=pyrender.RenderFlags.DEPTH_ONLY)
+            outputs[target_side] = depth.astype(np.float32)
+        else:
+            outputs[target_side] = None
+    return outputs
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -228,6 +271,8 @@ def main() -> None:
     ap.add_argument("--right_pkl", type=Path, required=True)
     ap.add_argument("--left_pkl",  type=Path, required=True)
     ap.add_argument("--hand", choices=["left", "right", "both"], default="both")
+    ap.add_argument("--output_subdir", default="overlay_processor",
+                    help="Output directory under --processed_demo.")
     ap.add_argument("--right_embodiment", choices=EMBODIMENT_NAMES, default=None,
                     help="Override the robot hand model for the right hand. "
                          "Default: read from the pkl, which retargeting stamps.")
@@ -332,6 +377,10 @@ def main() -> None:
     rgb_buf   = np.zeros((T_use, img_h, img_w, 3), dtype=np.uint8)
     depth_buf = np.full((T_use, img_h, img_w), np.inf, dtype=np.float32)
     mask_buf  = np.zeros((T_use, img_h, img_w), dtype=bool)
+    thumb_mask_buf = {
+        "right": np.zeros((T_use, img_h, img_w), dtype=bool),
+        "left": np.zeros((T_use, img_h, img_w), dtype=bool),
+    }
 
     for t in range(T_use):
         hands_data = []
@@ -364,17 +413,32 @@ def main() -> None:
         rgb_buf[t] = rgb
         mask_buf[t] = mask
         depth_buf[t, mask] = depth[mask]   # leave non-robot pixels at +inf
+        thumb_depths = _render_thumb_depths(
+            hands_data, camera, renderer, side_align
+        )
+        for side, thumb_depth in thumb_depths.items():
+            if thumb_depth is None:
+                continue
+            # Retain only thumb surfaces that are frontmost in the complete
+            # robot render; hidden thumb triangles must not be promoted later.
+            thumb_mask_buf[side][t] = (
+                (thumb_depth > 0)
+                & mask
+                & (np.abs(thumb_depth - depth) <= 2.0e-4)
+            )
 
         if (t + 1) % 100 == 0:
             print(f"  {t+1}/{T_use}")
 
     renderer.delete()
 
-    out_dir = args.processed_demo / "overlay_processor"
+    out_dir = args.processed_demo / args.output_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     np.save(out_dir / "robot_rgb.npy",   rgb_buf)
     np.save(out_dir / "robot_depth.npy", depth_buf.astype(np.float16))
     np.save(out_dir / "robot_mask.npy",  mask_buf)
+    np.save(out_dir / "robot_thumb_mask_right.npy", thumb_mask_buf["right"])
+    np.save(out_dir / "robot_thumb_mask_left.npy", thumb_mask_buf["left"])
     per_frame = mask_buf.sum(axis=(1, 2))
     print(f"[ok] wrote robot_rgb/depth/mask to {out_dir}  "
           f"(robot avg {per_frame.mean():.0f} px / max {per_frame.max()} px)")

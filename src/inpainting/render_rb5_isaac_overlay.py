@@ -11,6 +11,7 @@ Run: OMNI_KIT_ACCEPT_EULA=YES CUDA_VISIBLE_DEVICES=4 \
 """
 from __future__ import annotations
 import argparse, json, os
+from pathlib import Path
 import numpy as np
 from isaaclab.app import AppLauncher
 
@@ -53,9 +54,15 @@ from rb5_finger_semantics import (
     xhand_finger_link_names, expected_finger_link_names, validate_finger_link_names,
 )
 
-XHAND_USD = {"right": "/result/skill2policy/isaac_assets/xhand_right_urdf/xhand_right.usd",
-             "left":  "/result/skill2policy/isaac_assets/xhand_left_urdf/xhand_left.usd"}
-RB5_USD = "/result/skill2policy/isaac_assets/rb5_850e_urdf/rb5_850e.usd"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ASSET_ROOT = Path(
+    os.environ.get("SKILL2POLICY_ISAAC_ASSETS", REPO_ROOT / "isaac_assets")
+).resolve()
+XHAND_USD = {
+    "right": str(ASSET_ROOT / "xhand_right_urdf" / "xhand_right.usd"),
+    "left": str(ASSET_ROOT / "xhand_left_urdf" / "xhand_left.usd"),
+}
+RB5_USD = str(ASSET_ROOT / "rb5_850e_urdf" / "rb5_850e.usd")
 RB5_JOINTS = ["base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3"]
 T_CV2GL = np.diag([1.0, -1.0, -1.0])
 H_APERTURE = 20.955
@@ -73,11 +80,38 @@ def quat_wxyz(R):
 
 
 def main():
-    d = np.load(args.data); jn = json.load(open(args.jn))["joint_names"]
-    side = str(d["side"]); focal = float(d["img_focal"])
+    d = np.load(args.data); joint_meta = json.load(open(args.jn)); jn = joint_meta["joint_names"]
+    side_value = d["side"]
+    side = str(side_value.item() if np.asarray(side_value).ndim == 0 else side_value)
+    if side not in XHAND_USD:
+        raise ValueError(f"unsupported hand side in overlay input: {side!r}")
+    for path in (Path(XHAND_USD[side]), Path(RB5_USD)):
+        if not path.is_file():
+            raise FileNotFoundError(f"missing Isaac USD asset: {path}")
+    if joint_meta.get("side", side) != side:
+        raise ValueError("joint-name sidecar does not match overlay input side")
+    focal = float(d["img_focal"])
     W, Hh = args.width, args.height
+    if W <= 0 or Hh <= 0:
+        raise ValueError(f"invalid render size: {W}x{Hh}")
+    if "img_width" in d and "img_height" in d:
+        expected_wh = (int(d["img_width"]), int(d["img_height"]))
+        if expected_wh != (W, Hh):
+            raise ValueError(
+                f"render size {(W, Hh)} does not match adapter size {expected_wh}"
+            )
     T = d["rb5_q"].shape[0]
     s0, s1 = args.start, (T if args.n == 0 else min(args.start+args.n, T)); Tn = s1-s0
+    if s0 < 0 or s0 >= T or Tn <= 0:
+        raise ValueError(f"empty/invalid frame range: start={args.start}, n={args.n}, T={T}")
+    expected_shapes = {
+        "rb5_q": (T, 6), "wrist_pos": (T, 3), "wrist_rot": (T, 3, 3),
+        "qpos": (T, 12), "valid": (T,), "T_cam_base": (4, 4),
+    }
+    for key, shape in expected_shapes.items():
+        if key not in d or d[key].shape != shape:
+            actual = None if key not in d else d[key].shape
+            raise ValueError(f"overlay input {key} shape {actual}, expected {shape}")
     focal_mm = focal / W * H_APERTURE
 
     # RB5 base pose in GL
@@ -151,6 +185,10 @@ def main():
     rq = {n:i for i,n in enumerate(rb5.joint_names)}
     rids = [(rq[n], ci) for ci,n in enumerate(RB5_JOINTS) if n in rq]
     print(f"[map] hand fingers {len(fids)}/12  rb5 joints {len(rids)}/6", flush=True)
+    if len(fids) != 12 or len(rids) != 6:
+        raise RuntimeError(
+            f"Isaac articulation contract mismatch: hand={len(fids)}/12, rb5={len(rids)}/6"
+        )
 
     import cv2
     from scipy.spatial.transform import Rotation as _Rsc
@@ -194,8 +232,11 @@ def main():
             cv2.putText(comp, name, (30,70), cv2.FONT_HERSHEY_SIMPLEX, 2.2, (0,0,255), 5)
             imgs.append(cv2.resize(comp, (W//2, Hh//2)))
         grid = np.vstack([np.hstack(imgs[0:4]), np.hstack(imgs[4:8])])
-        cv2.imwrite("/result/skill2policy/rb5_calib.png", grid)
-        print("[calib] wrote rb5_calib.png", flush=True); print("RB5_DONE", flush=True); os._exit(0)
+        preview_root = Path(args.out)
+        preview_root.mkdir(parents=True, exist_ok=True)
+        calib_path = preview_root / "rb5_calib.png"
+        cv2.imwrite(str(calib_path), grid)
+        print(f"[calib] wrote {calib_path}", flush=True); print("RB5_DONE", flush=True); os._exit(0)
 
     rgb_buf = np.zeros((Tn,Hh,W,3), np.uint8); depth_buf = np.full((Tn,Hh,W), np.inf, np.float32); mask_buf = np.zeros((Tn,Hh,W), bool)
     finger_label_buf = np.zeros((Tn,Hh,W), np.uint8)
@@ -256,17 +297,25 @@ def main():
         if ki % 5 == 0: print(f"  frame {t} mask={int(m.sum())} fingers={int((finger_label_buf[ki]>0).sum()) if not args.preview else 0}", flush=True)
 
     if args.preview:
+        preview_root = Path(args.out)
+        preview_root.mkdir(parents=True, exist_ok=True)
         if len(preview_imgs) > 6:
-            vw = cv2.VideoWriter("/result/skill2policy/rb5_overlay.mp4",
+            preview_path = preview_root / "rb5_overlay.mp4"
+            vw = cv2.VideoWriter(str(preview_path),
                                  cv2.VideoWriter_fourcc(*"mp4v"), 30, (W, Hh))
             for im in preview_imgs:
                 vw.write(im)
             vw.release()
-            print("[ok] wrote /result/skill2policy/rb5_overlay.mp4", flush=True)
+            print(f"[ok] wrote {preview_path}", flush=True)
         else:
-            cv2.imwrite("/result/skill2policy/rb5_preview.png", np.concatenate(preview_imgs[:6], axis=1))
-            print("[ok] wrote /result/skill2policy/rb5_preview.png", flush=True)
+            preview_path = preview_root / "rb5_preview.png"
+            cv2.imwrite(str(preview_path), np.concatenate(preview_imgs[:6], axis=1))
+            print(f"[ok] wrote {preview_path}", flush=True)
     else:
+        if np.any(d["valid"][s0:s1]) and not np.any(finger_label_buf):
+            raise RuntimeError(
+                "Isaac rendered valid hand frames but emitted no per-finger semantics"
+            )
         out = args.out; os.makedirs(f"{out}/overlay_processor", exist_ok=True)
         np.save(f"{out}/overlay_processor/robot_rgb.npy", rgb_buf)
         np.save(f"{out}/overlay_processor/robot_depth.npy", depth_buf.astype(np.float16))
@@ -280,6 +329,15 @@ def main():
 
 
 if __name__ == "__main__":
-    try: main()
-    except Exception: import traceback; traceback.print_exc()
-    os._exit(0)
+    status = 0
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        status = 1
+    try:
+        app.close()
+    except Exception:
+        pass
+    os._exit(status)

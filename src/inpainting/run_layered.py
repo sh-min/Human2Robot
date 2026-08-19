@@ -1,7 +1,7 @@
 """End-to-end orchestrator for the locked-in layered overlay pipeline.
 
 Stages (each skips itself if its primary output already exists). By DEFAULT the
-pipeline runs 1,2,3,4,5,10 with the Isaac robot renderer and NO object layer.
+pipeline runs 1,2,3,4,5,10 with the pyrender robot renderer and NO object layer.
 Stages marked [object] only run when --object_layer is passed.
 
     1. prepare_demo.py                      rgb/video → video_L.mp4 (demo layout)
@@ -11,8 +11,8 @@ Stages marked [object] only run when --object_layer is passed.
   3.5. segment_object.py            [object]    SAM2 object mask → object_mask_raw.npy
     4. inpaint_hands.py --mode legacy       E2FGVI → inpaint_processor/video_human_inpaint.mkv
     5. robot RGBD → overlay_processor/robot_{rgb,depth,mask}.npy
-         isaac (default): isaac_stage5.sh → RB5-850 arm + xhand hand (Isaac Sim)
-         pyrender (--render_backend pyrender): render_xhand_overlay_depth.py (xhand + RBY1 arm)
+         pyrender (default): render_xhand_overlay_depth.py (xhand + RBY1 arm)
+         isaac (--render_backend isaac): isaac_stage5.sh → RB5-850 arm + xhand hand (Isaac Sim)
     6. estimate_depth.py          [object]    Depth Anything V2 → depth_processor/depth_raw.npy
     7. align_depth.py             [object]    HaWoR Z anchors → depth_processor/depth_aligned.npy
   8-9. run_object_segmentation.py   [object]    SAM2 modal → Diffusion-VAS amodal → object_mask_amodal.npy
@@ -63,10 +63,12 @@ def main() -> None:
     ap.add_argument("--annotate_port", type=int, default=None,
                     help="Port for the Stage-6 interactive annotator (default 7860).")
 
-    ap.add_argument("--render_backend", choices=["isaac", "pyrender"], default="isaac",
-                    help="Stage 5 robot renderer. isaac (default) = RB5-850 arm + xhand "
-                         "hand in Isaac Sim (via isaac_stage5.sh). pyrender = legacy "
-                         "xhand + RBY1 arm.")
+    ap.add_argument("--render_backend", choices=["isaac", "pyrender"], default="pyrender",
+                    help="Stage 5 robot renderer. pyrender (default) = xhand + RBY1 "
+                         "lower arm, whose base follows the HaWoR wrist and matches the "
+                         "published overlays. isaac = RB5-850 arm + xhand hand in Isaac "
+                         "Sim (via isaac_stage5.sh); its base is search-fitted per demo "
+                         "by rb5_arm_ik.auto_fit_base, so it lands elsewhere.")
     ap.add_argument("--object_layer", action="store_true",
                     help="enable the object layer: segment_object (SAM2, stage 3.5) "
                          "+ depth (6,7) + Diffusion-VAS amodal (8,9), composited over the "
@@ -156,8 +158,8 @@ def main() -> None:
             inpaint_cmd += ["--protect_mask", str(object_raw)]
         _run(inpaint_cmd)
 
-    # Stage 5: robot RGBD. Default = Isaac (RB5-850 arm + xhand hand) via the
-    # cross-env wrapper; pyrender (xhand + RBY1 arm) is the legacy fallback.
+    # Stage 5: robot RGBD. Default = pyrender so the RBY1 lower arm follows the
+    # HaWoR wrist and matches the published overlays. Isaac remains opt-in.
     robot_mask_npy = pd / "overlay_processor" / "robot_mask.npy"
     if robot_mask_npy.exists():
         print(f"\n[skip] {robot_mask_npy} exists")

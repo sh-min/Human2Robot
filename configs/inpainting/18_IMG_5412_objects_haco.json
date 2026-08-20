@@ -1,0 +1,186 @@
+{
+  "source": "build_object_segments_from_contact.py",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
+  "segments": [
+    {
+      "name": "object_01",
+      "start_frame": 0,
+      "end_frame": 70,
+      "contact_frames": [
+        25,
+        62
+      ],
+      "seed_frame": 57,
+      "box": [
+        259,
+        120,
+        520,
+        270
+      ],
+      "positive_points": [
+        [
+          520,
+          187
+        ],
+        [
+          259,
+          184
+        ]
+      ],
+      "negative_points": [
+        [
+          333,
+          206
+        ],
+        [
+          381,
+          233
+        ]
+      ]
+    },
+    {
+      "name": "object_02",
+      "start_frame": 71,
+      "end_frame": 162,
+      "contact_frames": [
+        91,
+        154
+      ],
+      "seed_frame": 132,
+      "box": [
+        385,
+        119,
+        588,
+        328
+      ],
+      "positive_points": [
+        [
+          558,
+          305
+        ],
+        [
+          587,
+          291
+        ]
+      ],
+      "negative_points": [
+        [
+          496,
+          205
+        ],
+        [
+          568,
+          246
+        ]
+      ]
+    },
+    {
+      "name": "object_03",
+      "start_frame": 170,
+      "end_frame": 258,
+      "contact_frames": [
+        200,
+        250
+      ],
+      "seed_frame": 217,
+      "box": [
+        351,
+        387,
+        606,
+        557
+      ],
+      "positive_points": [
+        [
+          606,
+          557
+        ],
+        [
+          545,
+          557
+        ]
+      ],
+      "negative_points": [
+        [
+          480,
+          477
+        ],
+        [
+          461,
+          519
+        ]
+      ]
+    },
+    {
+      "name": "object_04",
+      "start_frame": 259,
+      "end_frame": 351,
+      "contact_frames": [
+        288,
+        343
+      ],
+      "seed_frame": 325,
+      "box": [
+        611,
+        117,
+        881,
+        339
+      ],
+      "positive_points": [
+        [
+          772,
+          339
+        ],
+        [
+          875,
+          211
+        ]
+      ],
+      "negative_points": [
+        [
+          676,
+          255
+        ],
+        [
+          794,
+          290
+        ]
+      ]
+    },
+    {
+      "name": "object_05",
+      "start_frame": 352,
+      "end_frame": 539,
+      "contact_frames": [
+        370,
+        531
+      ],
+      "seed_frame": 450,
+      "box": [
+        331,
+        477,
+        581,
+        643
+      ],
+      "positive_points": [
+        [
+          496,
+          643
+        ],
+        [
+          439,
+          642
+        ]
+      ],
+      "negative_points": [
+        [
+          507,
+          552
+        ],
+        [
+          397,
+          583
+        ]
+      ]
+    }
+  ]
+}

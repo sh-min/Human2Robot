@@ -1,0 +1,158 @@
+{
+  "source": "build_object_segments_from_contact.py",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
+  "segments": [
+    {
+      "name": "object_01",
+      "start_frame": 0,
+      "end_frame": 54,
+      "contact_frames": [
+        20,
+        46
+      ],
+      "seed_frame": 32,
+      "box": [
+        392,
+        135,
+        591,
+        371
+      ],
+      "positive_points": [
+        [
+          591,
+          218
+        ],
+        [
+          555,
+          238
+        ]
+      ],
+      "negative_points": [
+        [
+          392,
+          224
+        ],
+        [
+          427,
+          203
+        ]
+      ],
+      "detected_label": "red snack box",
+      "detected_score": 0.6402
+    },
+    {
+      "name": "object_02",
+      "start_frame": 55,
+      "end_frame": 121,
+      "contact_frames": [
+        78,
+        113
+      ],
+      "seed_frame": 81,
+      "box": [
+        482,
+        300,
+        616,
+        426
+      ],
+      "positive_points": [
+        [
+          525,
+          426
+        ],
+        [
+          500,
+          426
+        ]
+      ],
+      "negative_points": [
+        [
+          482,
+          315
+        ],
+        [
+          522,
+          302
+        ]
+      ],
+      "detected_label": "mug",
+      "detected_score": 0.7177
+    },
+    {
+      "name": "object_03",
+      "start_frame": 122,
+      "end_frame": 175,
+      "contact_frames": [
+        137,
+        167
+      ],
+      "seed_frame": 155,
+      "box": [
+        641,
+        98,
+        837,
+        349
+      ],
+      "positive_points": [
+        [
+          837,
+          222
+        ],
+        [
+          826,
+          195
+        ]
+      ],
+      "negative_points": [
+        [
+          641,
+          332
+        ],
+        [
+          642,
+          292
+        ]
+      ],
+      "detected_label": "sponge",
+      "detected_score": 0.3741
+    },
+    {
+      "name": "object_04",
+      "start_frame": 214,
+      "end_frame": 409,
+      "contact_frames": [
+        244,
+        401
+      ],
+      "seed_frame": 321,
+      "box": [
+        380,
+        577,
+        576,
+        701
+      ],
+      "positive_points": [
+        [
+          494,
+          701
+        ],
+        [
+          557,
+          638
+        ]
+      ],
+      "negative_points": [
+        [
+          380,
+          577
+        ],
+        [
+          451,
+          577
+        ]
+      ],
+      "detected_label": "sponge",
+      "detected_score": 0.4804
+    }
+  ]
+}

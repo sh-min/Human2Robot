@@ -1,0 +1,150 @@
+{
+  "source": "build_object_segments_from_contact.py",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
+  "segments": [
+    {
+      "name": "object_01",
+      "start_frame": 0,
+      "end_frame": 79,
+      "contact_frames": [
+        29,
+        71
+      ],
+      "seed_frame": 37,
+      "box": [
+        258,
+        233,
+        475,
+        441
+      ],
+      "positive_points": [
+        [
+          443,
+          342
+        ],
+        [
+          433,
+          233
+        ]
+      ],
+      "negative_points": [
+        [
+          258,
+          441
+        ],
+        [
+          258,
+          400
+        ]
+      ]
+    },
+    {
+      "name": "object_02",
+      "start_frame": 80,
+      "end_frame": 125,
+      "contact_frames": [
+        88,
+        117
+      ],
+      "seed_frame": 106,
+      "box": [
+        598,
+        108,
+        873,
+        348
+      ],
+      "positive_points": [
+        [
+          714,
+          164
+        ],
+        [
+          727,
+          161
+        ]
+      ],
+      "negative_points": [
+        [
+          598,
+          341
+        ],
+        [
+          639,
+          337
+        ]
+      ]
+    },
+    {
+      "name": "object_03",
+      "start_frame": 180,
+      "end_frame": 256,
+      "contact_frames": [
+        210,
+        248
+      ],
+      "seed_frame": 235,
+      "box": [
+        552,
+        116,
+        784,
+        341
+      ],
+      "positive_points": [
+        [
+          730,
+          203
+        ],
+        [
+          678,
+          341
+        ]
+      ],
+      "negative_points": [
+        [
+          552,
+          256
+        ],
+        [
+          552,
+          297
+        ]
+      ]
+    },
+    {
+      "name": "object_04",
+      "start_frame": 257,
+      "end_frame": 426,
+      "contact_frames": [
+        278,
+        418
+      ],
+      "seed_frame": 346,
+      "box": [
+        350,
+        470,
+        597,
+        639
+      ],
+      "positive_points": [
+        [
+          597,
+          609
+        ],
+        [
+          508,
+          639
+        ]
+      ],
+      "negative_points": [
+        [
+          350,
+          532
+        ],
+        [
+          350,
+          573
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,232 @@
+{
+  "source": "build_object_segments_from_contact.py",
+  "notes": "HaCo contact intervals, left hand, min_fingers=2",
+  "segments": [
+    {
+      "name": "object_01",
+      "start_frame": 0,
+      "end_frame": 78,
+      "contact_frames": [
+        29,
+        70
+      ],
+      "seed_frame": 55,
+      "box": [
+        436,
+        138,
+        575,
+        269
+      ],
+      "positive_points": [
+        [
+          499,
+          174
+        ],
+        [
+          527,
+          231
+        ]
+      ],
+      "negative_points": [
+        [
+          436,
+          258
+        ],
+        [
+          436,
+          217
+        ]
+      ],
+      "detected_label": "mug",
+      "detected_score": 0.7977
+    },
+    {
+      "name": "object_02",
+      "start_frame": 79,
+      "end_frame": 122,
+      "contact_frames": [
+        94,
+        114
+      ],
+      "seed_frame": 110,
+      "box": [
+        370,
+        154,
+        504,
+        274
+      ],
+      "positive_points": [
+        [
+          460,
+          191
+        ],
+        [
+          504,
+          201
+        ]
+      ],
+      "negative_points": [
+        [
+          370,
+          240
+        ],
+        [
+          370,
+          159
+        ]
+      ],
+      "detected_label": "clear plastic container",
+      "detected_score": 0.4692
+    },
+    {
+      "name": "object_03",
+      "start_frame": 123,
+      "end_frame": 190,
+      "contact_frames": [
+        153,
+        182
+      ],
+      "seed_frame": 170,
+      "box": [
+        618,
+        119,
+        824,
+        380
+      ],
+      "positive_points": [
+        [
+          739,
+          246
+        ],
+        [
+          653,
+          344
+        ]
+      ],
+      "negative_points": [
+        [
+          618,
+          225
+        ],
+        [
+          653,
+          203
+        ]
+      ],
+      "detected_label": "red snack box",
+      "detected_score": 0.7181
+    },
+    {
+      "name": "object_04",
+      "start_frame": 191,
+      "end_frame": 261,
+      "contact_frames": [
+        214,
+        253
+      ],
+      "seed_frame": 238,
+      "box": [
+        633,
+        59,
+        821,
+        307
+      ],
+      "positive_points": [
+        [
+          680,
+          146
+        ],
+        [
+          710,
+          123
+        ]
+      ],
+      "negative_points": [
+        [
+          633,
+          279
+        ],
+        [
+          633,
+          238
+        ]
+      ],
+      "detected_label": "sponge",
+      "detected_score": 0.3686
+    },
+    {
+      "name": "object_05",
+      "start_frame": 262,
+      "end_frame": 426,
+      "contact_frames": [
+        280,
+        418
+      ],
+      "seed_frame": 295,
+      "box": [
+        340,
+        340,
+        489,
+        483
+      ],
+      "positive_points": [
+        [
+          453,
+          398
+        ],
+        [
+          410,
+          422
+        ]
+      ],
+      "negative_points": [
+        [
+          340,
+          364
+        ],
+        [
+          340,
+          430
+        ]
+      ],
+      "detected_label": "green snack box",
+      "detected_score": 0.4588
+    },
+    {
+      "name": "object_06",
+      "start_frame": 427,
+      "end_frame": 447,
+      "contact_frames": [
+        433,
+        447
+      ],
+      "seed_frame": 446,
+      "box": [
+        427,
+        450,
+        659,
+        626
+      ],
+      "positive_points": [
+        [
+          604,
+          552
+        ],
+        [
+          585,
+          543
+        ]
+      ],
+      "negative_points": [
+        [
+          427,
+          591
+        ],
+        [
+          427,
+          508
+        ]
+      ]
+    }
+  ]
+}

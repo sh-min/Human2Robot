@@ -70,16 +70,23 @@ def project(verts: np.ndarray, focal: float, width: int, height: int
     return u[inside], v[inside]
 
 
-def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
-                  human: np.ndarray, count: int, colour_margin: float,
-                  contact_uv: tuple[np.ndarray, np.ndarray] | None = None
-                  ) -> list[list[int]]:
-    """Points inside *box* that read as object rather than hand or table.
+def object_component(frame: np.ndarray, box: tuple[int, int, int, int],
+                     human: np.ndarray, colour_margin: float,
+                     contact_uv: tuple[np.ndarray, np.ndarray] | None = None
+                     ) -> tuple[np.ndarray, int] | None:
+    """The blob inside *box* that reads as the held object, and its contact hits.
 
     The support surface is measured in a ring just outside the box rather than
     at the frame border, which may show a wall or floor instead of the table the
     objects sit on. Nothing here assumes the table is white -- only that the
     object differs from whatever it rests on, which is what makes it visible.
+
+    Returns the component in crop coordinates together with the number of
+    projected contact points that landed on it. A hit count of zero means the
+    caller is looking at a frame where the object is not visibly touched --
+    usually because the human mask has swallowed it -- and the component is
+    then only a guess from size. Callers should prefer a frame that scores
+    above zero rather than trust that guess.
     """
     x0, y0, x1, y1 = box
     height, width = human.shape
@@ -90,7 +97,7 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
     ring[y0:y1 + 1, x0:x1 + 1] = False
     ring &= ~human
     if not ring.any():
-        return []
+        return None
     surface = np.median(frame[ring].astype(np.float32), axis=0)
 
     crop = frame[y0:y1 + 1, x0:x1 + 1].astype(np.float32)
@@ -99,7 +106,7 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
     candidate = cv2.morphologyEx(candidate.astype(np.uint8), cv2.MORPH_OPEN,
                                  np.ones((5, 5), np.uint8)).astype(bool)
     if not candidate.any():
-        return []
+        return None
 
     labelled = cv2.connectedComponents(candidate.astype(np.uint8))[1]
     counts = np.bincount(labelled.ravel())
@@ -110,7 +117,7 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
     # dish rack, another item on the bench -- and taking the largest blob then
     # seeds SAM2 on the background, which tracks the wrong thing for the whole
     # interval. Contact says which blob is held.
-    chosen = None
+    chosen, hit_total = None, 0
     if contact_uv is not None and len(contact_uv[0]):
         u, v = contact_uv
         inside = (u >= x0) & (u <= x1) & (v >= y0) & (v <= y1)
@@ -122,13 +129,198 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
             hits[0] = 0
             if hits.max() > 0:
                 chosen = int(np.argmax(hits))
+                hit_total = int(hits.sum())
     if chosen is None:
         chosen = int(np.argmax(counts))
-    component = labelled == chosen
+    return labelled == chosen, hit_total
 
-    # Prompt well inside the object. A point on the boundary is ambiguous
-    # between the object and the hand holding it, and SAM2 answers accordingly.
+
+def detected_box(detections: dict, frame: int, u: np.ndarray, v: np.ndarray,
+                 min_score: float, near_px: float = 60.0
+                 ) -> tuple[tuple[int, int, int, int], str, float] | None:
+    """The detection the fingers are inside, at the frame nearest *frame*.
+
+    Scored by how many projected contact points a box contains, not by
+    detection confidence. Confidence says the model is sure it found *a* mug;
+    only the contact points say which object this hand is on. Ties -- a box
+    inside another, the mug and the rack it hangs from -- go to the smaller
+    box, which is the object rather than the furniture around it.
+    """
+    if not detections:
+        return None
+    stride = max(1, int(detections.get("stride", 1)))
+    nearest = str(int(round(frame / stride)) * stride)
+    if nearest not in detections["frames"]:
+        nearest = min(detections["frames"],
+                      key=lambda k: abs(int(k) - frame), default=None)
+        if nearest is None:
+            return None
+    best = None
+    closest = None
+    for entry in detections["frames"][nearest]:
+        if entry["score"] < min_score:
+            continue
+        x0, y0, x1, y1 = entry["box"]
+        held = int(((u >= x0) & (u <= x1) & (v >= y0) & (v <= y1)).sum())
+        area = max(1, (x1 - x0) * (y1 - y0))
+        if held:
+            key = (held, -area)
+            if best is None or key > best[0]:
+                best = (key, (x0, y0, x1, y1), entry["label"], entry["score"])
+            continue
+        # Nothing inside is not the same as nothing there. Wiping a table puts
+        # the sponge flat under the palm, so its box hugs the object while the
+        # contact points sit on the hand a little outside it. The nearest box
+        # is still the right object; only a box far away is a different one.
+        gap = float(np.hypot(np.clip(u, x0, x1) - u, np.clip(v, y0, y1) - v).min())
+        if gap <= near_px and (closest is None or gap < closest[0]):
+            closest = (gap, (x0, y0, x1, y1), entry["label"], entry["score"])
+    if best is not None:
+        return best[1], best[2], best[3]
+    if closest is not None:
+        return closest[1], closest[2], closest[3]
+    return None
+
+
+def _same_object(frame_a: np.ndarray, box_a: tuple[int, int, int, int],
+                 comp_a: np.ndarray, frame_b: np.ndarray,
+                 box_b: tuple[int, int, int, int], comp_b: np.ndarray,
+                 margin: float) -> bool:
+    """Whether two components are plausibly the same object, by median colour.
+
+    Compared on the median rather than the mean so a few pixels of hand or
+    background inside the component cannot drag the answer.
+    """
+    a = frame_a[box_a[1]:box_a[3] + 1, box_a[0]:box_a[2] + 1][comp_a]
+    b = frame_b[box_b[1]:box_b[3] + 1, box_b[0]:box_b[2] + 1][comp_b]
+    if not len(a) or not len(b):
+        return False
+    return bool(np.linalg.norm(np.median(a.astype(np.float32), axis=0)
+                               - np.median(b.astype(np.float32), axis=0)) <= margin)
+
+
+def clean_seed(frames: list, human, box: tuple[int, int, int, int],
+               first: int, last: int, detections: dict | None, label: str | None,
+               min_score: float) -> tuple[int, tuple[int, int, int, int]] | None:
+    """The frame before the grasp where the object is least covered by the hand.
+
+    Every frame inside a grasp shows the object with a hand on it, so whatever
+    the seed picks there is a partial object and the prompt has to thread
+    between fingers. Before the hand arrives, the object sits on the table
+    whole. It has not moved yet either -- it is about to be picked up, not
+    already moving -- so the box found at contact still bounds it, and a
+    detection of the same label is used in preference when one is there.
+
+    Scored by how much of the box the human mask claims, lowest first, so the
+    frame chosen is the one where the arm has not yet reached across the
+    object. SAM2 propagates in both directions from the seed, so seeding here
+    costs nothing and tracks the grasp from a clean start.
+    """
+    best = None
+    for t in range(last, first - 1, -1):
+        if t < 0 or t >= len(frames):
+            continue
+        candidate = box
+        if detections is not None and label is not None:
+            stride = max(1, int(detections.get("stride", 1)))
+            key = str(int(round(t / stride)) * stride)
+            same = [e for e in detections["frames"].get(key, [])
+                    if e["label"] == label and e["score"] >= min_score]
+            overlapping = []
+            for entry in same:
+                a0, b0, a1, b1 = entry["box"]
+                ix = max(0, min(a1, box[2]) - max(a0, box[0]))
+                iy = max(0, min(b1, box[3]) - max(b0, box[1]))
+                if ix * iy > 0:
+                    overlapping.append((ix * iy, entry["box"]))
+            if overlapping:
+                candidate = tuple(max(overlapping)[1])
+        x0, y0, x1, y1 = candidate
+        area = max(1, (x1 - x0 + 1) * (y1 - y0 + 1))
+        covered = float(np.asarray(human[t], dtype=bool)
+                        [y0:y1 + 1, x0:x1 + 1].sum()) / area
+        if best is None or covered < best[0]:
+            best = (covered, t, candidate)
+        if covered == 0.0:
+            break
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def anchor_chain(detections: dict, label: str, seed: int,
+                 seed_box: tuple[int, int, int, int], first: int, last: int,
+                 min_score: float) -> list[list]:
+    """Same-label detection boxes across the interval, chained for continuity.
+
+    SAM2 gets one prompt per segment and propagates from it, so a frame where
+    the hand buries the object ends the track for every frame after it. These
+    boxes are the evidence needed to restart it: the detector still sees the
+    object on the frames either side of the burial.
+
+    Chained from the seed outward, each step taking the same-label box nearest
+    the previous one, because a scene holds two mugs and the nearest is the one
+    this track is on.
+    """
+    if not detections or label is None:
+        return []
+    stride = max(1, int(detections.get("stride", 1)))
+    frames = detections["frames"]
+    anchors = {}
+    for direction in (1, -1):
+        previous = seed_box
+        step = seed
+        while True:
+            step += direction * stride
+            if step < first or step > last:
+                break
+            key = str(int(round(step / stride)) * stride)
+            same = [e["box"] for e in frames.get(key, [])
+                    if e["label"] == label and e["score"] >= min_score]
+            if not same:
+                continue
+            centre = ((previous[0] + previous[2]) / 2, (previous[1] + previous[3]) / 2)
+            nearest = min(same, key=lambda b: (
+                ((b[0] + b[2]) / 2 - centre[0]) ** 2
+                + ((b[1] + b[3]) / 2 - centre[1]) ** 2))
+            anchors[step] = [int(c) for c in nearest]
+            previous = nearest
+    return [[t, anchors[t]] for t in sorted(anchors)]
+
+
+def object_points(component: np.ndarray, box: tuple[int, int, int, int],
+                  count: int,
+                  contact_uv: tuple[np.ndarray, np.ndarray] | None = None,
+                  reach_px: float = 70.0) -> list[list[int]]:
+    """Prompt points well inside the object, near where the fingers touch it.
+
+    A point on the boundary is ambiguous between the object and the hand
+    holding it, and SAM2 answers accordingly -- hence the distance transform.
+    But depth alone is not enough: the colour test only says "not the support
+    surface", so a component can run from the object straight into a wall or a
+    stretch of table the ring failed to characterise, and the deepest point then
+    sits in that background. Contact points that landed *on* the component are
+    known object pixels, so points are taken from within ``reach_px`` of those.
+    Contact points that missed are no help here -- they sit on the hand, which
+    is as close to the background as it is to the object -- and using them all
+    puts the reach back over the background. Falls back to the whole component
+    when contact gives nothing.
+    """
+    x0, y0 = box[0], box[1]
     depth = cv2.distanceTransform(component.astype(np.uint8), cv2.DIST_L2, 5)
+    if contact_uv is not None and len(contact_uv[0]):
+        u, v = contact_uv
+        inside = (u >= x0) & (u <= box[2]) & (v >= y0) & (v <= box[3])
+        if inside.any():
+            ys = np.clip(v[inside] - y0, 0, component.shape[0] - 1)
+            xs = np.clip(u[inside] - x0, 0, component.shape[1] - 1)
+            on_object = component[ys, xs]
+            if on_object.any():
+                seeds = np.zeros(component.shape, np.uint8)
+                seeds[ys[on_object], xs[on_object]] = 1
+                reach = cv2.distanceTransform((seeds == 0).astype(np.uint8),
+                                              cv2.DIST_L2, 5) <= reach_px
+                depth = np.where(reach, depth, 0.0)
     picks = []
     for _ in range(count):
         y, x = np.unravel_index(int(np.argmax(depth)), depth.shape)
@@ -136,6 +328,31 @@ def object_points(frame: np.ndarray, box: tuple[int, int, int, int],
             break
         picks.append([int(x + x0), int(y + y0)])
         cv2.circle(depth, (int(x), int(y)), int(max(12, depth[y, x])), 0, -1)
+    return picks
+
+
+def hand_points(human_crop: np.ndarray, component: np.ndarray,
+                box: tuple[int, int, int, int], count: int) -> list[list[int]]:
+    """Negative points on the hand, taken as far from the object as possible.
+
+    Sampling the hand mask evenly puts points right at the grip, where the mask
+    routinely spills a few pixels onto the object it is holding -- a negative
+    point on the object is exactly the prompt that makes SAM2 drop it. Points
+    deep in the forearm say "not this" just as well and cannot land on the
+    object by accident.
+    """
+    x0, y0 = box[0], box[1]
+    if not human_crop.any():
+        return []
+    away = cv2.distanceTransform((~component).astype(np.uint8), cv2.DIST_L2, 5)
+    away[~human_crop] = -1.0
+    picks = []
+    for _ in range(count):
+        y, x = np.unravel_index(int(np.argmax(away)), away.shape)
+        if away[y, x] < 0:
+            break
+        picks.append([int(x + x0), int(y + y0)])
+        cv2.circle(away, (int(x), int(y)), 40, -1.0, -1)
     return picks
 
 
@@ -172,6 +389,37 @@ def main() -> None:
                              "object extends well past where fingers touch it.")
     parser.add_argument("--positive_points", type=int, default=2)
     parser.add_argument("--negative_points", type=int, default=2)
+    parser.add_argument("--detections", type=Path, default=None,
+                        help="JSON from detect_objects_grounding_dino.py. When "
+                             "given, the grasp box comes from the detection "
+                             "holding the most contact points instead of from "
+                             "the colour blob, which is what lets a segment "
+                             "survive the arm mask swallowing the object.")
+    parser.add_argument("--detection_near_px", type=float, default=60.0,
+                        help="When no detection contains the contact points, "
+                             "accept the nearest one within this many pixels. "
+                             "A hand pressing a sponge flat sits just outside "
+                             "its box; a different object is much further.")
+    parser.add_argument("--detection_score", type=float, default=0.30,
+                        help="Ignore detections weaker than this.")
+    parser.add_argument("--seed_colour_margin", type=float, default=40.0,
+                        help="How far the pre-grasp object's median colour may "
+                             "sit from the held object's before the clean seed "
+                             "is rejected as a different object.")
+    parser.add_argument("--seed_in_grasp", action="store_true",
+                        help="Seed inside the grasp instead of on the clean "
+                             "frame before it. The clean frame is better when "
+                             "the object is on the table beforehand; this is "
+                             "the escape hatch for a clip where it is not, "
+                             "e.g. an object carried in from off-screen.")
+    parser.add_argument("--seed_tries", type=int, default=25,
+                        help="Frames to consider as the seed, in order of grip "
+                             "strength, before giving up and taking the "
+                             "largest blob at the firmest one.")
+    parser.add_argument("--seed_min_px", type=int, default=600,
+                        help="A seed blob smaller than this is a sliver of the "
+                             "object showing between fingers; prompting SAM2 "
+                             "there tracks the sliver, not the object.")
     parser.add_argument("--colour_margin", type=float, default=45.0,
                         help="Distance from the support-surface colour before a "
                              "pixel counts as object.")
@@ -185,6 +433,13 @@ def main() -> None:
                              "their own file means regenerating does not "
                              "silently drop the correction.")
     args = parser.parse_args()
+
+    detections = (json.loads(args.detections.read_text(encoding="utf-8"))
+                  if args.detections is not None else None)
+    if detections is not None:
+        print(f"[gdino] {sum(len(v) for v in detections['frames'].values())} "
+              f"boxes over {len(detections['frames'])} frames, "
+              f"labels={detections['labels']}")
 
     hawor = np.load(args.hawor_npz)
     side_idx = 0 if args.side == "left" else 1
@@ -208,34 +463,113 @@ def main() -> None:
                     args.bridge_frames)
     segments = []
     for index, (start, end) in enumerate(runs):
-        seed = start + int(np.argmax(score[start:end + 1, 1:].sum(axis=1)))
         # Widen the tracked interval around the contact. SAM2 propagates both
-        # ways from the seed, so this costs only tracking time, and the seed
-        # stays where the grip is strongest.
+        # ways from the seed, so this costs only tracking time.
         tracked_start = max(0, start - args.lead_frames)
         tracked_end = min(frame_count - 1, end + args.trail_frames)
         if index and segments:
             tracked_start = max(tracked_start, segments[-1]["end_frame"] + 1)
-        u, v = project(verts[seed][non_thumb], focal, width, height)
-        if not len(u):
-            print(f"[warn] f{start}-{end}: no contact vertex projects into "
-                  f"frame, skipped")
-            continue
-        box = (max(0, int(u.min()) - args.margin_px),
-               max(0, int(v.min()) - args.margin_px),
-               min(width - 1, int(u.max()) + args.margin_px),
-               min(height - 1, int(v.max()) + args.margin_px))
 
-        frame = cv2.imread(str(frames[seed]))
-        human_seed = np.asarray(human[seed], dtype=bool)
-        positive = object_points(frame, box, human_seed, args.positive_points,
-                                 args.colour_margin, contact_uv=(u, v))
-        ys, xs = np.nonzero(human_seed[box[1]:box[3] + 1, box[0]:box[2] + 1])
-        negative = []
-        if len(xs):
-            picks = np.linspace(0, len(xs) - 1, args.negative_points + 2)
-            negative = [[int(xs[int(i)] + box[0]), int(ys[int(i)] + box[1])]
-                        for i in picks[1:-1]]
+        # Seed where the grip is strongest AND the object is still visibly
+        # touched. The strongest grip alone is the frame where the hand covers
+        # the object most, which is also where the arm segmentation is likeliest
+        # to have swallowed it; the object is then absent from the candidate
+        # blobs and the seed silently lands on whatever else is largest nearby
+        # -- a sponge, a tray -- which SAM2 then tracks for the whole interval.
+        # Walking down the grip ranking and taking the first frame whose contact
+        # points fall on visible object pixels costs a few JPEG reads and keeps
+        # the seed inside the grasp.
+        order = start + np.argsort(-score[start:end + 1, 1:].sum(axis=1))
+        seed = box = positive = negative = None
+        hit_label = hit_score = None
+        fallback = None
+        for candidate in order[:args.seed_tries]:
+            candidate = int(candidate)
+            u, v = project(verts[candidate][non_thumb], focal, width, height)
+            if not len(u):
+                continue
+            candidate_box = (max(0, int(u.min()) - args.margin_px),
+                             max(0, int(v.min()) - args.margin_px),
+                             min(width - 1, int(u.max()) + args.margin_px),
+                             min(height - 1, int(v.max()) + args.margin_px))
+            # A detected box is the object's own outline; the projected-contact
+            # box is only the span the fingers touch, grown by a guess.
+            hit = detected_box(detections, candidate, u, v, args.detection_score,
+                               args.detection_near_px)
+            candidate_label = candidate_score = None
+            if hit is not None:
+                candidate_box, candidate_label, candidate_score = hit
+            frame = cv2.imread(str(frames[candidate]))
+            if frame is None:
+                continue
+            human_seed = np.asarray(human[candidate], dtype=bool)
+            found = object_component(frame, candidate_box, human_seed,
+                                     args.colour_margin, contact_uv=(u, v))
+            if found is None:
+                continue
+            component, hits = found
+            if fallback is None:
+                fallback = (candidate, candidate_box, component, human_seed,
+                            (u, v))
+            if hits > 0 and int(component.sum()) >= args.seed_min_px:
+                seed, box = candidate, candidate_box
+                hit_label, hit_score = candidate_label, candidate_score
+                contact_seed = (u, v)
+
+                # The grasp told us which object this is; now seed it where it
+                # is whole rather than where it is gripped.
+                if not args.seed_in_grasp:
+                    clean = clean_seed(frames, human, candidate_box,
+                                       tracked_start, start - 1, detections,
+                                       candidate_label, args.detection_score)
+                    if clean is not None:
+                        clean_frame = cv2.imread(str(frames[clean[0]]))
+                        clean_human = np.asarray(human[clean[0]], dtype=bool)
+                        found_clean = object_component(
+                            clean_frame, clean[1], clean_human,
+                            args.colour_margin, contact_uv=None)
+                        # Only move the seed if the earlier frame shows the SAME
+                        # object. "Before contact" is not "before the pick": in
+                        # a place-and-release clip the object is already in the
+                        # hand when HaCo first calls it contact, and the box then
+                        # frames wherever it is headed -- an empty rack, or the
+                        # other mug of the pair, which carries the right label
+                        # and the wrong identity. Colour is enough to tell those
+                        # apart and cannot be fooled by the label.
+                        if (found_clean is not None
+                                and int(found_clean[0].sum()) >= args.seed_min_px
+                                and _same_object(frame, candidate_box, component,
+                                                 clean_frame, clean[1],
+                                                 found_clean[0],
+                                                 args.seed_colour_margin)):
+                            seed, box = clean[0], clean[1]
+                            component, _ = found_clean
+                            human_seed = clean_human
+                            contact_seed = None
+
+                x0, y0, x1, y1 = box
+                positive = object_points(component, box,
+                                         args.positive_points,
+                                         contact_uv=contact_seed)
+                negative = hand_points(human_seed[y0:y1 + 1, x0:x1 + 1],
+                                       component, box,
+                                       args.negative_points)
+                break
+        if seed is None:
+            if fallback is None:
+                print(f"[warn] f{start}-{end}: no contact vertex projects into "
+                      f"frame, skipped")
+                continue
+            seed, box, component, human_seed, contact = fallback
+            x0, y0, x1, y1 = box
+            positive = object_points(component, box, args.positive_points,
+                                     contact_uv=contact)
+            negative = hand_points(human_seed[y0:y1 + 1, x0:x1 + 1],
+                                   component, box, args.negative_points)
+            print(f"[warn] f{start}-{end}: the fingers never touch visible "
+                  f"object pixels in the {args.seed_tries} firmest frames; "
+                  f"seeding f{seed} on the largest blob instead. Check this "
+                  f"segment, and override it if SAM2 tracks the wrong thing.")
 
         segments.append({
             "name": f"object_{index + 1:02d}",
@@ -247,9 +581,16 @@ def main() -> None:
             "positive_points": positive,
             "negative_points": negative,
         })
+        if hit_label is not None:
+            segments[-1]["detected_label"] = hit_label
+            segments[-1]["detected_score"] = hit_score
+            segments[-1]["anchor_boxes"] = anchor_chain(
+                detections, hit_label, seed, box, tracked_start, tracked_end,
+                args.detection_score)
         print(f"[seg] {segments[-1]['name']}: track f{tracked_start}-{tracked_end} "
               f"(contact f{start}-{end}) seed={seed} box={box} "
-              f"+{len(positive)} -{len(negative)}")
+              f"+{len(positive)} -{len(negative)}"
+              + (f" [{hit_label} {hit_score:.2f}]" if hit_label else " [colour]"))
 
     if args.overrides is not None:
         edits = json.loads(args.overrides.read_text(encoding="utf-8"))

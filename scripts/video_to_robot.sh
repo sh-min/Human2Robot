@@ -28,6 +28,15 @@ PY_HAWOR="${PY_HAWOR:-$HOME/venvs/hawor/bin/python}"
 PY_HACO="${PY_HACO:-$HOME/venvs/haco/bin/python}"
 PY_RETARGET="${PY_RETARGET:-$HOME/venvs/retarget/bin/python}"
 PY_DIFFUERASER="${PY_DIFFUERASER:-$HOME/venvs/diffueraser/bin/python}"
+# GroundingDINO needs a current transformers, which the inpaint env does not
+# carry; it runs in its own env and hands over a JSON of boxes.
+PY_GDINO="${PY_GDINO:-$HOME/venvs/gdino/bin/python}"
+# What the objects look like, not what they are called. Measured over nine
+# frames of two clips: brand names score worst by a distance -- "chocobi" 0.26
+# and found in only three of the nine, against 0.66 for "green snack carton" in
+# all nine -- because the detector knows shapes and colours, not products.
+# Korean works but lands 0.1-0.2 lower than the English for every object.
+OBJECT_LABELS="${OBJECT_LABELS:-ceramic mug|green scrub sponge|green snack carton|red snack package|clear plastic container}"
 export DEPTH_ANYTHING_CKPT_DIR="${DEPTH_ANYTHING_CKPT_DIR:-/home/rkd02/s2p/ckpt/depth_anything}"
 
 while [[ $# -gt 0 ]]; do
@@ -118,11 +127,28 @@ if run_stage human || run_stage depth; then
 fi
 
 if run_stage objects; then
-  say "objects: contact -> spec -> track -> complete"
+  say "objects: detect -> contact -> spec -> track -> complete"
+  # Name the objects rather than hunt for them by colour. The arm mask spills
+  # onto whatever the hand holds, which hides the held object from a colour
+  # search exactly when the grip is firmest; a detector still sees it. Cached,
+  # because it is a fixed cost per clip and unaffected by anything downstream.
+  DETECTIONS="$D/interaction_objects/detections_gdino.json"
+  DET_ARGS=()
+  if [[ -x "$PY_GDINO" ]]; then
+    if [[ ! -f "$DETECTIONS" ]]; then
+      IFS='|' read -r -a labels <<<"$OBJECT_LABELS"
+      "$PY_GDINO" -u src/inpainting/detect_objects_grounding_dino.py \
+        --frames_dir "$D/rgb" --labels "${labels[@]}" --output "$DETECTIONS"
+    fi
+    DET_ARGS=(--detections "$DETECTIONS")
+  else
+    echo "[objects] no $PY_GDINO; falling back to the colour heuristic"
+  fi
   "$PY_INPAINT" -u src/inpainting/build_object_segments_from_contact.py \
     --contact_dir "$D/contact" --hawor_npz "$D/rgb_hawor/retarget_input.npz" \
     --human_mask "$D/segmentation_processor/masks_arm.npy" --frames_dir "$D/rgb" \
-    --side "$SIDE" ${OVERRIDES:+--overrides "$OVERRIDES"} --output "$CFG"
+    --side "$SIDE" "${DET_ARGS[@]}" \
+    ${OVERRIDES:+--overrides "$OVERRIDES"} --output "$CFG"
   "$PY_INPAINT" -u src/inpainting/segment_interaction_objects.py \
     --processed_demo "$D" --segments_json "$CFG"
   # Fills only what the human hand covered, from the object's own pixels.
@@ -272,11 +298,28 @@ print(f'[ok] {sys.argv[3]}')
   for BG in propainter diffueraser; do
     plate="$D/inpaint_processor/plate_${BG}.mkv"
     [[ -f "$plate" ]] || continue
+
+    # Inpainting takes the person out but leaves the shadow the person threw on
+    # the desk, and once the robot is on top that shadow reads as the robot's --
+    # while sweeping to a hand that is no longer there. Video 47 measured this
+    # and 48 was composited on a cleaned plate; the batch pipeline was not, so
+    # its results keep a human shadow the height-band contact shadow then has to
+    # compete with. Cached, because it costs a full pass over the plate.
+    clean="$D/inpaint_processor/plate_${BG}_noshadow.mkv"
+    if [[ ! -f "$clean" ]]; then
+      say "human cast shadow off the $BG plate"
+      "$PY_INPAINT" -u src/inpainting/remove_cast_shadow.py \
+        --plate "$plate" \
+        --object_mask "$D/interaction_objects/object_mask.npy" \
+        --robot_mask "$D/overlay_rb5_mnt/robot_mask.npy" \
+        --output "$clean"
+    fi
+
     out="$R/${NAME}_robot_${BG}.mp4"
     "$PY_INPAINT" -u src/inpainting/composite_interaction_objects.py --processed_demo "$D" \
       --hawor_npz "$D/rgb_hawor/retarget_input.npz" \
       --object_source_video "$OBJ_SOURCE" \
-      --background_video "inpaint_processor/plate_${BG}.mkv" \
+      --background_video "inpaint_processor/plate_${BG}_noshadow.mkv" \
       --object_mask interaction_objects/object_mask_completed.npy \
       --robot_dir overlay_rb5_mnt \
       --force_front_mask "$FORCE_MASK" \

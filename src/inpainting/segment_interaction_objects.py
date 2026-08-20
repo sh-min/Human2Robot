@@ -29,6 +29,7 @@ import torch
 from PIL import Image
 
 from _paths import SAM2_CHECKPOINT, SAM2_CONFIG_NAME, ensure_sam2_importable
+from layered_compositor.video import CompatibleVideoWriter
 
 ensure_sam2_importable()
 from sam2.build_sam import build_sam2_video_predictor  # noqa: E402
@@ -157,13 +158,45 @@ def _clean_track(track: np.ndarray, seg: dict, human: np.ndarray | None) -> np.n
     return track
 
 
+def _clean_patch(patch: np.ndarray, gap: tuple[int, int],
+                 human: np.ndarray | None) -> np.ndarray:
+    """Hold a refilled stretch to the same rules as the first pass."""
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    for frame_idx in range(gap[0], gap[1] + 1):
+        current = cv2.morphologyEx(patch[frame_idx].astype(np.uint8),
+                                   cv2.MORPH_CLOSE, close_kernel)
+        if human is not None and frame_idx < len(human):
+            current[np.asarray(human[frame_idx], dtype=bool)] = 0
+        patch[frame_idx] = current.astype(bool)
+    return patch
+
+
+def _gaps(track: np.ndarray, start: int, end: int, floor: int) -> list[tuple[int, int]]:
+    """Runs of frames inside the grasp where the object went missing.
+
+    HaCo says the hand is holding something for this whole interval, so an
+    empty frame in the middle of it is a tracking failure, not a release.
+    """
+    area = track[start:end + 1].reshape(end - start + 1, -1).sum(axis=1)
+    runs, run_start = [], None
+    for offset, value in enumerate(area):
+        if value < floor and run_start is None:
+            run_start = offset
+        elif value >= floor and run_start is not None:
+            runs.append((start + run_start, start + offset - 1))
+            run_start = None
+    if run_start is not None:
+        runs.append((start + run_start, end))
+    return runs
+
+
 def _write_preview(video_path: Path, masks: np.ndarray, output: Path, fps: float) -> None:
     cap = cv2.VideoCapture(str(video_path))
     height, width = masks.shape[1:]
-    writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps,
-                             (width, height))
-    if not writer.isOpened():
-        raise RuntimeError(f"cannot create preview: {output}")
+    # H.264, not OpenCV's mp4v: this preview is the file someone opens to check
+    # that SAM2 tracked the right object, and an MPEG-4 Part 2 stream will not
+    # play in a browser, VS Code, or most desktop players.
+    writer = CompatibleVideoWriter(output, fps, (width, height), codec="h264")
     idx = 0
     while idx < len(masks):
         ok, frame = cap.read()
@@ -191,6 +224,15 @@ def main() -> None:
     parser.add_argument("--output", default="interaction_objects/object_mask.npy")
     parser.add_argument("--preview", default="interaction_objects/object_mask_preview.mp4")
     parser.add_argument("--keep_frames", action="store_true")
+    parser.add_argument("--max_refills", type=int, default=4,
+                        help="Most re-prompts per segment. Each one costs a "
+                             "second propagation over its gap only.")
+    parser.add_argument("--gap_floor_px", type=int, default=200,
+                        help="A frame with fewer object pixels than this counts "
+                             "as lost rather than merely small.")
+    parser.add_argument("--gap_min_frames", type=int, default=3,
+                        help="Ignore gaps shorter than this; a frame or two is "
+                             "closed by the compositor's feathering anyway.")
     args = parser.parse_args()
 
     if not Path(SAM2_CHECKPOINT).exists():
@@ -252,6 +294,50 @@ def main() -> None:
                     if seg["start_frame"] <= frame_idx <= seg["end_frame"]:
                         track[frame_idx] = (logits[0].squeeze() > 0).cpu().numpy()
             track = _clean_track(track, seg, human)
+            # Refill what the grip hid. The first pass propagates from one
+            # seed, so the first frame where the hand buries the object ends
+            # the track for everything past it -- measured at a third of the
+            # frames on one segment in three. Each detection box left by
+            # GroundingDINO is a place the object was still visible, so the
+            # largest gap is re-prompted from the box nearest its middle and
+            # propagated again. Only frames that came back empty are written,
+            # so a bad anchor can never overwrite a good track.
+            anchors = [(int(t), b) for t, b in seg.get("anchor_boxes", [])]
+            refills = 0
+            while anchors and refills < args.max_refills:
+                gaps = _gaps(track, seg["start_frame"], seg["end_frame"],
+                             args.gap_floor_px)
+                gaps = [g for g in gaps if g[1] - g[0] + 1 >= args.gap_min_frames]
+                if not gaps:
+                    break
+                gap = max(gaps, key=lambda g: g[1] - g[0])
+                middle = (gap[0] + gap[1]) // 2
+                usable = [a for a in anchors if gap[0] <= a[0] <= gap[1]]
+                if not usable:
+                    break
+                frame_idx, box = min(usable, key=lambda a: abs(a[0] - middle))
+                anchors = [a for a in anchors if a[0] != frame_idx]
+                predictor.add_new_points_or_box(
+                    state, frame_idx=frame_idx, obj_id=obj_id, box=box)
+                patch = np.zeros_like(track)
+                for reverse, distance in ((False, gap[1] - frame_idx),
+                                          (True, frame_idx - gap[0])):
+                    for idx, _, logits in predictor.propagate_in_video(
+                        state, start_frame_idx=frame_idx,
+                        max_frame_num_to_track=max(0, distance), reverse=reverse,
+                    ):
+                        if gap[0] <= idx <= gap[1]:
+                            patch[idx] = (logits[0].squeeze() > 0).cpu().numpy()
+                patch = _clean_patch(patch, gap, human)
+                empty = track[gap[0]:gap[1] + 1].reshape(
+                    gap[1] - gap[0] + 1, -1).sum(axis=1) < args.gap_floor_px
+                for offset, is_empty in enumerate(empty):
+                    if is_empty:
+                        track[gap[0] + offset] = patch[gap[0] + offset]
+                refills += 1
+                print(f"[object] {seg['name']}: refilled f{gap[0]}-{gap[1]} "
+                      f"from the detection at f{frame_idx}")
+
             masks[seg["start_frame"]:seg["end_frame"] + 1] |= \
                 track[seg["start_frame"]:seg["end_frame"] + 1]
             area = track[seg["start_frame"]:seg["end_frame"] + 1].sum(axis=(1, 2))

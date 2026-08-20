@@ -1,0 +1,194 @@
+diff --git a/diffueraser/diffueraser.py b/diffueraser/diffueraser.py
+index 108e72a..2728339 100644
+--- a/diffueraser/diffueraser.py
++++ b/diffueraser/diffueraser.py
+@@ -23,6 +23,23 @@ from libs.brushnet_CA import BrushNetModel
+ from libs.unet_2d_condition import UNet2DConditionModel
+ from diffueraser.pipeline_diffueraser import StableDiffusionDiffuEraserPipeline
+ 
++# --- local shim: torchvision.io.read_video was removed after 0.18; decode with
++# --- PyAV instead so the repo runs on the torch build this GPU requires.
++def _read_video_av(filename, end_pts=None):
++    import av, numpy as _np, torch as _torch
++    container = av.open(filename)
++    stream = container.streams.video[0]
++    fps = float(stream.average_rate)
++    limit = None if end_pts is None else int(round(fps * float(end_pts)))
++    out = []
++    for frame in container.decode(video=0):
++        out.append(frame.to_ndarray(format="rgb24"))
++        if limit is not None and len(out) >= limit:
++            break
++    container.close()
++    return _torch.from_numpy(_np.stack(out)), None, {"video_fps": fps}
++
++
+ 
+ checkpoints = {
+     "2-Step": ["pcm_{}_smallcfg_2step_converted.safetensors", 2, 0.0],
+@@ -144,7 +161,7 @@ def read_priori(priori, fps, n_total_frames, img_size):
+     return prioris
+ 
+ def read_video(validation_image, video_length, nframes, max_img_size):
+-    vframes, aframes, info = torchvision.io.read_video(filename=validation_image, pts_unit='sec', end_pts=video_length) # RGB
++    vframes, aframes, info = _read_video_av(validation_image, end_pts=video_length) # RGB
+     fps = info['video_fps']
+     n_total_frames = int(video_length * fps)
+     n_clip = int(np.ceil(n_total_frames/nframes))
+diff --git a/diffueraser/pipeline_diffueraser.py b/diffueraser/pipeline_diffueraser.py
+index c99b8fc..c650f47 100644
+--- a/diffueraser/pipeline_diffueraser.py
++++ b/diffueraser/pipeline_diffueraser.py
+@@ -5,6 +5,7 @@ import PIL.Image
+ from einops import rearrange, repeat
+ from dataclasses import dataclass
+ import copy
++import os
+ import torch
+ import torch.nn.functional as F
+ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
+@@ -1333,7 +1334,20 @@ class StableDiffusionDiffuEraserPipeline(
+             has_nsfw_concept = None
+             return DiffuEraserPipelineOutput(frames=image, nsfw_content_detected=has_nsfw_concept)
+ 
+-        video_tensor = self.decode_latents(latents, weight_dtype=prompt_embeds.dtype)
++        # Decoding every frame at once needs the whole clip resident on the GPU
++        # twice over -- latents and RGB -- which a 12 GB card cannot hold for a
++        # 574-frame clip. Decode in chunks and park each one on the CPU; the
++        # result is identical, the peak is one chunk instead of the clip.
++        _chunk = int(os.environ.get("DIFFUERASER_DECODE_CHUNK", "24"))
++        _parts = []
++        for _i in range(0, latents.shape[0], _chunk):
++            _part = self.decode_latents(latents[_i:_i + _chunk],
++                                        weight_dtype=prompt_embeds.dtype)
++            _parts.append(_part.to("cpu"))
++            del _part
++            torch.cuda.empty_cache()
++        video_tensor = torch.cat(_parts, dim=0)
++        del _parts
+ 
+         if output_type == "pt":
+             video = video_tensor
+diff --git a/propainter/inference.py b/propainter/inference.py
+index b180d49..bf79b9c 100644
+--- a/propainter/inference.py
++++ b/propainter/inference.py
+@@ -25,6 +25,23 @@ except:
+     from propainter.model.misc import get_device
+ 
+ import warnings
++
++# --- local shim: torchvision.io.read_video was removed after 0.18; decode with
++# --- PyAV instead so the repo runs on the torch build this GPU requires.
++def _read_video_av(filename, end_pts=None):
++    import av, numpy as _np, torch as _torch
++    container = av.open(filename)
++    stream = container.streams.video[0]
++    fps = float(stream.average_rate)
++    limit = None if end_pts is None else int(round(fps * float(end_pts)))
++    out = []
++    for frame in container.decode(video=0):
++        out.append(frame.to_ndarray(format="rgb24"))
++        if limit is not None and len(out) >= limit:
++            break
++    container.close()
++    return _torch.from_numpy(_np.stack(out)), None, {"video_fps": fps}
++
+ warnings.filterwarnings("ignore")
+ 
+ pretrain_model_url = 'https://github.com/sczhou/ProPainter/releases/download/v0.1.0/'
+@@ -49,7 +66,7 @@ def resize_frames(frames, size=None):
+ def read_frame_from_videos(frame_root, video_length):
+     if frame_root.endswith(('mp4', 'mov', 'avi', 'MP4', 'MOV', 'AVI')): # input video path
+         video_name = os.path.basename(frame_root)[:-4]
+-        vframes, aframes, info = torchvision.io.read_video(filename=frame_root, pts_unit='sec', end_pts=video_length) # RGB
++        vframes, aframes, info = _read_video_av(frame_root, end_pts=video_length) # RGB
+         frames = list(vframes.numpy())
+         frames = [Image.fromarray(f) for f in frames]
+         fps = info['video_fps']
+diff --git a/run_diffueraser_lowvram.py b/run_diffueraser_lowvram.py
+new file mode 100644
+index 0000000..77f02cb
+--- /dev/null
++++ b/run_diffueraser_lowvram.py
+@@ -0,0 +1,80 @@
++"""DiffuEraser on a 12 GB card, with the ProPainter prior supplied or run alone.
++
++``run_diffueraser.py`` loads the diffusion model first and then runs the
++ProPainter prior, so RAFT computes optical flow for the whole clip with ~6 GB
++already taken. On this card that is an out-of-memory error at 574 frames even at
++640 px.
++
++Two changes. The prior runs by itself and its model is released before the
++diffusion model is built, so each stage gets the whole card. And ``--priori``
++accepts a ProPainter result that already exists -- ours does, from the pipeline's
++own background stage -- which skips the recompute and, more usefully, makes the
++comparison exact: the same prior goes in, so any difference in the output is the
++diffusion refinement and nothing else.
++"""
++import argparse
++import os
++import time
++
++import torch
++
++from diffueraser.diffueraser import DiffuEraser
++from propainter.inference import Propainter, get_device
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--input_video", required=True)
++    parser.add_argument("--input_mask", required=True)
++    parser.add_argument("--save_path", required=True)
++    parser.add_argument("--priori", default=None,
++                        help="Existing ProPainter result to use as the prior. "
++                             "Omit to compute it here.")
++    parser.add_argument("--video_length", type=int, default=20,
++                        help="Seconds of video to process.")
++    parser.add_argument("--mask_dilation_iter", type=int, default=8)
++    parser.add_argument("--max_img_size", type=int, default=640)
++    parser.add_argument("--ref_stride", type=int, default=10)
++    parser.add_argument("--neighbor_length", type=int, default=10)
++    parser.add_argument("--subvideo_length", type=int, default=50)
++    parser.add_argument("--base_model_path", default="weights/stable-diffusion-v1-5")
++    parser.add_argument("--vae_path", default="weights/sd-vae-ft-mse")
++    parser.add_argument("--diffueraser_path", default="weights/diffuEraser")
++    parser.add_argument("--propainter_model_dir", default="weights/propainter")
++    args = parser.parse_args()
++
++    os.makedirs(args.save_path, exist_ok=True)
++    priori_path = os.path.join(args.save_path, "priori.mp4")
++    output_path = os.path.join(args.save_path, "diffueraser_result.mp4")
++    device = get_device()
++    start = time.time()
++
++    if args.priori:
++        import shutil
++        shutil.copyfile(args.priori, priori_path)
++        print(f"[prior] reusing {args.priori}")
++    else:
++        propainter = Propainter(args.propainter_model_dir, device=device)
++        propainter.forward(args.input_video, args.input_mask, priori_path,
++                           video_length=args.video_length,
++                           ref_stride=args.ref_stride,
++                           neighbor_length=args.neighbor_length,
++                           subvideo_length=args.subvideo_length,
++                           mask_dilation=args.mask_dilation_iter)
++        del propainter
++        torch.cuda.empty_cache()
++        print("[prior] computed, ProPainter released")
++
++    video_inpainting_sd = DiffuEraser(device, args.base_model_path, args.vae_path,
++                                      args.diffueraser_path, ckpt="2-Step")
++    video_inpainting_sd.forward(args.input_video, args.input_mask, priori_path,
++                                output_path, max_img_size=args.max_img_size,
++                                video_length=args.video_length,
++                                mask_dilation_iter=args.mask_dilation_iter,
++                                guidance_scale=None)
++    print(f"[ok] {output_path}  ({time.time() - start:.1f} s)")
++    torch.cuda.empty_cache()
++
++
++if __name__ == "__main__":
++    main()

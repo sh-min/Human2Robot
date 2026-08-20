@@ -1,0 +1,95 @@
+diff --git a/model/modules/feat_prop.py b/model/modules/feat_prop.py
+index 562fa73..9641b4e 100644
+--- a/model/modules/feat_prop.py
++++ b/model/modules/feat_prop.py
+@@ -4,8 +4,45 @@
+ import torch
+ import torch.nn as nn
+ 
+-from mmcv.ops import ModulatedDeformConv2d, modulated_deform_conv2d
+-from mmcv.cnn import constant_init
++try:
++    from mmcv.ops import ModulatedDeformConv2d, modulated_deform_conv2d
++    from mmcv.cnn import constant_init
++except ImportError:
++    from torch.nn.modules.utils import _pair
++    from torchvision.ops import deform_conv2d as _torchvision_deform_conv2d
++
++    class ModulatedDeformConv2d(nn.Module):
++        """State-dict-compatible mmcv deform-conv replacement for inference."""
++        def __init__(self, in_channels, out_channels, kernel_size, stride=1,
++                     padding=0, dilation=1, groups=1, deform_groups=1,
++                     bias=True, **kwargs):
++            super().__init__()
++            self.in_channels = in_channels
++            self.out_channels = out_channels
++            self.kernel_size = _pair(kernel_size)
++            self.stride = _pair(stride)
++            self.padding = _pair(padding)
++            self.dilation = _pair(dilation)
++            self.groups = groups
++            self.deform_groups = deform_groups
++            self.weight = nn.Parameter(torch.empty(
++                out_channels, in_channels // groups, *self.kernel_size
++            ))
++            self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
++            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
++
++    def modulated_deform_conv2d(input, offset, mask, weight, bias,
++                                stride, padding, dilation, groups,
++                                deform_groups):
++        return _torchvision_deform_conv2d(
++            input, offset, weight, bias=bias, stride=stride,
++            padding=padding, dilation=dilation, mask=mask,
++        )
++
++    def constant_init(module, val=0, bias=0):
++        nn.init.constant_(module.weight, val)
++        if getattr(module, "bias", None) is not None:
++            nn.init.constant_(module.bias, bias)
+ 
+ from model.modules.flow_comp import flow_warp
+ 
+diff --git a/model/modules/flow_comp.py b/model/modules/flow_comp.py
+index a33a806..cfa03f2 100644
+--- a/model/modules/flow_comp.py
++++ b/model/modules/flow_comp.py
+@@ -4,8 +4,36 @@ import torch.nn as nn
+ import torch.nn.functional as F
+ import torch
+ 
+-from mmcv.cnn import ConvModule
+-from mmcv.runner import load_checkpoint
++try:
++    from mmcv.cnn import ConvModule
++    from mmcv.runner import load_checkpoint
++except ImportError:
++    class ConvModule(nn.Module):
++        """Small inference-compatible subset of mmcv.cnn.ConvModule."""
++        def __init__(self, in_channels, out_channels, kernel_size, stride=1,
++                     padding=0, norm_cfg=None, act_cfg=None):
++            super().__init__()
++            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,
++                                  stride=stride, padding=padding)
++            self.activate = nn.ReLU(inplace=True) if act_cfg is not None else None
++
++        def forward(self, x):
++            x = self.conv(x)
++            return self.activate(x) if self.activate is not None else x
++
++    def load_checkpoint(model, checkpoint, strict=True):
++        # E2FGVI's released checkpoint contains the complete SPyNet state and is
++        # loaded immediately after model construction.  The upstream mmcv call
++        # downloads an additional initialization checkpoint, which is redundant
++        # for inference and prevents the vendored model from running without
++        # mmcv-full.
++        if isinstance(checkpoint, str) and checkpoint.startswith(("http://", "https://")):
++            print("[compat] skip redundant SPyNet initialization download")
++            return {}
++        state = torch.load(checkpoint, map_location="cpu")
++        state = state.get("state_dict", state)
++        model.load_state_dict(state, strict=strict)
++        return state
+ 
+ 
+ class FlowCompletionLoss(nn.Module):

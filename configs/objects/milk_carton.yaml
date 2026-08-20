@@ -4,6 +4,8 @@ task:
   instruction: pick up the milk carton
 geometry:
   mjcf: ../../src/sim/mujoco_sim/assets/milk_carton/milk_carton.xml
+  usd: ../../isaac_assets/objects/milk_carton/milk_carton.usd
+  usd_source: scanned_regularized
 physics:
   mass_kg: 0.282
   friction: [1.2, 0.05, 0.001]

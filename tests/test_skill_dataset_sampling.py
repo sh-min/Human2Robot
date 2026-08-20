@@ -100,6 +100,24 @@ class SkillDatasetSamplingTests(unittest.TestCase):
         self.assertEqual(vjepa.dtype, torch.float16)
         self.assertTrue(torch.equal(vjepa[:-1], torch.zeros_like(vjepa[:-1])))
 
+    def test_object_context_is_appended_without_changing_labels(self):
+        value = recording()
+        value["vjepa_orig_dense"] = torch.ones(3, 4, 1024, dtype=torch.float16)
+        value["vlm_sam_object_masks"] = torch.rand(3, 2, 4)
+        value["vlm_sam_object_masks_confidence"] = torch.rand(3, 2)
+        value["vlm_sam_object_masks_names"] = ["cup", "cup_holder"]
+        dataset = SkillWindowDataset(
+            [value],
+            variant="vjepa_orig_dense",
+            hand_representation="none",
+            object_context_key="vlm_sam_object_masks",
+        )
+        vjepa, context, label = dataset[0]
+        self.assertEqual(tuple(vjepa.shape), (8, 4, 1024))
+        self.assertEqual(tuple(context.shape), (8, 2 * (4 + 1)))
+        self.assertEqual(dataset.object_names, ("cup", "cup_holder"))
+        self.assertEqual(label, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

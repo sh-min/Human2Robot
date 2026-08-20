@@ -40,6 +40,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from utils.labels import ACTION_LABELS, TRANSITION_LABEL
 from skill_classifier.models import build_model
+from skill_classifier.action_semantics import load_action_semantics
 from skill_classifier.skill_dataset import (
     SkillWindowDataset, load_recordings, VARIANT_VJEPA_KEY,
 )
@@ -304,6 +305,8 @@ def apply_overrides(cfg, overrides):
     List values use comma separation: hidden_dims=512,256
     """
     def cast(v):
+        if v.lower() in ("none", "null"):
+            return None
         if v.lower() == "true":
             return True
         if v.lower() == "false":
@@ -404,6 +407,15 @@ def main():
         getattr(args, "action_labels", None),
     )
     args.action_labels = action_labels
+    semantic_path = getattr(args, "action_semantics", None)
+    if semantic_path is not None:
+        semantic_config = load_action_semantics(semantic_path)
+        if list(semantic_config["action_labels"]) != action_labels:
+            raise ValueError(
+                "semantic action_labels do not match feature bundles: "
+                f"{semantic_config['action_labels']} != {action_labels}"
+            )
+        args.action_semantics = str(Path(semantic_path).resolve())
 
     # Filter per-token labels for include_trans
     include_trans = getattr(args, "include_trans", True)
@@ -434,13 +446,16 @@ def main():
         print("V-JEPA diff mode: using vjepa[t]-vjepa[t-1]")
     hand_representation = getattr(args, "hand_representation", "axis_angle")
     args.hand_representation = hand_representation
+    object_context_key = getattr(args, "object_context_key", None)
 
     train_ds = SkillWindowDataset(train_recs, window_size=args.window_size,
                                   variant=variant, vjepa_diff=vjepa_diff,
-                                  hand_representation=hand_representation)
+                                  hand_representation=hand_representation,
+                                  object_context_key=object_context_key)
     val_ds = SkillWindowDataset(val_recs, window_size=args.window_size,
                                 variant=variant, vjepa_diff=vjepa_diff,
-                                hand_representation=hand_representation)
+                                hand_representation=hand_representation,
+                                object_context_key=object_context_key)
     if train_ds.sampling_signature != val_ds.sampling_signature:
         raise ValueError(
             "train/validation sampling contracts differ: "
@@ -473,6 +488,10 @@ def main():
     args.hand_dim = hand_dim
     args.vjepa_dim = vjepa_dim_inferred
     args.vjepa_spatial_tokens = train_ds.vjepa_spatial_tokens
+    args.object_context_key = object_context_key
+    args.object_names = list(train_ds.object_names)
+    args.object_prompt_count = train_ds.object_prompt_count
+    args.object_mask_spatial_tokens = train_ds.object_mask_spatial_tokens
     args.active_labels = active_labels
     print(
         f"variant: {variant}  hand_representation: {hand_representation}  "
@@ -502,6 +521,60 @@ def main():
             hidden_dims=tuple(args.hidden_dims),
             dropout=args.dropout,
         )
+    elif args.model in ("object_mask_attention_mlp", "object_text_prototype_mlp"):
+        if hand_representation != "none":
+            raise ValueError(
+                f"{args.model} currently requires hand_representation=none"
+            )
+        if train_ds.object_names != val_ds.object_names:
+            raise ValueError("train/validation object prompt banks differ")
+        if train_ds.object_prompt_count <= 0:
+            raise ValueError(
+                f"{args.model} requires object_context_key"
+            )
+        model_kwargs.update(
+            hidden_dims=tuple(args.hidden_dims),
+            dropout=args.dropout,
+            object_prompt_count=train_ds.object_prompt_count,
+            object_mask_spatial_tokens=train_ds.object_mask_spatial_tokens,
+            object_projection_dim=int(
+                getattr(args, "object_projection_dim", 64)
+            ),
+            use_global_features=bool(
+                getattr(args, "use_global_features", True)
+            ),
+            use_object_features=bool(
+                getattr(args, "use_object_features", True)
+            ),
+            use_confidence_features=bool(
+                getattr(args, "use_confidence_features", True)
+            ),
+            use_occupancy_features=bool(
+                getattr(args, "use_occupancy_features", True)
+            ),
+            use_confidence_gate=bool(
+                getattr(args, "use_confidence_gate", True)
+            ),
+        )
+        if args.model == "object_text_prototype_mlp":
+            text_path = Path(args.action_text_embeddings).resolve()
+            text_payload = torch.load(
+                text_path, map_location="cpu", weights_only=False
+            )
+            if list(text_payload.get("action_labels", [])) != active_labels:
+                raise ValueError(
+                    "action text prototype labels do not match active labels"
+                )
+            text_embeddings = torch.as_tensor(text_payload["embeddings"])
+            model_kwargs.update(
+                text_embedding_dim=int(text_embeddings.shape[-1]),
+                text_head_mode=str(
+                    getattr(args, "text_head_mode", "prototype")
+                ),
+            )
+            args.action_text_embeddings = str(text_path)
+            args.action_text_model = str(text_payload.get("model", "unknown"))
+            args.text_embedding_dim = int(text_embeddings.shape[-1])
     elif args.model == "transformer":
         model_kwargs.update(
             d_model=args.d_model,
@@ -511,6 +584,8 @@ def main():
         )
 
     model = build_model(args.model, **model_kwargs).to(device)
+    if args.model == "object_text_prototype_mlp":
+        model.set_action_text_embeddings(text_embeddings)
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model: {args.model} ({num_params:,} params)")
     print(model)
@@ -544,6 +619,16 @@ def main():
     # A tiny exploratory split can score exactly zero on its first epoch; it
     # must still produce a valid best checkpoint for the final report.
     best_val_acc = float("-inf")
+    early_stopping_patience = int(getattr(args, "early_stopping_patience", 0))
+    early_stopping_min_epochs = int(getattr(args, "early_stopping_min_epochs", 0))
+    early_stopping_min_delta = float(getattr(args, "early_stopping_min_delta", 0.0))
+    if early_stopping_patience < 0 or early_stopping_min_epochs < 0:
+        raise ValueError("early stopping patience/min_epochs must be non-negative")
+    if early_stopping_min_delta < 0:
+        raise ValueError("early_stopping_min_delta must be non-negative")
+    early_stopping_best = float("-inf")
+    early_stopping_bad_epochs = 0
+    stopped_early = False
     history = []
 
     for epoch in range(1, args.epochs + 1):
@@ -582,7 +667,8 @@ def main():
             wandb.log(log_dict)
 
         # Confusion matrix: save plot at best or every save_every epochs
-        should_plot_cm = (val_acc > best_val_acc
+        plot_best_updates = bool(getattr(args, "plot_best_updates", True))
+        should_plot_cm = ((plot_best_updates and val_acc > best_val_acc)
                           or (args.save_every > 0 and epoch % args.save_every == 0)
                           or epoch == args.epochs)
         if should_plot_cm:
@@ -606,6 +692,12 @@ def main():
                 "val_f1_macro": val_f1_macro,
                 "args": vars(args),
             }, os.path.join(save_dir, f"best_{args.model}.pt"))
+
+        if val_acc > early_stopping_best + early_stopping_min_delta:
+            early_stopping_best = val_acc
+            early_stopping_bad_epochs = 0
+        else:
+            early_stopping_bad_epochs += 1
         # Periodic checkpoint
         if args.save_every > 0 and epoch % args.save_every == 0:
             torch.save({
@@ -621,6 +713,19 @@ def main():
                   f"val_loss={val_loss:.4f} val_acc={val_acc:.3f} "
                   f"f1={val_f1_macro:.3f} lr={cur_lr:.2e}"
                   f"{' *' if improved else ''}")
+
+        if (
+            early_stopping_patience > 0
+            and epoch >= early_stopping_min_epochs
+            and early_stopping_bad_epochs >= early_stopping_patience
+        ):
+            stopped_early = True
+            print(
+                f"  Early stopping at epoch {epoch}: validation accuracy "
+                f"did not improve by >{early_stopping_min_delta:g} for "
+                f"{early_stopping_bad_epochs} epochs."
+            )
+            break
 
     # Save last
     torch.save({
@@ -667,6 +772,30 @@ def main():
         "validation_recordings": len(val_recs),
         "train_samples": len(train_ds),
         "validation_samples": len(val_ds),
+        "trainable_parameters": int(num_params),
+        "window_size": int(args.window_size),
+        "dropout": float(args.dropout),
+        "trained_epochs": int(epoch),
+        "stopped_early": bool(stopped_early),
+        "early_stopping": {
+            "metric": "validation_accuracy",
+            "patience": early_stopping_patience,
+            "min_epochs": early_stopping_min_epochs,
+            "min_delta": early_stopping_min_delta,
+        },
+        "object_context_key": object_context_key,
+        "object_fusion": {
+            key: bool(getattr(args, key, True))
+            for key in (
+                "use_global_features",
+                "use_object_features",
+                "use_confidence_features",
+                "use_occupancy_features",
+                "use_confidence_gate",
+            )
+        } if args.model in (
+            "object_mask_attention_mlp", "object_text_prototype_mlp"
+        ) else None,
         "best_epoch": int(best_ckpt["epoch"]),
         "validation_loss": float(best_loss),
         "validation_accuracy": float(best_acc),

@@ -654,12 +654,8 @@ def _robot_video(rec_dir: Path) -> Path | None:
         / "inpainting_processed"
         / rec_dir.name
         / "0"
-        / "video_overlay_rby1_xhand.mp4",
-        rec_dir
-        / "inpainting_processed"
-        / rec_dir.name
-        / "0"
-        / "video_overlay_xhand.mp4",
+        / "overlay_processor_layered"
+        / "video_overlay.mp4",
     )
     return next((path for path in candidates if path.is_file()), None)
 

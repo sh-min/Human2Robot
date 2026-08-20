@@ -94,7 +94,15 @@ def load_recordings(data_root, recording_glob="*"):
         for pattern in patterns
         for path in Path(data_root).glob(f"{pattern}/features.pt")
     })
-    return [torch.load(p, map_location="cpu", weights_only=False) for p in paths]
+    recordings = []
+    for path in paths:
+        recording = torch.load(path, map_location="cpu", weights_only=False)
+        # Private loader metadata is not persisted back into features.pt.  It
+        # lets optional feature families live in sidecars so the immutable
+        # V-JEPA baseline bundle remains byte-for-byte reusable.
+        recording["_features_path"] = str(path.resolve())
+        recordings.append(recording)
+    return recordings
 
 
 class SkillWindowDataset(Dataset):
@@ -115,6 +123,7 @@ class SkillWindowDataset(Dataset):
         variant="mano_only",
         vjepa_diff=False,
         hand_representation="axis_angle",
+        object_context_key=None,
     ):
         """
         Args:
@@ -135,11 +144,14 @@ class SkillWindowDataset(Dataset):
         self.variant = variant
         self.vjepa_diff = vjepa_diff
         self.hand_representation = hand_representation
+        self.object_context_key = object_context_key
         vjepa_key = VARIANT_VJEPA_KEY[variant]
 
         self.recordings = []   # list of dicts with vjepa, hand tensors
         self.samples = []      # list of (rec_idx, t, label)
         signatures = set()
+        object_names_contract = None
+        object_shape_contract = None
 
         for rec in recordings:
             mano = rec["mano"]
@@ -178,6 +190,75 @@ class SkillWindowDataset(Dataset):
                     diff[1:] = vjepa[1:] - vjepa[:-1]
                     vjepa = diff
 
+            if object_context_key is not None:
+                if vjepa.ndim != 3:
+                    raise ValueError(
+                        "object context requires dense V-JEPA patch features"
+                    )
+                confidence_key = f"{object_context_key}_confidence"
+                names_key = f"{object_context_key}_names"
+                if object_context_key in rec:
+                    if confidence_key not in rec or names_key not in rec:
+                        raise ValueError(
+                            f"object context requires {confidence_key} and {names_key}"
+                        )
+                    masks = torch.as_tensor(rec[object_context_key]).float()
+                    confidence = torch.as_tensor(rec[confidence_key]).float()
+                    names = tuple(rec[names_key])
+                else:
+                    features_path = rec.get("_features_path")
+                    if not features_path:
+                        raise ValueError(
+                            f"recording missing object context: {object_context_key}"
+                        )
+                    sidecar_path = Path(features_path).with_name(
+                        f"{object_context_key}.pt"
+                    )
+                    if not sidecar_path.is_file():
+                        raise ValueError(
+                            f"recording missing object context sidecar: {sidecar_path}"
+                        )
+                    sidecar = torch.load(
+                        sidecar_path, map_location="cpu", weights_only=False
+                    )
+                    if int(sidecar.get("schema_version", 0)) != 1:
+                        raise ValueError(
+                            f"unsupported object context schema: {sidecar_path}"
+                        )
+                    masks = torch.as_tensor(sidecar["masks"]).float()
+                    confidence = torch.as_tensor(sidecar["confidence"]).float()
+                    names = tuple(sidecar["object_names"])
+                if masks.ndim != 3 or masks.shape[0] != T:
+                    raise ValueError(
+                        f"{object_context_key} must have shape [T,K,S]"
+                    )
+                if masks.shape[2] != vjepa.shape[1]:
+                    raise ValueError(
+                        f"object/V-JEPA spatial mismatch: {masks.shape[2]} vs {vjepa.shape[1]}"
+                    )
+                if confidence.shape != masks.shape[:2]:
+                    raise ValueError(
+                        f"{confidence_key} shape must equal [T,K]"
+                    )
+                if len(names) != masks.shape[1] or len(set(names)) != len(names):
+                    raise ValueError("object context names must uniquely match K")
+                if not torch.isfinite(masks).all() or not torch.isfinite(confidence).all():
+                    raise ValueError("object context contains non-finite values")
+                if bool(((masks < 0) | (masks > 1)).any()):
+                    raise ValueError("object mask occupancy must lie in [0,1]")
+                if bool(((confidence < 0) | (confidence > 1)).any()):
+                    raise ValueError("object confidence must lie in [0,1]")
+                object_shape = tuple(masks.shape[1:])
+                if object_names_contract is None:
+                    object_names_contract = names
+                    object_shape_contract = object_shape
+                elif names != object_names_contract or object_shape != object_shape_contract:
+                    raise ValueError("recordings use mixed object-context contracts")
+                context = torch.cat(
+                    [masks.flatten(1), confidence], dim=-1
+                ).to(mano.dtype)
+                mano = torch.cat([mano, context], dim=-1)
+
             self.recordings.append({"vjepa": vjepa, "hand": mano})
             signatures.add(sampling_signature(rec))
 
@@ -209,6 +290,13 @@ class SkillWindowDataset(Dataset):
             for recording in self.recordings
         ):
             raise ValueError("recordings use mixed V-JEPA feature shapes")
+        self.object_names = object_names_contract or ()
+        self.object_prompt_count = (
+            int(object_shape_contract[0]) if object_shape_contract else 0
+        )
+        self.object_mask_spatial_tokens = (
+            int(object_shape_contract[1]) if object_shape_contract else 0
+        )
 
     def __len__(self):
         return len(self.samples)

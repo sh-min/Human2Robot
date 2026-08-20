@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>수동 스테레오 프레임 매칭</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#090d16; --panel:#121a29; --panel2:#182338; --line:#2b3953;
+      --text:#edf3ff; --muted:#93a3bd; --blue:#4e83ff; --green:#38ca91;
+      --yellow:#f4c95d; --red:#ff7885;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+    button,input { font:inherit; }
+    button { color:var(--text); background:#25334d; border:1px solid var(--line); border-radius:7px; padding:8px 12px; cursor:pointer; }
+    button:hover { border-color:#7085aa; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    input { color:var(--text); background:#0d1421; border:1px solid var(--line); border-radius:7px; padding:8px 10px; }
+    input[type="range"] { padding:0; accent-color:var(--blue); }
+    input[type="checkbox"] { accent-color:var(--blue); }
+    .app { width:min(1840px,100%); margin:auto; padding:16px; }
+    header { display:flex; align-items:baseline; gap:14px; margin-bottom:12px; }
+    h1 { margin:0; font-size:22px; }
+    header span { color:var(--muted); }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:12px; }
+    .config { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:9px; align-items:end; margin-bottom:12px; }
+    label { display:flex; flex-direction:column; gap:5px; min-width:0; color:var(--muted); font-size:12px; }
+    label input { width:100%; color:var(--text); font-size:13px; }
+    .primary { background:var(--blue); border-color:var(--blue); color:white; font-weight:800; }
+    .videos { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .camera { min-width:0; }
+    .camera-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+    .camera-name { font-size:18px; font-weight:900; letter-spacing:.03em; }
+    .camera-meta { color:var(--muted); font-variant-numeric:tabular-nums; text-align:right; }
+    .video-shell { position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; }
+    video { display:block; width:100%; height:100%; object-fit:contain; }
+    .frame-badge { position:absolute; left:10px; bottom:10px; padding:5px 9px; border-radius:6px; background:rgba(0,0,0,.78); font-weight:800; font-variant-numeric:tabular-nums; pointer-events:none; }
+    .transport { display:grid; grid-template-columns:auto auto auto auto auto minmax(100px,1fr) 105px; gap:6px; align-items:center; margin-top:8px; }
+    .transport button { padding:7px 9px; }
+    .transport .frame-input { width:105px; text-align:right; font-variant-numeric:tabular-nums; }
+    .transport input[type="range"] { width:100%; }
+    .pair-tools { margin-top:12px; display:grid; grid-template-columns:1fr auto 1fr; gap:9px; align-items:center; }
+    .pair-tools .middle { color:var(--muted); font-weight:700; text-align:center; }
+    .save-card { margin-top:12px; display:grid; grid-template-columns:minmax(150px,220px) minmax(220px,1fr) auto auto; gap:10px; align-items:end; }
+    .filename { min-height:38px; display:flex; align-items:center; padding:8px 11px; background:#0d1421; border:1px solid var(--line); border-radius:7px; color:var(--yellow); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .check { flex-direction:row; align-items:center; padding:8px 0; white-space:nowrap; color:var(--muted); }
+    .save { background:var(--green); border-color:var(--green); color:#041a10; font-weight:900; padding-inline:22px; }
+    .hint { color:var(--muted); font-size:12px; margin-top:9px; }
+    #status { min-height:42px; margin-top:10px; padding:10px 12px; border-radius:8px; background:#0d1421; color:var(--muted); white-space:pre-wrap; }
+    #status.ok { color:#90f0c8; }
+    #status.error { color:#ff9da6; }
+    .recent { margin-top:12px; }
+    .recent h2 { margin:0 0 8px; font-size:14px; color:var(--muted); }
+    #pairs { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:6px; }
+    .pair { padding:8px 10px; border:1px solid var(--line); border-radius:7px; background:#0e1624; font-variant-numeric:tabular-nums; }
+    .pair strong { color:var(--yellow); }
+    .loading { position:fixed; inset:0; display:none; place-items:center; background:rgba(5,8,14,.82); z-index:20; }
+    .loading.show { display:grid; }
+    .loading > div { padding:18px 24px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; }
+    @media (max-width:1050px) {
+      .config { grid-template-columns:1fr; }
+      .videos { grid-template-columns:1fr; }
+      .save-card { grid-template-columns:1fr; }
+      .transport { grid-template-columns:repeat(5,auto) 1fr 90px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>수동 스테레오 프레임 매칭</h1>
+      <span>두 카메라 프레임을 따로 맞춘 뒤 동일한 이름으로 저장합니다.</span>
+    </header>
+
+    <section class="card config">
+      <label>카메라 1 영상 경로<input id="camera1-path" spellcheck="false"></label>
+      <label>카메라 2 영상 경로<input id="camera2-path" spellcheck="false"></label>
+      <label>저장 루트 경로<input id="output-path" spellcheck="false"></label>
+      <button id="apply" class="primary">경로 적용</button>
+    </section>
+
+    <section class="videos">
+      <article class="card camera">
+        <div class="camera-head"><span class="camera-name">CAMERA 1</span><span class="camera-meta" id="meta1">—</span></div>
+        <div class="video-shell"><video id="video1" preload="metadata"></video><span class="frame-badge" id="badge1">Frame —</span></div>
+        <div class="transport">
+          <button data-camera="1" data-step="-10">−10F</button>
+          <button data-camera="1" data-step="-1">◀ 1F</button>
+          <button id="play1">▶</button>
+          <button data-camera="1" data-step="1">1F ▶</button>
+          <button data-camera="1" data-step="10">+10F</button>
+          <input id="range1" type="range" min="0" max="1" value="0" step="1">
+          <input id="frame1" class="frame-input" type="number" min="0" value="0">
+        </div>
+      </article>
+
+      <article class="card camera">
+        <div class="camera-head"><span class="camera-name">CAMERA 2</span><span class="camera-meta" id="meta2">—</span></div>
+        <div class="video-shell"><video id="video2" preload="metadata"></video><span class="frame-badge" id="badge2">Frame —</span></div>
+        <div class="transport">
+          <button data-camera="2" data-step="-10">−10F</button>
+          <button data-camera="2" data-step="-1">◀ 1F</button>
+          <button id="play2">▶</button>
+          <button data-camera="2" data-step="1">1F ▶</button>
+          <button data-camera="2" data-step="10">+10F</button>
+          <input id="range2" type="range" min="0" max="1" value="0" step="1">
+          <input id="frame2" class="frame-input" type="number" min="0" value="0">
+        </div>
+      </article>
+    </section>
+
+    <section class="card pair-tools">
+      <button id="copy12">카메라 1 프레임 번호를 카메라 2로 →</button>
+      <span class="middle">프레임은 서로 독립적으로 이동합니다</span>
+      <button id="copy21">← 카메라 2 프레임 번호를 카메라 1로</button>
+    </section>
+
+    <section class="card save-card">
+      <label>저장 번호<input id="pair-id" type="number" min="1" value="1"></label>
+      <div><div style="color:var(--muted);font-size:12px;margin-bottom:5px">양쪽에 저장될 동일 파일명</div><div class="filename" id="filename">1_Color.png</div></div>
+      <label class="check"><input id="overwrite" type="checkbox"> 기존 동일 번호 덮어쓰기</label>
+      <button id="save" class="save">현재 프레임 쌍 저장</button>
+    </section>
+
+    <div class="hint">단축키: A/D 카메라1 이전/다음 · J/L 카메라2 이전/다음 · Shift와 함께 누르면 10프레임 · Space 양쪽 재생/정지 · Ctrl/Cmd+S 저장</div>
+    <div id="status">서버 정보를 불러오는 중입니다…</div>
+
+    <section class="card recent">
+      <h2>최근 저장한 매칭</h2>
+      <div id="pairs"><div class="pair">아직 저장된 프레임 쌍이 없습니다.</div></div>
+    </section>
+  </div>
+  <div class="loading" id="loading"><div id="loading-text">미리보기를 준비하는 중…</div></div>
+
+  <script>
+    const state = { config:null, pairs:[], busy:false };
+    const $ = id => document.getElementById(id);
+    const videos = {1:$('video1'), 2:$('video2')};
+
+    function setLoading(show, text='처리 중…') {
+      state.busy = show;
+      $('loading-text').textContent = text;
+      $('loading').classList.toggle('show', show);
+    }
+    function setStatus(text, kind='') {
+      $('status').textContent = text;
+      $('status').className = kind;
+    }
+    function info(camera) { return state.config?.[`camera_${camera}`]; }
+    function currentFrame(camera) {
+      const metadata = info(camera);
+      if (!metadata) return 0;
+      return Math.max(0, Math.min(metadata.frames - 1, Math.floor(videos[camera].currentTime * metadata.fps + 1e-5)));
+    }
+    function seek(camera, frame) {
+      const metadata = info(camera);
+      if (!metadata) return;
+      videos[camera].pause();
+      const value = Math.max(0, Math.min(metadata.frames - 1, Math.round(Number(frame) || 0)));
+      videos[camera].currentTime = (value + 0.25) / metadata.fps;
+      updateCamera(camera, value);
+    }
+    function step(camera, amount) { seek(camera, currentFrame(camera) + amount); }
+    function updateCamera(camera, forced=null) {
+      const metadata = info(camera);
+      if (!metadata) return;
+      const frame = forced === null ? currentFrame(camera) : forced;
+      $(`badge${camera}`).textContent = `Frame ${frame} / ${metadata.frames - 1}`;
+      $(`range${camera}`).value = frame;
+      $(`frame${camera}`).value = frame;
+      $(`play${camera}`).textContent = videos[camera].paused ? '▶' : 'Ⅱ';
+    }
+    function toggle(camera) { videos[camera].paused ? videos[camera].play() : videos[camera].pause(); }
+    function toggleBoth() {
+      const shouldPlay = videos[1].paused || videos[2].paused;
+      if (shouldPlay) { videos[1].play(); videos[2].play(); }
+      else { videos[1].pause(); videos[2].pause(); }
+    }
+    function renderFilename() {
+      const value = Math.max(1, Math.round(Number($('pair-id').value) || 1));
+      $('filename').textContent = `${value}_Color.png`;
+    }
+    function renderPairs() {
+      const container = $('pairs');
+      if (!state.pairs.length) {
+        container.innerHTML = '<div class="pair">아직 저장된 프레임 쌍이 없습니다.</div>';
+        return;
+      }
+      container.innerHTML = [...state.pairs].reverse().map(item =>
+        `<div class="pair"><strong>${item.filename}</strong><br>camera_1 F${item.camera_1.frame} ↔ camera_2 F${item.camera_2.frame}</div>`
+      ).join('');
+    }
+    function applyConfig(payload) {
+      state.config = payload.config;
+      state.pairs = payload.pairs || [];
+      $('camera1-path').value = state.config.camera_1.path;
+      $('camera2-path').value = state.config.camera_2.path;
+      $('output-path').value = state.config.output_root;
+      $('pair-id').value = state.config.next_pair_id;
+      renderFilename();
+      [1,2].forEach(camera => {
+        const metadata = info(camera);
+        $(`meta${camera}`).textContent = `${metadata.width}×${metadata.height} · ${metadata.frames}F · ${metadata.fps.toFixed(3)} FPS`;
+        $(`range${camera}`).max = metadata.frames - 1;
+        $(`frame${camera}`).max = metadata.frames - 1;
+        videos[camera].pause();
+        videos[camera].src = `${metadata.preview_url}?v=${Date.now()}`;
+        videos[camera].load();
+        seek(camera, 0);
+      });
+      renderPairs();
+      const sizeWarning = state.config.same_image_size ? '' : '\n⚠ 두 원본 영상 해상도가 달라 캘리브레이션 입력에서 문제가 될 수 있습니다.';
+      setStatus(`준비 완료\n저장 위치: ${state.config.output_root}/camera_1, camera_2${sizeWarning}`, state.config.same_image_size ? 'ok' : 'error');
+    }
+    async function loadState() {
+      setLoading(true, '서버 설정을 불러오는 중…');
+      try {
+        const response = await fetch('/api/state');
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || '설정을 불러오지 못했습니다.');
+        applyConfig(payload);
+      } catch (error) { setStatus(error.message, 'error'); }
+      finally { setLoading(false); }
+    }
+    async function configure() {
+      setLoading(true, '영상 확인 및 브라우저용 미리보기를 준비하는 중…');
+      try {
+        const response = await fetch('/api/configure', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({camera_1:$('camera1-path').value, camera_2:$('camera2-path').value, output_root:$('output-path').value})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || '경로 적용에 실패했습니다.');
+        applyConfig(payload);
+      } catch (error) { setStatus(error.message, 'error'); }
+      finally { setLoading(false); }
+    }
+    async function savePair() {
+      if (state.busy || !state.config) return;
+      videos[1].pause(); videos[2].pause();
+      const frame1 = currentFrame(1), frame2 = currentFrame(2);
+      const pairId = Math.max(1, Math.round(Number($('pair-id').value) || 1));
+      setLoading(true, `camera_1 F${frame1}, camera_2 F${frame2} 원본 프레임을 추출하는 중…`);
+      try {
+        const response = await fetch('/api/save', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({frame_1:frame1, frame_2:frame2, pair_id:pairId, overwrite:$('overwrite').checked})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || '저장에 실패했습니다.');
+        const record = payload.record;
+        state.pairs = state.pairs.filter(item => item.pair_id !== record.pair_id);
+        state.pairs.push(record);
+        $('pair-id').value = payload.next_pair_id;
+        $('overwrite').checked = false;
+        renderFilename(); renderPairs();
+        setStatus(`✓ ${record.filename} 저장 완료\ncamera_1 F${record.camera_1.frame} → ${state.config.output_root}/${record.camera_1.image}\ncamera_2 F${record.camera_2.frame} → ${state.config.output_root}/${record.camera_2.image}`, 'ok');
+      } catch (error) { setStatus(error.message, 'error'); }
+      finally { setLoading(false); }
+    }
+
+    $('apply').addEventListener('click', configure);
+    $('save').addEventListener('click', savePair);
+    $('pair-id').addEventListener('input', renderFilename);
+    $('play1').addEventListener('click', () => toggle(1));
+    $('play2').addEventListener('click', () => toggle(2));
+    document.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => step(Number(button.dataset.camera), Number(button.dataset.step))));
+    [1,2].forEach(camera => {
+      $(`range${camera}`).addEventListener('input', event => seek(camera, event.target.value));
+      $(`frame${camera}`).addEventListener('change', event => seek(camera, event.target.value));
+      ['timeupdate','seeked','loadedmetadata','play','pause','ended'].forEach(event => videos[camera].addEventListener(event, () => updateCamera(camera)));
+      if ('requestVideoFrameCallback' in videos[camera]) {
+        const callback = () => { updateCamera(camera); videos[camera].requestVideoFrameCallback(callback); };
+        videos[camera].requestVideoFrameCallback(callback);
+      }
+    });
+    $('copy12').addEventListener('click', () => seek(2, currentFrame(1)));
+    $('copy21').addEventListener('click', () => seek(1, currentFrame(2)));
+    document.addEventListener('keydown', event => {
+      if (['INPUT','TEXTAREA'].includes(event.target.tagName)) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); savePair(); }
+        return;
+      }
+      const amount = event.shiftKey ? 10 : 1;
+      if (event.code === 'KeyA') { event.preventDefault(); step(1, -amount); }
+      else if (event.code === 'KeyD') { event.preventDefault(); step(1, amount); }
+      else if (event.code === 'KeyJ') { event.preventDefault(); step(2, -amount); }
+      else if (event.code === 'KeyL') { event.preventDefault(); step(2, amount); }
+      else if (event.code === 'Space') { event.preventDefault(); toggleBoth(); }
+      else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); savePair(); }
+    });
+
+    loadState();
+  </script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+# Raw-video V-JEPA-only classifier. Exact `Choco` labels are excluded while
+# the legacy 08-04 `Milk` class remains a distinct class.
+
+output_dir: output/skill_classifier/0804_vjepa_only_no_choco
+
+train_data_root: data/vjepa_training/0804_mh_no_choco
+train_recording_glob: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20"
+val_data_root: data/vjepa_training/0804_mh_no_choco
+val_recording_glob: "21,22,23,24"
+
+action_labels: [Cup, Lock, Milk, Snack, Sweep, Trans]
+
+model: mlp
+variant: vjepa_orig
+vjepa_diff: false
+hand_representation: none
+window_size: 8
+include_trans: true
+
+epochs: 300
+batch_size: 32
+num_workers: 0
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 50
+
+device: cuda
+seed: 42
+deterministic: true
+
+hidden_dims: [256, 128]
+dropout: 0.3
+pool: mean
+
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: true

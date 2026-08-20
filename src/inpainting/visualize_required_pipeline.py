@@ -148,7 +148,7 @@ def encode_episode(episode: Path, fps_override: float | None = None) -> tuple[Pa
         "comparison": episode / "visualization" / "hawor_haco_comparison.mp4",
         "background": processed / "inpaint_processor" / "video_human_inpaint.mkv",
         "robot": processed / "overlay_processor" / "video_robot_only.mp4",
-        "final": processed / "video_overlay_rby1_xhand.mp4",
+        "final": processed / "overlay_processor_layered" / "video_overlay.mp4",
     }
     mask_path = processed / "segmentation_processor" / "masks_arm.npy"
     for path in (*paths.values(), mask_path):

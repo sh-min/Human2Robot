@@ -1,0 +1,41 @@
+schema_version: 1
+object_id: kitchen_multi
+
+task:
+  instruction: perform the annotated kitchen manipulation sequence
+
+# This specification supplies the shared policy/dataset contract. The
+# demonstrations manipulate several kitchen objects, so offline policy
+# training uses the annotations and recorded visuals rather than pretending
+# that this placeholder primitive is a complete multi-object scene.
+geometry:
+  primitive: box
+  dimensions_m: [0.08, 0.08, 0.12]
+  scale: [1.0, 1.0, 1.0]
+  rgba: [0.7, 0.7, 0.7, 1.0]
+
+physics:
+  mass_kg: 0.2
+  friction: [0.8, 0.005, 0.0001]
+
+spawn:
+  position: [0.55, 0.0, 1.05]
+  quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+  randomization:
+    x_range: [0.45, 0.65]
+    y_range: [-0.2, 0.2]
+    z_range: [1.05, 1.05]
+    yaw_range_deg: [-180.0, 180.0]
+
+success:
+  type: none
+  terminate_on_success: false
+
+control:
+  active_hands: [left]
+
+dataset:
+  recordings_root: ../../data/robot_overlay/kitchen_0724_0728/policy_episodes
+  episode_glob: "*__*"
+  lerobot_v3_root: ../../data/lerobot_kitchen_0724_0728
+  groot_v21_root: ../../data/groot_kitchen_0724_0728

@@ -90,6 +90,17 @@ def main():
             raise FileNotFoundError(f"missing Isaac USD asset: {path}")
     if joint_meta.get("side", side) != side:
         raise ValueError("joint-name sidecar does not match overlay input side")
+    if joint_meta.get("embodiment") != "xhand":
+        raise ValueError("joint-name sidecar must declare embodiment='xhand'")
+    if not joint_meta.get("trajectory_constraints", {}).get("enforced", False):
+        raise ValueError("joint-name sidecar lacks an enforced trajectory contract")
+    if "safety_constraints_enforced" not in d or not bool(
+        np.asarray(d["safety_constraints_enforced"]).item()
+    ):
+        raise ValueError(
+            "overlay input is not execution-constrained; regenerate it with "
+            "rb5_build_overlay_input.py"
+        )
     focal = float(d["img_focal"])
     W, Hh = args.width, args.height
     if W <= 0 or Hh <= 0:

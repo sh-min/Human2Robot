@@ -1,0 +1,167 @@
+# Controlled ablations for the human-hand V-JEPA 2.1 + object-semantic model.
+# Every exploratory run uses seed 42 and 150 epochs.  The winning design is
+# subsequently rerun at the full 300-epoch budget over multiple seeds.
+
+base_config: src/skill_classifier/config/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco.yaml
+output_dir: output/skill_classifier/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco/ablations
+max_parallel: 2
+common:
+  epochs: 150
+  save_every: 0
+  plot_best_updates: false
+  seed: 42
+
+experiments:
+  - id: full_object_150
+    group: reference
+    hypothesis: Exact 150-epoch reference for fair comparison with every exploratory ablation.
+    set: {}
+
+  - id: global_baseline_150
+    group: reference
+    hypothesis: Exact 150-epoch global spatial-attention baseline without any object context.
+    set:
+      model: spatial_attention_mlp
+      object_context_key: null
+
+  - id: global_baseline_window_4
+    group: temporal
+    hypothesis: A short window on the global baseline isolates temporal-window gain from object-semantic gain.
+    set:
+      model: spatial_attention_mlp
+      object_context_key: null
+      window_size: 4
+
+  - id: global_plus_scores
+    group: fusion
+    hypothesis: Detector confidence and mask area may explain the gain without object-pooled V-JEPA features.
+    set:
+      use_object_features: false
+
+  - id: global_plus_masked_no_scores
+    group: fusion
+    hypothesis: Object-masked visual features alone may help without detector-score shortcuts.
+    set:
+      use_confidence_features: false
+      use_occupancy_features: false
+      use_confidence_gate: false
+
+  - id: object_only_full
+    group: fusion
+    hypothesis: Object-centric evidence may classify skills without a global scene branch.
+    set:
+      use_global_features: false
+
+  - id: detector_metadata_only
+    group: fusion
+    hypothesis: Grounding confidence and area alone measure detector shortcut strength.
+    set:
+      use_global_features: false
+      use_object_features: false
+
+  - id: bbox_instead_of_sam
+    group: segmentation
+    hypothesis: Comparing boxes with SAM2 masks isolates the value of precise object boundaries.
+    set:
+      object_context_key: vlm_bbox_object_context
+
+  - id: zero_context_control
+    group: negative_control
+    hypothesis: Zero context controls for the wider fusion network and parameter count.
+    set:
+      object_context_key: vlm_zero_object_context
+
+  - id: channel_shuffle_control
+    group: negative_control
+    hypothesis: Per-token object-channel shuffling tests whether canonical object identity matters.
+    set:
+      object_context_key: vlm_channel_shuffle_object_context
+
+  - id: temporal_shuffle_control
+    group: negative_control
+    hypothesis: Within-video temporal shuffling tests whether object timing matters beyond scene identity.
+    set:
+      object_context_key: vlm_temporal_shuffle_object_context
+
+  - id: clip_text_prototype
+    group: language
+    hypothesis: Frozen CLIP action sentences can replace an unconstrained learned class head.
+    set:
+      model: object_text_prototype_mlp
+      action_text_embeddings: data/vjepa_training/kitchen_action_text_clip_vit_b32.pt
+      text_head_mode: prototype
+
+  - id: clip_text_hybrid
+    group: language
+    hypothesis: A learned head plus frozen action-text similarity may be more robust than either alone.
+    set:
+      model: object_text_prototype_mlp
+      action_text_embeddings: data/vjepa_training/kitchen_action_text_clip_vit_b32.pt
+      text_head_mode: hybrid
+
+  - id: no_color_jitter
+    group: augmentation
+    hypothesis: Removing color jitter measures how much of the gain comes from augmentation.
+    set:
+      train_data_root: data/vjepa_training/kitchen_0724_0728_human_vjepa21_dense_no_choco
+      train_recording_glob: "0724__IMG_5019,0724__IMG_502[0-6],0727__07_27-[1-9],0727__07_27-1[0-9],0727__07_27-2[0-3]*,0728__07_28-0[1-4]"
+      val_data_root: data/vjepa_training/kitchen_0724_0728_human_vjepa21_dense_no_choco
+
+  - id: window_4
+    group: temporal
+    hypothesis: A shorter four-token history tests whether local appearance is sufficient.
+    set:
+      window_size: 4
+
+  - id: window_12
+    group: temporal
+    hypothesis: A longer twelve-token history tests whether more temporal context helps.
+    set:
+      window_size: 12
+
+  - id: dropout_03
+    group: regularization
+    hypothesis: Lower dropout tests under-regularization of the semantic fusion head.
+    set:
+      dropout: 0.3
+
+  - id: dropout_05
+    group: regularization
+    hypothesis: Higher dropout tests whether stronger regularization improves generalization.
+    set:
+      dropout: 0.5
+
+  - id: window4_masked_no_scores
+    group: focused_combination
+    hypothesis: Combine the best short window with object visual features while removing detector-score shortcuts.
+    set:
+      window_size: 4
+      use_confidence_features: false
+      use_occupancy_features: false
+      use_confidence_gate: false
+
+  - id: window4_dropout_03
+    group: focused_combination
+    hypothesis: Combine the best short window with the stronger low-dropout result.
+    set:
+      window_size: 4
+      dropout: 0.3
+
+  - id: window4_masked_no_scores_dropout_03
+    group: focused_combination
+    hypothesis: Jointly combine all three promising factors from the one-factor study.
+    set:
+      window_size: 4
+      dropout: 0.3
+      use_confidence_features: false
+      use_occupancy_features: false
+      use_confidence_gate: false
+
+  - id: window4_clip_text_prototype
+    group: focused_combination
+    hypothesis: Test whether short temporal context retains CLIP text prototype benefits on minority actions.
+    set:
+      window_size: 4
+      model: object_text_prototype_mlp
+      action_text_embeddings: data/vjepa_training/kitchen_action_text_clip_vit_b32.pt
+      text_head_mode: prototype

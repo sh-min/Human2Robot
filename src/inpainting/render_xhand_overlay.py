@@ -1,11 +1,7 @@
-"""Shared xhand render helpers: embodiment resolution, URDF/MJCF parse, forward
-kinematics, and the CV->GL frame flip. Imported by render_xhand_overlay_depth.py.
+"""Shared XHand-only URDF parsing and forward-kinematics helpers.
 
-This module used to also host a standalone renderer that drew the robot over the
-raw video clipped to the SAM2 arm mask (`draw = robot_mask ∧ arm_mask`) and wrote
-a residual mask for a follow-up inpaint. That clip/residual path was run.py and
-has been retired in favour of the depth-aware layered pipeline (run_layered.py),
-which never clips the robot to the human silhouette. Only the helpers remain.
+This module is not a renderer.  The only robot renderers consume these helpers
+for XHand while rendering the complete RB5-850e arm.
 
 Coordinate conventions:
   MANO cam space:   x=right, y=down, z=forward (OpenCV)
@@ -33,20 +29,13 @@ XHAND_XML = {
 
 
 def resolve_embodiment(pkl_dict, override, side):
-    """Which robot hand this pkl describes.
-
-    Retargeting stamps `embodiment` into the pkl, so the renderer normally does
-    not need telling — that stops an inspire trajectory being drawn with an
-    xhand URDF. An explicit CLI override wins; pkls written before the field
-    existed fall back to xhand.
-    """
-    if override:
-        stamped = pkl_dict.get("embodiment")
-        if stamped and stamped != override:
-            print(f"[warn] {side}: --{side}_embodiment={override} overrides "
-                  f"embodiment={stamped!r} recorded in the pkl")
-        return override
-    return pkl_dict.get("embodiment", DEFAULT_EMBODIMENT)
+    """Accept XHand metadata only; never substitute another robot hand."""
+    requested = override or pkl_dict.get("embodiment", DEFAULT_EMBODIMENT)
+    if requested != "xhand":
+        raise ValueError(
+            f"{side}: replacement is locked to XHand, got {requested!r}"
+        )
+    return "xhand"
 
 
 def build_side_align(embodiment_of):
@@ -61,8 +50,7 @@ def hand_root_pose(R_mano, wrist_pos, align):
 
     The URDF root is put at the MANO wrist, shifted by the embodiment's wrist
     offset (expressed in the wrist frame, hence rotated into camera frame
-    first). The offset is zero for xhand, whose root already sits near MANO's
-    wrist; inspire's root is the arm mount flange ~54 mm further out.
+    first). XHand's root already sits near MANO's wrist, so its offset is zero.
     """
     R_align, offset = align
     R_cam_hand = R_mano @ R_align
@@ -184,5 +172,3 @@ def compute_fk(joints: dict, qpos_dict: dict, root_T: np.ndarray) -> dict:
             link_T[jd["child"]] = T_par @ T_origin @ R_j
             queue.append(jd["child"])
     return link_T
-
-

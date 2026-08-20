@@ -1,0 +1,45 @@
+# Full-budget confirmation of the main conclusions from the 150-epoch screen.
+base_config: src/skill_classifier/config/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco.yaml
+output_dir: output/skill_classifier/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco/multiseed_300e
+max_parallel: 2
+common:
+  epochs: 300
+  save_every: 0
+  plot_best_updates: false
+
+experiments:
+  # Seed 42 already exists for the window-8 reference pair; seeds 7 and 123
+  # complete a three-seed comparison without rerunning an identical job.
+  - id: object_w8_seed7
+    group: object_w8
+    set: {seed: 7}
+  - id: object_w8_seed123
+    group: object_w8
+    set: {seed: 123}
+  - id: global_w8_seed7
+    group: global_w8
+    set: {seed: 7, model: spatial_attention_mlp, object_context_key: null}
+  - id: global_w8_seed123
+    group: global_w8
+    set: {seed: 123, model: spatial_attention_mlp, object_context_key: null}
+
+  # Window-4 confirmation: both branches are trained with identical budgets
+  # at all three seeds, since neither had existing 300-epoch results.
+  - id: object_w4_seed7
+    group: object_w4
+    set: {seed: 7, window_size: 4}
+  - id: object_w4_seed42
+    group: object_w4
+    set: {seed: 42, window_size: 4}
+  - id: object_w4_seed123
+    group: object_w4
+    set: {seed: 123, window_size: 4}
+  - id: global_w4_seed7
+    group: global_w4
+    set: {seed: 7, window_size: 4, model: spatial_attention_mlp, object_context_key: null}
+  - id: global_w4_seed42
+    group: global_w4
+    set: {seed: 42, window_size: 4, model: spatial_attention_mlp, object_context_key: null}
+  - id: global_w4_seed123
+    group: global_w4
+    set: {seed: 123, window_size: 4, model: spatial_attention_mlp, object_context_key: null}

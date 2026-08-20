@@ -4,6 +4,8 @@ task:
   instruction: pick up the blue cup
 geometry:
   mjcf: ../../src/sim/mujoco_sim/assets/cup_blue/cup_blue.xml
+  usd: ../../isaac_assets/objects/cup_blue/cup_blue.usd
+  usd_source: scanned_regularized
 physics:
   mass_kg: 0.262423
   friction: [1.2, 0.05, 0.001]

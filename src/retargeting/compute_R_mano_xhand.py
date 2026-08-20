@@ -13,7 +13,6 @@ Run in hawor env (needs MANO via HaWoR):
     conda activate hawor
     cd <repo_root>/src/retargeting
     python compute_R_mano_xhand.py --embodiment xhand
-    python compute_R_mano_xhand.py --embodiment inspire --hand left
 """
 import argparse
 import os
@@ -53,16 +52,6 @@ MCP_SPEC = {
             "{hand}_hand_mid_link1",
             "{hand}_hand_ring_link1",
             "{hand}_hand_pinky_link1",
-        ],
-    ),
-    "inspire": dict(
-        wrist_link="base",   # note: no chirality prefix; left/right names coincide
-        mcp_links=[
-            "thumb_proximal_base",
-            "index_proximal",
-            "middle_proximal",
-            "ring_proximal",
-            "pinky_proximal",
         ],
     ),
 }
@@ -109,10 +98,8 @@ def get_robot_mcp(embodiment, hand):
     (5, 3), thumb->pinky.
 
     Full FK from the URDF root rather than reading each MCP joint's origin
-    directly: that shortcut only holds when every MCP joint's parent *is* the
-    wrist link (true for xhand, false for inspire, whose proximals hang off
-    hand_base_link). At q=0 every joint rotation is identity, so this is just
-    a composition of link origin transforms.
+    directly. At q=0 every joint rotation is identity, so this is just a
+    composition of link origin transforms.
     """
     spec = MCP_SPEC[embodiment]
     wrist_link = spec["wrist_link"].format(hand=hand)

@@ -34,7 +34,10 @@ DIFFUSION_VAS_RGB_CKPT = os.path.join(
 )
 
 # Depth Anything V2 checkpoints.
-DEPTH_ANYTHING_CKPT_DIR = "/result/skill2policy/ckpt/depth_anything"
+DEPTH_ANYTHING_CKPT_DIR = os.environ.get(
+    "DEPTH_ANYTHING_CKPT_DIR",
+    os.path.join(REPO_ROOT, "ckpt", "depth_anything"),
+)
 DEPTH_ANYTHING_CKPTS = {
     "vits": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vits.pth"),
     "vitb": os.path.join(DEPTH_ANYTHING_CKPT_DIR, "depth_anything_v2_vitb.pth"),
@@ -52,19 +55,9 @@ XHAND_URDF_ROOT = os.path.join(RETARGET_DIR, "assets")
 XHAND_URDF_RIGHT = os.path.join(XHAND_URDF_ROOT, "xhand", "xhand_right.urdf")
 XHAND_URDF_LEFT  = os.path.join(XHAND_URDF_ROOT, "xhand", "xhand_left.urdf")
 
-# ---- Hand embodiments -------------------------------------------------
-# Render-side mirror of EMBODIMENTS in src/retargeting/_paths.py, which is the
-# source of truth — this copy holds only the fields the renderer needs. The two
-# modules are both named `_paths`, so importing one from the other would
-# collide; the pre-existing duplicate load_R_mano_xhand below follows the same
-# pattern. Keep the two tables in sync when adding an embodiment.
-#
-# forearm_sign: +1 if the wrist frame's +z runs wrist->elbow, -1 if it runs
-# wrist->fingertips. xhand and inspire are opposite; the depth renderer uses
-# this to decide which way the forearm leaves the wrist.
-DEX_URDF_ROOT = os.path.join(
-    REPO_ROOT, "third_party", "dex-retargeting", "assets", "robots", "hands"
-)
+# The replacement pipeline is deliberately locked to XHand.  Keeping the
+# embodiment table single-valued makes stale metadata or a stray CLI argument
+# fail instead of silently loading a different robot hand.
 EMBODIMENTS = {
     "xhand": dict(
         urdf="{root}/xhand/xhand_{hand}.urdf".format(
@@ -73,16 +66,6 @@ EMBODIMENTS = {
         wrist_offset="wrist_offset_xhand_{hand}.npy",
         forearm_sign=+1,
         mjcf="src/sim/mujoco_sim/assets/xhand_{hand}/xhand_{hand}.xml",
-    ),
-    "inspire": dict(
-        urdf="{root}/inspire_hand/inspire_hand_{hand}.urdf".format(
-            root=DEX_URDF_ROOT, hand="{hand}"),
-        r_mano="R_mano_inspire_{hand}.npy",
-        wrist_offset="wrist_offset_inspire_{hand}.npy",
-        forearm_sign=-1,
-        # inspire's .glb meshes carry their own PBR materials, so there is no
-        # MJCF colour table to apply.
-        mjcf=None,
     ),
 }
 EMBODIMENT_NAMES = sorted(EMBODIMENTS)

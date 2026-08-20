@@ -1,0 +1,41 @@
+# Learned classifier plus frozen English CLIP action-prototype similarity.
+output_dir: output/skill_classifier/kitchen_0813_human_vjepa2_vlm_action_text
+train_data_root: data/vjepa_training/kitchen_0813_human_vjepa2_color_jitter
+train_recording_glob: "No[1-8]__IMG_*"
+val_data_root: data/vjepa_training/kitchen_0813_human_vjepa2_color_jitter
+val_recording_glob: "No9__IMG_*,No10__IMG_*"
+action_labels: [HangCup, StackContainers, PlaceLightGreenSnackBoxInTrashBin, PlaceRedSnackBoxInTrashBin, WipeFloorWithSponge, Transition]
+action_semantics: src/skill_classifier/config/kitchen_action_semantics.yaml
+model: object_text_prototype_mlp
+variant: vjepa_orig_dense
+object_context_key: vlm_sam_object_context
+object_projection_dim: 64
+action_text_embeddings: data/vjepa_training/kitchen_0813_action_text_clip_vit_b32.pt
+text_head_mode: hybrid
+vjepa_diff: false
+hand_representation: none
+window_size: 8
+include_trans: true
+epochs: 300
+early_stopping_patience: 40
+early_stopping_min_epochs: 100
+early_stopping_min_delta: 5.0e-4
+batch_size: 32
+num_workers: 0
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 50
+device: cuda
+seed: 42
+deterministic: true
+hidden_dims: [256, 128]
+dropout: 0.4
+pool: mean
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: true

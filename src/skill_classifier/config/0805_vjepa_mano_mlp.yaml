@@ -1,0 +1,44 @@
+# 08-05 MH V-JEPA 2 + MANO exploratory skill classifier.
+# Only two recordings are available. The runner swaps 1->2 and 2->1 to report
+# both folds; these scores are for calibration A/B diagnostics, not a robust
+# held-out estimate.
+
+output_dir: output/skill_classifier/0805_calibrated
+
+train_data_root: data/cube_dataset/26.08.05_stereo_calibrated
+train_recording_glob: "1"
+val_data_root: data/cube_dataset/26.08.05_stereo_calibrated
+val_recording_glob: "2"
+
+action_labels: [HangCup, StackContainers, PlaceLightGreenSnackBoxInTrashBin, PlaceRedSnackBoxInTrashBin, WipeFloorWithSponge, Transition]
+
+model: mlp
+variant: vjepa_orig
+vjepa_diff: false
+hand_representation: axis_angle
+window_size: 8
+include_trans: true
+
+epochs: 300
+batch_size: 8
+num_workers: 0
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 50
+
+device: cuda
+seed: 42
+deterministic: true
+
+hidden_dims: [256, 128]
+dropout: 0.3
+pool: mean
+
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: true

@@ -1,7 +1,7 @@
 """End-to-end orchestrator for the locked-in layered overlay pipeline.
 
 Stages (each skips itself if its primary output already exists). By DEFAULT the
-pipeline runs 1,2,3,4,5,10 with the pyrender robot renderer and NO object layer.
+pipeline runs 1,2,3,4,5,10 with the locked RB5-850e + XHand renderer and NO object layer.
 Stages marked [object] only run when --object_layer is passed.
 
     1. prepare_demo.py                      rgb/video → video_L.mp4 (demo layout)
@@ -10,9 +10,7 @@ Stages marked [object] only run when --object_layer is passed.
                                             propagate) → segmentation_processor/masks_arm.npy
   3.5. segment_object.py            [object]    SAM2 object mask → object_mask_raw.npy
     4. inpaint_hands.py --mode legacy       E2FGVI → inpaint_processor/video_human_inpaint.mkv
-    5. robot RGBD → overlay_processor/robot_{rgb,depth,mask}.npy
-         pyrender (default): render_xhand_overlay_depth.py (xhand + RBY1 arm)
-         isaac (--render_backend isaac): isaac_stage5.sh → RB5-850 arm + xhand hand (Isaac Sim)
+    5. isaac_stage5.sh → RB5-850e arm + XHand RGBD
     6. estimate_depth.py          [object]    Depth Anything V2 → depth_processor/depth_raw.npy
     7. align_depth.py             [object]    HaWoR Z anchors → depth_processor/depth_aligned.npy
   8-9. run_object_segmentation.py   [object]    SAM2 modal → Diffusion-VAS amodal → object_mask_amodal.npy
@@ -31,6 +29,7 @@ Usage:
         --processed_root /result/cam0_inpaint
 """
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +40,19 @@ HERE = Path(__file__).parent
 def _run(cmd, **kwargs):
     print(f"\n$ {' '.join(str(c) for c in cmd)}")
     subprocess.run(cmd, check=True, **kwargs)
+
+
+def _is_locked_robot_cache(pd: Path) -> bool:
+    manifest_path = pd / "overlay_processor" / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        return False
+    return (
+        str(manifest.get("arm", "")).startswith("rb5_850e")
+        and manifest.get("hand") == "xhand"
+        and manifest.get("arm_mode") == "full_locked"
+    )
 
 
 def main() -> None:
@@ -63,12 +75,6 @@ def main() -> None:
     ap.add_argument("--annotate_port", type=int, default=None,
                     help="Port for the Stage-6 interactive annotator (default 7860).")
 
-    ap.add_argument("--render_backend", choices=["isaac", "pyrender"], default="pyrender",
-                    help="Stage 5 robot renderer. pyrender (default) = xhand + RBY1 "
-                         "lower arm, whose base follows the HaWoR wrist and matches the "
-                         "published overlays. isaac = RB5-850 arm + xhand hand in Isaac "
-                         "Sim (via isaac_stage5.sh); its base is search-fitted per demo "
-                         "by rb5_arm_ik.auto_fit_base, so it lands elsewhere.")
     ap.add_argument("--object_layer", action="store_true",
                     help="enable the object layer: segment_object (SAM2, stage 3.5) "
                          "+ depth (6,7) + Diffusion-VAS amodal (8,9), composited over the "
@@ -158,22 +164,16 @@ def main() -> None:
             inpaint_cmd += ["--protect_mask", str(object_raw)]
         _run(inpaint_cmd)
 
-    # Stage 5: robot RGBD. Default = pyrender so the RBY1 lower arm follows the
-    # HaWoR wrist and matches the published overlays. Isaac remains opt-in.
+    # Stage 5: the only supported robot is RB5-850e + XHand.
     robot_mask_npy = pd / "overlay_processor" / "robot_mask.npy"
-    if robot_mask_npy.exists():
-        print(f"\n[skip] {robot_mask_npy} exists")
-    elif args.render_backend == "isaac":
+    if robot_mask_npy.exists() and _is_locked_robot_cache(pd):
+        print(f"\n[skip] verified RB5-850e + XHand cache: {robot_mask_npy}")
+    else:
+        if robot_mask_npy.exists():
+            print("\n[stale] robot cache is not locked RB5-850e + XHand; rerendering")
         _run(["bash", str(HERE / "isaac_stage5.sh"),
               str(pd), str(args.hawor_npz),
               str(args.right_pkl), str(args.left_pkl), args.hand])
-    else:
-        _run([sys.executable, "-u", str(HERE / "render_xhand_overlay_depth.py"),
-              "--processed_demo", pd,
-              "--hawor_npz", args.hawor_npz,
-              "--right_pkl", args.right_pkl,
-              "--left_pkl",  args.left_pkl,
-              "--hand", args.hand])
 
     # Stages 6-9 only exist to build the object layer (depth drives the
     # object's contact shadow + front/behind ordering; 8-9 are the amodal object

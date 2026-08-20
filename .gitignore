@@ -19,6 +19,9 @@ __pycache__/
 .venv/
 env/
 venv/
+.env
+.env.*
+!.env.example
 
 # ML / data — paths or symlinks specific to this repo
 /ckpt
@@ -27,14 +30,35 @@ venv/
 /out
 /wandb
 /weights
+/08_04
+/8-5
+/Depth_Stereo
+/calibration-*
+/calibration_results
+/isaac_assets
 
 # Model / feature artifacts
 *.pt
 *.pth
 *.ckpt
+*.safetensors
+*.bin
 *.onnx
 *.npy
 *.npz
+
+# Raw recordings, generated videos, and dataset archives
+*.mp4
+*.mkv
+*.mov
+*.MOV
+*.avi
+*.db3
+*.bag
+*.tar
+*.tar.gz
+*.tar.xz
+*.zip
 
 # Logs
 *.log

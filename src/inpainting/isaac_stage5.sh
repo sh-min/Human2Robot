@@ -48,12 +48,19 @@ cd "$HERE"
 # Render resolution = source video resolution (matches HaWoR/focal projection).
 WH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
        -of csv=p=0:s=x "$PD/video_L.mp4" | head -n 1)"
+FPS="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate \
+        -of default=nw=1:nk=1 "$PD/video_L.mp4" | head -n 1 | \
+        awk -F/ '{ if (NF == 2 && $2 != 0) printf "%.12g", $1/$2; else print $1 }')"
 if [[ ! "$WH" =~ ^[0-9]+x[0-9]+$ ]]; then
   echo "[isaac5] could not read a valid resolution from $PD/video_L.mp4: $WH" >&2
   exit 1
 fi
+if ! awk -v fps="$FPS" 'BEGIN { exit !(fps > 0) }'; then
+  echo "[isaac5] could not read a valid frame rate from $PD/video_L.mp4: $FPS" >&2
+  exit 1
+fi
 W="${WH%x*}"; Hh="${WH#*x}"
-echo "[isaac5] resolution ${W}x${Hh}  hand=$HAND  gpu=$CUDA_VISIBLE_DEVICES"
+echo "[isaac5] resolution ${W}x${Hh}  fps=$FPS  hand=$HAND  gpu=$CUDA_VISIBLE_DEVICES"
 
 case "$HAND" in
   left)  SIDES=(left) ;;
@@ -80,14 +87,12 @@ for SIDE in "${SIDES[@]}"; do
   NPZ="$PD/rb5_overlay_input_${SIDE}.npz"
 
   echo "[isaac5] adapter side=$SIDE  pkl=$(basename "$PKL")"
-  # Default (RB5_BASE_PLACE unset) = the adapter's fixed per-hand off-frame base;
-  # set RB5_BASE_PLACE=bottomright|... to opt into the corner search instead.
-  BASE_ARG=(); [ -n "${RB5_BASE_PLACE:-}" ] && BASE_ARG=(--base_place "$RB5_BASE_PLACE")
   # the adapter aborts on a side with no valid frames; tolerate that for `both`
   if ! "$RETARGET_PY" "$HERE/rb5_build_overlay_input.py" \
         --hawor_npz "$HAWOR_NPZ" --pkl "$PKL" \
         --side "$SIDE" --img_w "$W" --img_h "$Hh" \
-        "${BASE_ARG[@]}" --out "$NPZ"; then
+        --fps "$FPS" \
+        --out "$NPZ"; then
     echo "[isaac5] side=$SIDE has no valid trajectory — skipping"; continue
   fi
 
@@ -143,6 +148,10 @@ np.save(f"{out}/robot_finger_mask.npy", flab > 0)
 with open(f"{out}/manifest.json", "w") as stream:
     json.dump(
         {
+            "renderer": "isaac-sim",
+            "arm": "rb5_850e",
+            "arm_mode": "full_locked",
+            "hand": "xhand",
             "sides": sides,
             "resolution": [int(rgb.shape[2]), int(rgb.shape[1])],
             "finger_mask": {

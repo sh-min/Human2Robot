@@ -16,6 +16,7 @@ Usage:
 import argparse
 import os
 import pickle
+import re
 
 import numpy as np
 from scipy.spatial.transform import Rotation as Rscipy
@@ -36,6 +37,110 @@ _MANO_JOINT_TO_FINGER = {
     10: 3, 11: 3, 12: 3,     # ring
     13: 0, 14: 0, 15: 0,     # thumb
 }
+
+def _legacy_contact_frame_number(path):
+    """Best-effort frame number from a pre-metadata contact filename.
+
+    HaCo now stores the authoritative dense HaWoR index in every npz.  Older
+    outputs were looked up by names such as ``rgb_frame00042.npz``.  Accept
+    arbitrary zero padding and the occasional retained source-image extension
+    (for example ``rgb_frame000042.png.npz``) for those legacy archives.
+    """
+    name = os.path.basename(os.fspath(path))
+    stem, extension = os.path.splitext(name)
+    if extension.lower() != ".npz":
+        return None
+
+    # The old writer normally replaced the source image extension, but some
+    # archives retained it (``frame00042.<source-ext>.npz``).  Do not hardcode
+    # an extension allow-list: metadata-free inputs may come from any decoder.
+    match = re.search(r"(\d+)(?:\.[^.]+)?$", stem)
+    return int(match.group(1)) if match else None
+
+
+def _contact_metadata_frame_index(value, path):
+    """Validate and normalize one ``hawor_frame_index`` npz value."""
+    value = np.asarray(value)
+    if value.size != 1:
+        raise ValueError(
+            f"{path}: hawor_frame_index must be scalar, got shape {value.shape}"
+        )
+    scalar = value.reshape(-1)[0]
+    if np.issubdtype(value.dtype, np.bool_):
+        raise ValueError(f"{path}: hawor_frame_index must be an integer, got bool")
+    try:
+        frame_index = int(scalar)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"{path}: invalid hawor_frame_index {scalar!r}"
+        ) from exc
+    try:
+        is_exact = bool(np.isfinite(scalar)) and scalar == frame_index
+    except TypeError:
+        is_exact = False
+    if not is_exact or frame_index < 0:
+        raise ValueError(
+            f"{path}: invalid hawor_frame_index {scalar!r}; expected a "
+            "non-negative integer"
+        )
+    return frame_index
+
+
+def _build_contact_file_index(contact_dir):
+    """Index contact files once, preferring their authoritative metadata.
+
+    Returns ``(metadata_index, legacy_filename_index)``.  Only files without
+    ``hawor_frame_index`` enter the legacy index, so a modern metadata entry
+    always wins over a coincidentally similar old filename.
+    """
+    metadata_index = {}
+    legacy_index = {}
+    paths = sorted(
+        entry.path
+        for entry in os.scandir(contact_dir)
+        if entry.is_file() and entry.name.lower().endswith(".npz")
+    )
+    for path in paths:
+        with np.load(path, allow_pickle=False) as contact:
+            if "hawor_frame_index" in contact.files:
+                frame_index = _contact_metadata_frame_index(
+                    contact["hawor_frame_index"], path
+                )
+                previous = metadata_index.get(frame_index)
+                if previous is not None:
+                    raise ValueError(
+                        "duplicate hawor_frame_index "
+                        f"{frame_index} in contact files: {previous} and {path}"
+                    )
+                metadata_index[frame_index] = path
+                continue
+
+        frame_number = _legacy_contact_frame_number(path)
+        if frame_number is None:
+            continue
+        previous = legacy_index.get(frame_number)
+        if previous is not None:
+            raise ValueError(
+                "ambiguous legacy contact frame number "
+                f"{frame_number} in files: {previous} and {path}"
+            )
+        legacy_index[frame_number] = path
+
+    return metadata_index, legacy_index
+
+
+def _resolve_contact_file(contact_index, hawor_frame_index, source_frame_index):
+    """Resolve one frame, with metadata first and legacy names second."""
+    metadata_index, legacy_index = contact_index
+    path = metadata_index.get(int(hawor_frame_index))
+    if path is not None:
+        return path
+    path = legacy_index.get(int(source_frame_index))
+    if path is not None:
+        return path
+    # Some old, already-sliced exports restarted their filenames at zero even
+    # when retarget_input.npz retained a non-zero source ``start_idx``.
+    return legacy_index.get(int(hawor_frame_index))
 
 def _tip_link_names(hand):
     """Ordered to match _MANO_JOINT_TO_FINGER values: [thumb, index, mid, ring, pinky]."""
@@ -202,7 +307,8 @@ def _load_masks():
 def retarget_one_hand(data, hand, out_dir, *, embodiment=DEFAULT_EMBODIMENT,
                        contact_dir=None, alpha=0.001,
                        normal_thr=0.3, smooth=False,
-                       smooth_win=15, smooth_wrist_win=21, smooth_med_win=5):
+                       smooth_win=15, smooth_wrist_win=21, smooth_med_win=5,
+                       contact_index=None):
     hand_idx = 0 if hand == "left" else 1
     joints_world = data[f"joints_{hand}"].astype(np.float32)
     root_orient = data["mano_global_orient"][hand_idx].astype(np.float32)
@@ -218,6 +324,8 @@ def retarget_one_hand(data, hand, out_dir, *, embodiment=DEFAULT_EMBODIMENT,
 
     use_contact = contact_dir is not None
     if use_contact:
+        if contact_index is None:
+            contact_index = _build_contact_file_index(contact_dir)
         import trimesh
         verts_world = data[f"verts_{hand}"].astype(np.float32)
         rel_v = verts_world - joints_world[:, 0:1, :]
@@ -226,9 +334,7 @@ def retarget_one_hand(data, hand, out_dir, *, embodiment=DEFAULT_EMBODIMENT,
         mano_faces = np.load(os.path.join(ASSETS_DIR, f"mano_faces_{hand}.npy")).astype(np.int32)
 
     cfg_path = config_path(embodiment, hand)
-    # Global setting, and the root differs per embodiment (xhand's URDF lives in
-    # this repo, inspire's in the dex-retargeting submodule) — so it has to be
-    # set per hand rather than once in main().
+    # Keep the retargeter's global URDF root pinned to the local XHand assets.
     RetargetingConfig.set_default_urdf_dir(urdf_root(embodiment))
     retargeting = RetargetingConfig.load_from_file(cfg_path).build()
     joint_names = retargeting.joint_names
@@ -259,36 +365,41 @@ def retarget_one_hand(data, hand, out_dir, *, embodiment=DEFAULT_EMBODIMENT,
 
         # Stage 2: normal-aware Chamfer refinement
         if use_contact:
-            cpath = os.path.join(
-                contact_dir, f"rgb_frame{start_idx_data + t:05d}.npz"
+            cpath = _resolve_contact_file(
+                contact_index,
+                hawor_frame_index=t,
+                source_frame_index=start_idx_data + t,
             )
             human_by_finger = {}
-            if os.path.exists(cpath):
-                cd = np.load(cpath)
-                mk = f"{hand}_contact_mask"
-                if mk in cd.files:
-                    cm = cd[mk].astype(bool) & masks["palmar"] & masks["tip"]
-                    if cm.any():
-                        # MANO mesh vertex normals (in xhand wrist frame).
-                        mesh_t = trimesh.Trimesh(
-                            verts_mp[t].astype(np.float64), mano_faces,
-                            process=False,
+            if cpath is not None:
+                with np.load(cpath, allow_pickle=False) as cd:
+                    mk = f"{hand}_contact_mask"
+                    cm = (
+                        cd[mk].astype(bool) & masks["palmar"] & masks["tip"]
+                        if mk in cd.files
+                        else np.zeros_like(masks["palmar"])
+                    )
+                if cm.any():
+                    # MANO mesh vertex normals (in xhand wrist frame).
+                    mesh_t = trimesh.Trimesh(
+                        verts_mp[t].astype(np.float64), mano_faces,
+                        process=False,
+                    )
+                    mano_normals = np.asarray(mesh_t.vertex_normals)
+                    for v_idx in np.where(cm)[0]:
+                        f_idx = _MANO_JOINT_TO_FINGER.get(int(masks["part"][v_idx]))
+                        if f_idx is None:
+                            continue
+                        slot = human_by_finger.setdefault(
+                            f_idx, {"verts": [], "normals": []}
                         )
-                        mano_normals = np.asarray(mesh_t.vertex_normals)
-                        for v_idx in np.where(cm)[0]:
-                            f_idx = _MANO_JOINT_TO_FINGER.get(int(masks["part"][v_idx]))
-                            if f_idx is None:
-                                continue
-                            slot = human_by_finger.setdefault(
-                                f_idx, {"verts": [], "normals": []}
-                            )
-                            slot["verts"].append(verts_mp[t, v_idx])
-                            slot["normals"].append(mano_normals[v_idx])
-                        human_by_finger = {
-                            f: {"verts": np.asarray(s["verts"]),
-                                "normals": np.asarray(s["normals"])}
-                            for f, s in human_by_finger.items()
-                        }
+                        slot["verts"].append(verts_mp[t, v_idx])
+                        slot["normals"].append(mano_normals[v_idx])
+                    human_by_finger = {
+                        f: {"verts": np.asarray(s["verts"]),
+                            "normals": np.asarray(s["normals"])}
+                        for f, s in human_by_finger.items()
+                    }
             if human_by_finger:
                 qpos = refine_fn(qpos, human_by_finger,
                                   alpha=alpha, normal_thr=normal_thr)
@@ -411,11 +522,18 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     contact_dir = None
+    contact_index = None
     if args.contact:
         contact_dir = args.contact_dir or os.path.join(os.path.dirname(npz_dir), "contact")
         if not os.path.isdir(contact_dir):
             raise FileNotFoundError(f"--contact set but {contact_dir} not found")
         print(f"contact_dir: {contact_dir}")
+        contact_index = _build_contact_file_index(contact_dir)
+        print(
+            "contact index: "
+            f"metadata={len(contact_index[0])} "
+            f"legacy={len(contact_index[1])}"
+        )
 
     embodiment_of = {"right": args.right_embodiment, "left": args.left_embodiment}
     hands = ["right", "left"] if args.hand == "both" else [args.hand]
@@ -424,6 +542,7 @@ def main():
         retarget_one_hand(
             data, h, out_dir, embodiment=embodiment_of[h],
             contact_dir=contact_dir, alpha=args.alpha,
+            contact_index=contact_index,
             smooth=args.smooth,
             smooth_win=args.smooth_win,
             smooth_wrist_win=args.smooth_wrist_win,

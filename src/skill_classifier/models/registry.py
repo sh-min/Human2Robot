@@ -29,3 +29,5 @@ from skill_classifier.models.transformer import *  # noqa
 from skill_classifier.models.tcn import *  # noqa
 from skill_classifier.models.tcn_supcon import *  # noqa
 from skill_classifier.models.spatial_attention_mlp import *  # noqa
+from skill_classifier.models.object_mask_attention_mlp import *  # noqa
+from skill_classifier.models.object_text_prototype_mlp import *  # noqa

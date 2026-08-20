@@ -4,7 +4,7 @@ The linear pipeline (run_layered.py) is a chain. But its stages form a DAG with
 three independent branches that join only at the final composite:
 
     1 prepare → 2 inject ─┬─ PIPE1 bg:    3 SAM2-hand → 4 E2FGVI
-                          ├─ PIPE2 robot:  5 pyrender xhand RGBD
+                          ├─ PIPE2 robot:  5 RB5-850e + XHand RGBD
                           └─ PIPE3 object:   6 DA2 depth → 7 align
                                              → 8a SAM2-object → 8b Diffusion-VAS amodal
                                                   ▲ needs masks_arm.npy from PIPE1.3
@@ -32,6 +32,7 @@ Usage:
         --demo_name cam0 --gpus 0,1,5,6,7
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -43,7 +44,7 @@ HERE = Path(__file__).parent
 
 # Stage scripts that belong to this pipeline (for GPU-memory attribution).
 _OUR_SCRIPTS = ("segment_arms.py", "inpaint_hands.py",
-                "render_xhand_overlay_depth.py", "estimate_depth.py",
+                "render_rb5_isaac_overlay.py", "estimate_depth.py",
                 "align_depth.py", "segment_object.py", "amodal_object.py",
                 "composite_layered.py")
 
@@ -157,15 +158,34 @@ def pipe_bg(pd, py, gpu, hand_ready):
 
 def pipe_robot(pd, py, gpu, hawor_npz, right_pkl, left_pkl, hand):
     out = pd / "overlay_processor" / "robot_mask.npy"
-    if out.exists():
-        print("[skip] PIPE2.5 robot_mask.npy exists", flush=True)
+    manifest_path = pd / "overlay_processor" / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        manifest = {}
+    locked = (
+        str(manifest.get("arm", "")).startswith("rb5_850e")
+        and manifest.get("hand") == "xhand"
+        and manifest.get("arm_mode") == "full_locked"
+    )
+    if out.exists() and locked:
+        print("[skip] verified RB5-850e + XHand cache", flush=True)
         return
-    _run("5_robot_render",
-         [py, str(HERE / "render_xhand_overlay_depth.py"),
-          "--processed_demo", str(pd), "--hawor_npz", str(hawor_npz),
-          "--right_pkl", str(right_pkl), "--left_pkl", str(left_pkl),
-          "--hand", hand],
-         gpu=gpu, extra_env={"PYOPENGL_PLATFORM": "egl"})
+    if out.exists():
+        print("[stale] non-RB5/XHand robot cache; rerendering", flush=True)
+    _run(
+        "5_robot_render",
+        [
+            "bash",
+            str(HERE / "isaac_stage5.sh"),
+            str(pd),
+            str(hawor_npz),
+            str(right_pkl),
+            str(left_pkl),
+            hand,
+        ],
+        gpu=gpu,
+    )
 
 
 def pipe_object(pd, py, gpus, dvas_env, hand_ready, args):

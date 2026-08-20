@@ -1,0 +1,40 @@
+{
+  "video": "A001_08051547_C056.mov",
+  "completions": [
+    {
+      "name": "navy_mug",
+      "reference_frame": 0,
+      "start_frame": 0,
+      "end_frame": 45,
+      "solid_mask": false
+    },
+    {
+      "name": "red_snack_box",
+      "reference_frame": 96,
+      "start_frame": 96,
+      "end_frame": 126,
+      "solid_mask": false
+    },
+    {
+      "name": "green_snack_box",
+      "reference_frame": 175,
+      "start_frame": 175,
+      "end_frame": 203,
+      "solid_mask": false
+    },
+    {
+      "name": "mint_container",
+      "reference_frame": 250,
+      "start_frame": 250,
+      "end_frame": 272,
+      "solid_mask": false
+    },
+    {
+      "name": "sponge",
+      "reference_frame": 120,
+      "start_frame": 315,
+      "end_frame": 340,
+      "solid_mask": true
+    }
+  ]
+}

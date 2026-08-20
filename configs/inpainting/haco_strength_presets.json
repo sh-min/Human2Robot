@@ -1,0 +1,30 @@
+{
+  "balanced": {
+    "contact_threshold": 0.5,
+    "prob_sigma_t": 2.0,
+    "patch_px": 14,
+    "close_px": 9,
+    "lead_frames": 30,
+    "lead_overlap_px": 120,
+    "prediction_reach_ratio": 0.45,
+    "min_observed_fraction": 0.12,
+    "split_influence_px": 90,
+    "split_surface_bias_m": 0.0,
+    "split_spatial_sigma": 9
+  },
+  "strong": {
+    "contact_threshold": 0.35,
+    "prob_sigma_t": 3.0,
+    "patch_px": 20,
+    "close_px": 12,
+    "lead_frames": 36,
+    "lead_overlap_px": 60,
+    "prediction_reach_ratio": 0.8,
+    "min_observed_fraction": 0.08,
+    "split_contact_threshold": 0.5,
+    "split_prob_sigma_t": 2.5,
+    "split_influence_px": 130,
+    "split_surface_bias_m": -0.01,
+    "split_spatial_sigma": 11
+  }
+}

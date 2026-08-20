@@ -15,7 +15,7 @@ raw rgb + HaWoR(retarget_input.npz) + xhand qpos
    2.  inject_hawor_data                  HaWoR 2D/3D kpts → bbox + hand_data + video_rgb_imgs.mkv
    3.  segment_arms (SAM2)                segmentation_processor/masks_arm.npy   (M_hand)
    4.  inpaint_hands --mode legacy        inpaint_processor/video_human_inpaint.mkv   (hand-removed bg)
-   5.  render_xhand_overlay_depth         overlay_processor/robot_{rgb,depth,mask}.npy
+   5.  isaac_stage5 (RB5-850e + XHand)    overlay_processor/robot_{rgb,depth,mask}.npy
    6.  estimate_depth (Depth Anything V2) depth_processor/depth_raw.npy   (disparity)
    7.  align_depth                        depth_processor/depth_aligned.npy   (metric m)
    8.  run_cube_segmentation              cube amodal segmentation (SAM2 + Depth + VAS):
@@ -181,9 +181,7 @@ python prepare_demo.py            --input <...> --data_root <...> --processed_ro
 python inject_hawor_data.py       --processed_demo <pd> --hawor_npz <...>
 python segment_arms.py            --processed_demo <pd>
 python inpaint_hands.py           --processed_demo <pd> --mode legacy
-PYOPENGL_PLATFORM=egl python -u render_xhand_overlay_depth.py \
-                                  --processed_demo <pd> --hawor_npz <...> \
-                                  --right_pkl <...> --left_pkl <...>
+bash isaac_stage5.sh <pd> <hawor_npz> <right_pkl> <left_pkl> both
 python estimate_depth.py          --processed_demo <pd> --encoder vitl
 python align_depth.py             --processed_demo <pd>
 # cube segmentation (SAM2 + Depth + VAS, 한 번에)
@@ -220,8 +218,7 @@ segmentation_processor/masks_arm.npy                    # smoothing ON
 segmentation_processor/masks_arm_no_smooth.npy          # smoothing OFF 보존본
 inpaint_processor/video_human_inpaint.mkv               # smoothing ON
 inpaint_processor/video_human_inpaint_no_smooth.mkv     # smoothing OFF 보존본
-video_overlay_rby1_xhand.mp4                            # smoothing ON 최종
-video_overlay_rby1_xhand_no_smooth.mp4                  # smoothing OFF 최종
+overlay_processor_layered/video_overlay.mp4             # smoothing ON 최종
 sam2_smoothing_comparison.mp4                           # 8-panel A/B 영상
 pipeline_required_components.mp4                       # HaWoR/HaCo 포함 ON 파이프라인
 ```
@@ -317,16 +314,11 @@ acc = α_front  · robot_rgb + (1-α_front)  · acc       # front-MCP layer
 | 5 (idx-MCP) | 0.279 | 2.29 | **기본값** — 균형 |
 | 9 (mid-MCP) | 0.305 | 4.24 | cube가 robot 사이만 보임 |
 
-## 로봇 팔 base 위치 기준 (GitHub published overlay)
+## 로봇 모델과 base 고정
 
-Stage 5의 기본 렌더러는 `pyrender`이다. XHand와 RBY1 하박
-(arm3–arm6)을 HaWoR 손목에 기하학적으로 붙이며, 화면 좌표로 별도
-이동하지 않는다. 공개 결과와 동일한 배치 상수는
-`EE_OFFSET_Z=0.1261`, `_ARM3_OFFSET=[0.031, 0, 0.256]`이다.
-
-`isaac`은 RB5-850 base를 `rb5_arm_ik.auto_fit_base()`로 데모별 탐색하므로
-위치가 달라질 수 있다. RB5 배치 실험에서만 `--render_backend isaac`을
-명시하고, 일반 파이프라인은 `pyrender`로 통일한다.
+Stage 5는 RB5-850e 팔과 XHand만 사용한다. `rb5_build_overlay_input.py`의
+단일 화면 밖 base pose를 모든 데모에 공통 적용하며, 실행 시 다른
+팔·손 모델을 선택하는 옵션은 없다.
 
 입력 PKL은 retargeting이 생성한 `qpos_xhand_*_smooth.pkl`을 사용하고,
 기본 렌더 인자 `--smooth_win 15`, `--smooth_wrist_win 21`,
@@ -372,10 +364,6 @@ python src/inpainting/recover_source_after_composite.py \
   --visible_object_mask <processed_demo>/interaction_objects/object_mask.npy \
   --output <processed_demo>/interaction_objects/video_overlay_source_recovered.mkv
 ```
-
-`render_xhand_overlay_moderngl.py`는 pyrender EGL 초기화가 실패하는 환경을 위한
-ModernGL 대체 렌더러입니다. 긴 720p 영상도 RGB·depth·mask를 memmap으로 바로
-저장하므로 전체 결과를 메모리에 올리지 않습니다.
 
 ## 알려진 함정
 
@@ -433,7 +421,9 @@ src/inpainting/
 ├── inject_hawor_data.py               # 2.  HaWoR → bbox + hand_data + video_rgb_imgs.mkv
 ├── segment_arms.py                    # 3.  SAM2 → M_hand
 ├── inpaint_hands.py                   # 4.  E2FGVI legacy → inpainted bg
-├── render_xhand_overlay_depth.py      # 5.  pyrender → robot RGBD
+├── isaac_stage5.sh                   # 5.  RB5-850e + XHand RGBD
+├── render_rb5_isaac_overlay.py       #     Isaac renderer
+├── render_rb5_pyrender_overlay.py    #     deterministic RB5/XHand renderer
 ├── estimate_depth.py                  # 6.  Depth Anything V2 → disparity
 ├── align_depth.py                     # 7.  HaWoR anchors → metric depth
 ├── run_cube_segmentation.py           # 8.  cube segmentation orchestrator (SAM2 + Depth + VAS)
@@ -445,11 +435,10 @@ src/inpainting/
 │   # standalone utilities
 ├── content_completion.py              #     Diffusion-VAS content completion (not in pipeline)
 ├── regularize_and_cut_cube.py         #     legacy cube mask cleanup (not in pipeline)
-├── render_rby1_xhand_full_arm.py      #     local full 7-DOF RBY1 arm + XHand overlay
 ├── visualize_pipeline_grid.py         #     raw/mask/background/robot/final comparison
 ├── make_video_comparison_grid.py      #     synchronized labelled 4x2 comparison (2560x800)
 │
-├── render_xhand_overlay.py            #     shared render helpers: embodiment resolve + URDF/MJCF parse + FK (imported by render_xhand_overlay_depth)
+├── render_xhand_overlay.py            #     XHand-only URDF/FK helpers
 │
 │   # legacy (deprecated but kept)
 ├── crop_cube_layer.py                 #     legacy depth-only cube mask

@@ -1,11 +1,11 @@
 """RB5-850e 6-DOF arm IK for the robot-overlay.
 
-There is no real RB5 in the source video — the arm is synthesised. So we (a)
-place a synthetic base relative to the camera, auto-fit to the tracked wrist
-trajectory (overridable), and (b) solve per-frame joint angles so the tool
-flange (`tcp`) reaches the tracked wrist. Pinocchio damped-least-squares IK,
-warm-started across frames. Unreachable targets are clamped to the reachable
-sphere so the arm stops extending instead of jittering.
+There is no real RB5 in the source video — the arm is synthesised at the single
+canonical camera-relative base pose defined by ``rb5_build_overlay_input``.
+This module only solves per-frame joint angles so the tool flange reaches the
+tracked wrist. Pinocchio damped-least-squares IK is warm-started across frames.
+Unreachable targets are clamped to the reachable sphere so the arm stops
+extending instead of jittering.
 
 Frames: wrist poses are in the OpenCV camera frame (x-right, y-down, z-forward),
 metres. Scene "up" is -y_cam, so the arm base mounts with its Z axis along -y.
@@ -25,6 +25,8 @@ from scipy.signal import savgol_filter
 RB5_URDF = str(Path(__file__).resolve().parents[2] / "third_party" / "rb5_850e" / "rb5_850e.urdf")
 EE_FRAME = "link6"
 JOINT_NAMES = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
+DEFAULT_POSITION_MARGIN_RAD = 0.02
+DEFAULT_VELOCITY_SCALE = 0.90
 
 
 def load_model():
@@ -46,139 +48,197 @@ def reach_radius(model, data, fid) -> float:
     return best
 
 
-def _R_cam_base(mount: str = "floor") -> np.ndarray:
-    """Base-Z (the mount/joint-0 axis). floor: points scene-up (-y_cam), arm
-    rises from below. ceiling: points down (+y_cam), arm hangs from above."""
-    x = np.array([1.0, 0.0, 0.0])
-    z = np.array([0.0, -1.0, 0.0]) if mount == "floor" else np.array([0.0, 1.0, 0.0])
-    y = np.cross(z, x)
-    return np.column_stack([x, y, z])
+def safe_position_bounds(model, margin=DEFAULT_POSITION_MARGIN_RAD):
+    """Return finite joint bounds inset from the URDF hard stops."""
+    lo = np.asarray(model.lowerPositionLimit, dtype=np.float64).copy()
+    hi = np.asarray(model.upperPositionLimit, dtype=np.float64).copy()
+    finite = np.isfinite(lo) & np.isfinite(hi)
+    if margin < 0:
+        raise ValueError("joint position margin must be non-negative")
+    lo[finite] += margin
+    hi[finite] -= margin
+    if np.any(lo > hi):
+        raise ValueError("joint position margin collapses a URDF joint range")
+    return lo, hi
 
 
-def auto_fit_base(wrist_pos_cam: np.ndarray, model, data, fid,
-                  frac: float = 0.7, override=None, shift=(0.0, 0.0, 0.0),
-                  mount: str = "floor") -> pin.SE3:
-    """T_cam_base placing the base `frac`*reach from the wrist centroid so the
-    whole trajectory is reachable. mount="floor" puts the base below (arm rises
-    from the bottom); mount="ceiling" puts it above (arm hangs from the top).
-    `override` (4x4) wins; `shift` (x,y,z, CV cam frame) nudges the base.
+def rate_limit_trajectory(q, velocity_limit, fps, *, velocity_scale=1.0,
+                          lower=None, upper=None):
+    """Project a trajectory onto per-frame position and velocity bounds.
+
+    The causal pass is intentional: frame zero is the commanded starting pose,
+    and every later command must be reachable from the command immediately
+    before it. This is a command-safety constraint, not merely a diagnostic.
     """
-    if override is not None:
-        return pin.SE3(np.asarray(override)[:3, :3], np.asarray(override)[:3, 3])
-    R = _R_cam_base(mount)
-    c = np.mean(wrist_pos_cam, axis=0)
-    reach = reach_radius(model, data, fid)
-    # offset from centroid to base: +y (down) for floor => base below wrists;
-    # -y (up) for ceiling => base above wrists. Plus a little +z (further away).
-    off = np.array([0.0, 1.0, 0.0]) if mount == "floor" else np.array([0.0, -1.0, 0.0])
-    d = max(0.15, frac * reach)
-    base_pos = c + off * d + np.array([0.0, 0.0, 0.10]) + np.asarray(shift, float)
-    return pin.SE3(R, base_pos)
+    out = np.asarray(q, dtype=np.float64).copy()
+    velocity_limit = np.broadcast_to(
+        np.asarray(velocity_limit, dtype=np.float64), out.shape[1:]
+    )
+    if fps <= 0 or not np.isfinite(fps):
+        raise ValueError("fps must be finite and positive")
+    if not 0 < velocity_scale <= 1:
+        raise ValueError("velocity_scale must be in (0, 1]")
+    if np.any(~np.isfinite(velocity_limit)) or np.any(velocity_limit <= 0):
+        raise ValueError("URDF velocity limits must be finite and positive")
+    if lower is not None or upper is not None:
+        if lower is None or upper is None:
+            raise ValueError("both lower and upper position bounds are required")
+        out = np.clip(out, lower, upper)
+    max_step = velocity_limit * velocity_scale / float(fps)
+    for frame in range(1, len(out)):
+        out[frame] = np.clip(
+            out[frame], out[frame - 1] - max_step, out[frame - 1] + max_step
+        )
+        if lower is not None:
+            out[frame] = np.clip(out[frame], lower, upper)
+    return out
 
 
-def optimize_base(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
-                  w_ori=1.0, n_sub=120, mount="floor", verbose=True):
-    """Search base placements and return the T_cam_base that reaches the wrist
-    trajectory with the least position error + jitter (orientation-weighted by
-    w_ori). Sweeps a lateral(x)/depth(z)/distance(frac) grid on a subsampled
-    trajectory. Returns (T_cam_base, info dict)."""
-    vi = np.flatnonzero(valid)
-    sub = vi[:: max(1, len(vi) // n_sub)]
-    sub_fl = flange_poses[sub]
-    sub_valid = np.ones(len(sub), bool)
-    reach = reach_radius(model, data, fid) * 0.99
-    best = None
-    for frac in (0.5, 0.6, 0.7):
-        for dx in np.linspace(-0.10, 0.30, 5):
-            for dz in np.linspace(-0.15, 0.25, 5):
-                Tcb = auto_fit_base(wrist_pos_cam[valid], model, data, fid,
-                                    frac=frac, shift=(dx, 0.0, dz), mount=mount)
-                q, perr, rok = solve_sequence(sub_fl, sub_valid, Tcb, model, data, fid,
-                                              w_ori=w_ori, smooth_win=0)
-                if rok.mean() < 0.99:
-                    continue
-                p90 = float(np.nanpercentile(perr, 90))
-                jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
-                cost = p90 * 1000.0 + 25.0 * jit    # mm + jitter%
-                if best is None or cost < best["cost"]:
-                    best = dict(cost=cost, Tcb=Tcb, frac=frac, dx=float(dx), dz=float(dz),
-                                p90_mm=p90 * 1000, jitter=jit)
-    if best is None:   # nothing fully reachable -> plain auto-fit
-        return auto_fit_base(wrist_pos_cam[valid], model, data, fid, mount=mount), {"note": "no reachable base found"}
-    if verbose:
-        print(f"[opt-base] frac={best['frac']} dx={best['dx']:.3f} dz={best['dz']:.3f} "
-              f"-> p90-err {best['p90_mm']:.1f}mm jitter {best['jitter']*100:.1f}% "
-              f"base(cam)={best['Tcb'].translation.round(3)}")
-    return best["Tcb"], best
+def assert_trajectory_limits(q, model, fps, *,
+                             position_margin=DEFAULT_POSITION_MARGIN_RAD,
+                             velocity_scale=DEFAULT_VELOCITY_SCALE,
+                             atol=1e-7):
+    """Fail closed if a trajectory violates the enforced URDF contract."""
+    values = np.asarray(q, dtype=np.float64)
+    lo, hi = safe_position_bounds(model, position_margin)
+    if not np.isfinite(values).all():
+        raise ValueError("trajectory contains non-finite joint commands")
+    if np.any(values < lo - atol) or np.any(values > hi + atol):
+        raise ValueError("trajectory violates safe URDF position bounds")
+    if len(values) > 1:
+        velocity = np.abs(np.diff(values, axis=0)) * float(fps)
+        allowed = np.asarray(model.velocityLimit) * velocity_scale
+        if np.any(velocity > allowed + atol):
+            raise ValueError("trajectory violates safe URDF velocity bounds")
 
 
-# which image corner -> (x-sign, y-sign, base mount). Bottom corners rise from a
-# floor base; top corners hang from a ceiling base.
-_CORNER = {
-    "bottomright": (+1, +1, "floor"),
-    "bottomleft":  (-1, +1, "floor"),
-    "topright":    (+1, -1, "ceiling"),
-    "topleft":     (-1, -1, "ceiling"),
-}
+def assert_no_self_collision(model, data, urdf_path, q, *, label="robot"):
+    """Check all non-neighbouring collision links for every command frame."""
+    geometry = build_self_collision_geometry(model, urdf_path)
+    geometry_data = pin.GeometryData(geometry)
+    for frame, command in enumerate(np.asarray(q, dtype=np.float64)):
+        pairs = self_collision_pairs(
+            model, data, geometry, geometry_data, command
+        )
+        if pairs:
+            raise ValueError(
+                f"{label} self-collision at frame {frame}: {', '.join(pairs[:5])}"
+            )
+    return len(geometry.collisionPairs)
 
 
-def place_corner(flange_poses, wrist_pos_cam, valid, model, data, fid, *,
-                 corner="bottomright", focal, img_w=1920, img_h=1080,
-                 w_ori=1.0, n_sub=100, verbose=True):
-    """Place the base so it PROJECTS into the given image `corner`, generalised from the
-    wrist trajectory. Searches an x/y/deeper-z grid biased toward that corner, keeps
-    placements that (a) project into the corner box and (b) reach the whole trajectory,
-    and returns the deepest reachable (slimmer arm) with the lowest reach-error+jitter.
-    Mount is floor for bottom corners (arm rises), ceiling for top corners (arm hangs).
-    Falls back to a plain auto-fit if nothing in the corner is reachable."""
-    if corner not in _CORNER:
-        raise ValueError(f"corner must be one of {list(_CORNER)}")
-    sx, sy, mount = _CORNER[corner]
-    vi = np.flatnonzero(valid)
-    sub = vi[:: max(1, len(vi) // n_sub)]
-    sub_fl = flange_poses[sub]; sub_valid = np.ones(len(sub), bool)
-    R = _R_cam_base(mount)
-    c = np.mean(wrist_pos_cam[valid], axis=0)
-    u_lo, u_hi = (0.75 * img_w, 0.98 * img_w) if sx > 0 else (0.02 * img_w, 0.25 * img_w)
-    v_lo, v_hi = (0.78 * img_h, 1.00 * img_h) if sy > 0 else (0.02 * img_h, 0.30 * img_h)
-    best = None
-    for adx in np.linspace(0.2, 0.7, 6):
-        for ady in np.linspace(0.2, 0.5, 4):
-            for dz in np.linspace(0.3, 1.1, 6):  # deeper, so the arm can span
-                bp = c + np.array([sx * adx, sy * ady, dz])
-                if bp[2] <= 1e-3:
-                    continue
-                u, v = focal * bp[0] / bp[2] + img_w / 2, focal * bp[1] / bp[2] + img_h / 2
-                if not (u_lo < u < u_hi and v_lo < v < v_hi):
-                    continue
-                Tcb = pin.SE3(R, bp)
-                q, perr, rok = solve_sequence(sub_fl, sub_valid, Tcb, model, data, fid,
-                                              w_ori=w_ori, smooth_win=0)
-                if rok.mean() < 0.99:
-                    continue
-                p90 = float(np.nanpercentile(perr, 90))
-                jit = float((np.abs(np.diff(q, axis=0)).sum(1) > 0.3).mean())
-                # reward depth: a deeper base reads as a slimmer arm from farther back.
-                cost = p90 * 1000.0 + 25.0 * jit - 15.0 * float(bp[2])
-                if best is None or cost < best[0]:
-                    best = (cost, Tcb, bp, (u, v), p90 * 1000, jit)
-    if best is None:
-        if verbose:
-            print(f"[place-{corner}] no reachable base in corner; auto-fit fallback")
-        return auto_fit_base(wrist_pos_cam[valid], model, data, fid, mount=mount)
-    if verbose:
-        print(f"[place-{corner}] base(cam)={best[2].round(3)} px=({best[3][0]:.0f},{best[3][1]:.0f}) "
-              f"p90-err {best[4]:.1f}mm jitter {best[5] * 100:.1f}%")
-    return best[1]
+def build_self_collision_geometry(model, urdf_path):
+    """Build collision pairs while excluding meshes that meet by design."""
+    geometry = pin.buildGeomFromUrdf(
+        model,
+        str(urdf_path),
+        pin.GeometryType.COLLISION,
+        package_dirs=[str(Path(urdf_path).resolve().parent)],
+    )
+    for first in range(len(geometry.geometryObjects)):
+        joint_a = geometry.geometryObjects[first].parentJoint
+        for second in range(first + 1, len(geometry.geometryObjects)):
+            joint_b = geometry.geometryObjects[second].parentJoint
+            # Same-link and parent-child meshes meet by construction.
+            neighbours = (
+                joint_a == joint_b
+                or model.parents[joint_a] == joint_b
+                or model.parents[joint_b] == joint_a
+            )
+            if not neighbours:
+                geometry.addCollisionPair(pin.CollisionPair(first, second))
+    return geometry
+
+
+def self_collision_pairs(model, data, geometry, geometry_data, command):
+    pin.updateGeometryPlacements(
+        model, data, geometry, geometry_data,
+        np.asarray(command, dtype=np.float64),
+    )
+    pin.computeCollisions(geometry, geometry_data, False)
+    pairs = []
+    for pair_index, result in enumerate(geometry_data.collisionResults):
+        if not result.isCollision():
+            continue
+        pair = geometry.collisionPairs[pair_index]
+        pairs.append(
+            f"{geometry.geometryObjects[pair.first].name}<->"
+            f"{geometry.geometryObjects[pair.second].name}"
+        )
+    return pairs
+
+
+def project_collision_free_trajectory(model, data, urdf_path, q, *, samples=80,
+                                      max_step=None):
+    """Minimally retract colliding commands toward the last safe command.
+
+    The input must already satisfy position and velocity limits. A convex blend
+    with the preceding safe command preserves both constraints. Frame zero uses
+    the neutral/open hand as its safe reference. If a collision-free point
+    cannot be found along that segment, generation fails closed.
+    """
+    if samples < 2:
+        raise ValueError("collision projection needs at least two samples")
+    out = np.asarray(q, dtype=np.float64).copy()
+    geometry = build_self_collision_geometry(model, urdf_path)
+    geometry_data = pin.GeometryData(geometry)
+    neutral = np.clip(
+        pin.neutral(model), model.lowerPositionLimit, model.upperPositionLimit
+    )
+    if self_collision_pairs(model, data, geometry, geometry_data, neutral):
+        raise ValueError("neutral robot configuration is self-colliding")
+    adjusted = 0
+    for frame in range(len(out)):
+        desired = out[frame].copy()
+        if frame > 0 and max_step is not None:
+            desired = np.clip(
+                desired,
+                out[frame - 1] - np.asarray(max_step),
+                out[frame - 1] + np.asarray(max_step),
+            )
+            desired = np.clip(
+                desired, model.lowerPositionLimit, model.upperPositionLimit
+            )
+            if not np.allclose(desired, out[frame], atol=1e-12, rtol=0):
+                adjusted += 1
+            out[frame] = desired
+        if not self_collision_pairs(
+            model, data, geometry, geometry_data, desired
+        ):
+            continue
+        reference = neutral if frame == 0 else out[frame - 1]
+        if self_collision_pairs(
+            model, data, geometry, geometry_data, reference
+        ):
+            raise RuntimeError("collision projection reference is not safe")
+        safe = None
+        # Search from the desired command toward the safe reference, retaining
+        # the greatest possible fraction of the retargeted finger pose.
+        for alpha in np.linspace(1.0, 0.0, samples + 1)[1:]:
+            candidate = reference + alpha * (desired - reference)
+            if not self_collision_pairs(
+                model, data, geometry, geometry_data, candidate
+            ):
+                safe = candidate
+                break
+        if safe is None:
+            raise RuntimeError(
+                f"could not project self-collision out of frame {frame}"
+            )
+        out[frame] = safe
+        adjusted += int(np.allclose(desired, q[frame], atol=1e-12, rtol=0))
+    return out, adjusted, len(geometry.collisionPairs)
 
 
 def solve_ik(model, data, fid, q0, target: pin.SE3, *, w_ori=0.0,
-             iters=120, damping=5e-2, step=0.4, tol_p=1e-3, tol_o=3e-2):
+             iters=120, damping=5e-2, step=0.4, tol_p=1e-3, tol_o=3e-2,
+             lower=None, upper=None):
     """DLS IK with joint-limit clamping. w_ori weights orientation error
     (default 0 = position-only, which a 6-DOF arm can track smoothly; a free
     human wrist's full orientation cannot be followed without singularity jitter).
     """
-    lo, hi = model.lowerPositionLimit, model.upperPositionLimit
+    lo = model.lowerPositionLimit if lower is None else np.asarray(lower)
+    hi = model.upperPositionLimit if upper is None else np.asarray(upper)
     W = np.diag([1., 1., 1., w_ori, w_ori, w_ori])
     q = q0.copy(); err = np.zeros(6)
     for _ in range(iters):
@@ -193,7 +253,9 @@ def solve_ik(model, data, fid, q0, target: pin.SE3, *, w_ori=0.0,
 
 
 def solve_sequence(wrist_poses_cam, valid, T_cam_base, model, data, fid, *,
-                   w_ori=0.0, smooth_win=11):
+                   w_ori=0.0, smooth_win=11, initial_q=None, fps=30.0,
+                   position_margin=DEFAULT_POSITION_MARGIN_RAD,
+                   velocity_scale=DEFAULT_VELOCITY_SCALE):
     """wrist_poses_cam: (T,4,4) flange target in cam frame. Position-only IK by
     default + savgol smoothing of the joint trajectory. Unreachable targets are
     clamped onto the reach sphere so the arm stops extending (no jitter).
@@ -203,7 +265,18 @@ def solve_sequence(wrist_poses_cam, valid, T_cam_base, model, data, fid, *,
     reach = reach_radius(model, data, fid) * 0.99
     N = len(wrist_poses_cam)
     q = np.zeros((N, model.nq)); perr = np.full(N, np.nan); reachable = np.zeros(N, bool)
-    q_prev = pin.neutral(model)
+    lo, hi = safe_position_bounds(model, position_margin)
+    q_prev = (
+        pin.neutral(model)
+        if initial_q is None
+        else np.clip(
+            np.asarray(initial_q, dtype=np.float64).reshape(model.nq),
+            lo,
+            hi,
+        )
+    )
+    max_step = np.asarray(model.velocityLimit) * velocity_scale / float(fps)
+    have_command = False
     for t in range(N):
         if not valid[t]:
             q[t] = q_prev; continue
@@ -212,12 +285,47 @@ def solve_sequence(wrist_poses_cam, valid, T_cam_base, model, data, fid, *,
         reachable[t] = r <= reach
         if r > reach:
             tgt = pin.SE3(tgt.rotation, p * (reach / r))
-        q_sol, e = solve_ik(model, data, fid, q_prev, tgt, w_ori=w_ori)
+        frame_lo, frame_hi = lo, hi
+        if have_command:
+            frame_lo = np.maximum(lo, q_prev - max_step)
+            frame_hi = np.minimum(hi, q_prev + max_step)
+        q_sol, e = solve_ik(
+            model, data, fid, q_prev, tgt, w_ori=w_ori,
+            lower=frame_lo, upper=frame_hi,
+        )
+        # Translation is the hard task: the XHand mount must remain at the
+        # tracked wrist. Orientation is followed only with the remaining DOF.
+        # A final position-only correction prevents a fast human wrist twist
+        # from pulling the whole flange centimetres away while its joints are
+        # correctly rate limited.
+        if w_ori > 0:
+            q_sol, e = solve_ik(
+                model, data, fid, q_sol, tgt, w_ori=0.0,
+                lower=frame_lo, upper=frame_hi,
+            )
         q[t] = q_sol; perr[t] = e; q_prev = q_sol
+        have_command = True
     # temporal smoothing on the valid joint trajectory (overlay needs visual, not
     # dynamic, smoothness)
     v = np.asarray(valid, bool)
     if smooth_win and v.sum() > smooth_win:
-        q[v] = np.clip(savgol_filter(q[v], smooth_win, 2, axis=0),
-                       model.lowerPositionLimit, model.upperPositionLimit)
+        q[v] = np.clip(savgol_filter(q[v], smooth_win, 2, axis=0), lo, hi)
+    # Savitzky-Golay is not constraint preserving. Project the final commands
+    # again and validate what is actually written to disk.
+    q = rate_limit_trajectory(
+        q, model.velocityLimit, fps, velocity_scale=velocity_scale,
+        lower=lo, upper=hi,
+    )
+    assert_trajectory_limits(
+        q, model, fps, position_margin=position_margin,
+        velocity_scale=velocity_scale,
+    )
+    # Report error for the final executable command, not the pre-smoothing IK.
+    for t in np.flatnonzero(v):
+        target = T_base_cam * pin.SE3(
+            wrist_poses_cam[t][:3, :3], wrist_poses_cam[t][:3, 3]
+        )
+        pin.forwardKinematics(model, data, q[t])
+        pin.updateFramePlacements(model, data)
+        perr[t] = np.linalg.norm(data.oMf[fid].translation - target.translation)
     return q, perr, reachable

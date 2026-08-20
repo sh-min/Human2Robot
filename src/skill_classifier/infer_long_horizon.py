@@ -43,6 +43,16 @@ from skill_classifier.models import build_model
 
 # Module-level label list — overridden in main() from checkpoint when needed
 LABELS = list(ACTION_LABELS)
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+
+
+def _frame_path(rgb_dir, frame_name):
+    root = Path(rgb_dir)
+    for suffix in IMAGE_SUFFIXES:
+        candidate = root / f"{frame_name}{suffix}"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"no image for {frame_name} under {root}")
 
 
 def discover_episodes(data_dir, mano=False, image_dir="rgb"):
@@ -55,17 +65,28 @@ def discover_episodes(data_dir, mano=False, image_dir="rgb"):
         rgb_dir = d / image_dir
         if not rgb_dir.is_dir():
             continue
-        frames = sorted(rgb_dir.glob("*.png"), key=lambda p: p.stem)
+        frames = sorted(
+            (
+                path
+                for path in rgb_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+            ),
+            key=lambda path: path.stem,
+        )
         if not frames:
             continue
         json_path = d / "result.json"
-        if not json_path.exists():
+        hawor_path = d / "rgb_hawor" / "retarget_input.npz"
+        feature_path = d / "features.pt"
+        if not json_path.exists() and not hawor_path.exists() and not feature_path.exists():
             continue
         episodes.append({
             "name": d.name,
             "rgb_dir": str(rgb_dir),
             "ep_dir": str(d),
-            "json_path": str(json_path),
+            "json_path": str(json_path) if json_path.exists() else None,
+            "hawor_path": str(hawor_path) if hawor_path.exists() else None,
+            "features_path": str(feature_path) if feature_path.exists() else None,
             "num_frames": len(frames),
             "frame_names": [f.stem for f in frames],
         })
@@ -75,9 +96,8 @@ def discover_episodes(data_dir, mano=False, image_dir="rgb"):
 def load_frames(rgb_dir, frame_names, crop_size):
     frames = []
     for fn in frame_names:
-        img_path = os.path.join(rgb_dir, f"{fn}.png")
         from PIL import Image
-        img = Image.open(img_path).convert("RGB")
+        img = Image.open(_frame_path(rgb_dir, fn)).convert("RGB")
         img = img.resize((crop_size, crop_size), Image.BILINEAR)
         frames.append(np.array(img))
     return np.stack(frames)
@@ -223,6 +243,89 @@ def run_classifier(model, vjepa_feats, hand_kpts, window_size, tubelet, device):
     return np.array(all_preds), np.stack(all_probs)
 
 
+def run_classifier_aligned(
+    model,
+    vjepa_feats,
+    hand_tokens,
+    window_size,
+    device,
+):
+    """Run the classifier on already token-aligned bundle features."""
+
+    vjepa = torch.as_tensor(vjepa_feats, dtype=torch.float32)
+    hand = torch.as_tensor(hand_tokens, dtype=torch.float32)
+    if vjepa.ndim not in (2, 3) or hand.ndim != 2 or len(vjepa) != len(hand):
+        raise ValueError(
+            f"aligned V-JEPA/MANO shapes do not match: {vjepa.shape}/{hand.shape}"
+        )
+    all_preds = []
+    all_probs = []
+    model.eval()
+    with torch.no_grad():
+        for token_index in range(len(vjepa)):
+            start = token_index - window_size + 1
+            if start >= 0:
+                vjepa_window = vjepa[start : token_index + 1]
+                hand_window = hand[start : token_index + 1]
+            else:
+                padding = -start
+                vjepa_window = torch.cat(
+                    [
+                        torch.zeros(
+                            (padding, *vjepa.shape[1:]), dtype=vjepa.dtype
+                        ),
+                        vjepa[: token_index + 1],
+                    ]
+                )
+                hand_window = torch.cat(
+                    [torch.zeros(padding, hand.shape[1]), hand[: token_index + 1]]
+                )
+            logits = model(
+                vjepa_window.unsqueeze(0).to(device),
+                hand_window.unsqueeze(0).to(device),
+            )
+            probabilities = F.softmax(logits, dim=-1)
+            all_preds.append(int(logits.argmax(dim=-1).item()))
+            all_probs.append(probabilities[0].cpu().numpy())
+    return np.asarray(all_preds), np.stack(all_probs)
+
+
+def load_object_context_sidecar(features_path, bundle, classifier_args):
+    """Load the Grounding-DINO/SAM2 context expected by an object model."""
+
+    context_key = classifier_args.get("object_context_key")
+    if not context_key:
+        raise ValueError("object classifier checkpoint has no object_context_key")
+    sidecar_path = Path(features_path).with_name(f"{context_key}.pt")
+    if not sidecar_path.is_file():
+        raise FileNotFoundError(f"missing object context sidecar: {sidecar_path}")
+    sidecar = torch.load(sidecar_path, map_location="cpu", weights_only=False)
+    if int(sidecar.get("schema_version", 0)) != 1:
+        raise ValueError(f"unsupported object context schema: {sidecar_path}")
+    masks = torch.as_tensor(sidecar["masks"], dtype=torch.float32)
+    confidence = torch.as_tensor(sidecar["confidence"], dtype=torch.float32)
+    expected_names = tuple(classifier_args.get("object_names", ()))
+    actual_names = tuple(sidecar["object_names"])
+    if actual_names != expected_names:
+        raise ValueError(
+            f"object prompt bank mismatch: {actual_names} != {expected_names}"
+        )
+    token_count = int(bundle["num_tokens"])
+    spatial_tokens = int(classifier_args["object_mask_spatial_tokens"])
+    object_count = int(classifier_args["object_prompt_count"])
+    if masks.shape != (token_count, object_count, spatial_tokens):
+        raise ValueError(
+            "object mask shape does not match classifier: "
+            f"{tuple(masks.shape)} != {(token_count, object_count, spatial_tokens)}"
+        )
+    if confidence.shape != (token_count, object_count):
+        raise ValueError("object confidence shape does not match classifier")
+    centers = torch.as_tensor(sidecar["token_center_frame_indices"])
+    if not torch.equal(centers, torch.as_tensor(bundle["token_center_frame_indices"])):
+        raise ValueError("object context and V-JEPA token centers differ")
+    return torch.cat([masks.flatten(1), confidence], dim=-1)
+
+
 def run_classifier_mano_only(model, hand_feats, window_size, device):
     """Run hand-only classifier per frame (no V-JEPA, no token downsampling)."""
     num_frames = hand_feats.shape[0]
@@ -246,10 +349,38 @@ def run_classifier_mano_only(model, hand_feats, window_size, device):
     return np.array(all_preds), np.stack(all_probs)
 
 
-def plot_timeline(preds, probs, num_frames, tubelet, title, save_path, gt_per_frame=None):
+def _token_mapping(num_frames, num_tokens, tubelet, frame_to_token=None):
+    if frame_to_token is not None:
+        mapping = np.asarray(frame_to_token, dtype=np.int64)
+        if mapping.shape != (num_frames,):
+            raise ValueError(
+                f"frame_to_token shape {mapping.shape} != ({num_frames},)"
+            )
+        if mapping.min() < 0 or mapping.max() >= num_tokens:
+            raise ValueError("frame_to_token contains an out-of-range token")
+        return mapping
+    mapping = np.arange(num_frames, dtype=np.int64) // int(tubelet)
+    return np.clip(mapping, 0, num_tokens - 1)
+
+
+def plot_timeline(
+    preds,
+    probs,
+    num_frames,
+    tubelet,
+    title,
+    save_path,
+    gt_per_frame=None,
+    frame_to_token=None,
+):
     """Plot skill prediction timeline."""
     palette = sns.color_palette("husl", n_colors=len(LABELS))
     num_tokens = len(preds)
+    mapping = _token_mapping(
+        num_frames, num_tokens, tubelet, frame_to_token
+    )
+    preds_per_frame = preds[mapping]
+    probs_per_frame = probs[mapping]
 
     has_gt = gt_per_frame is not None
     n_rows = 3 if has_gt else 2
@@ -261,9 +392,21 @@ def plot_timeline(preds, probs, num_frames, tubelet, title, save_path, gt_per_fr
 
     # Row 0: predicted label bar
     ax = axes[0]
-    for t in range(num_tokens):
-        color = palette[preds[t]]
-        ax.barh(0, tubelet, left=t * tubelet, color=color, height=1, edgecolor="none")
+    start = 0
+    while start < num_frames:
+        label = int(preds_per_frame[start])
+        end = start + 1
+        while end < num_frames and int(preds_per_frame[end]) == label:
+            end += 1
+        ax.barh(
+            0,
+            end - start,
+            left=start,
+            color=palette[label],
+            height=1,
+            edgecolor="none",
+        )
+        start = end
     ax.set_xlim(0, num_frames)
     ax.set_yticks([0])
     ax.set_yticklabels(["Pred"], fontsize=9)
@@ -294,7 +437,7 @@ def plot_timeline(preds, probs, num_frames, tubelet, title, save_path, gt_per_fr
 
     # Last row: confidence heatmap
     ax = axes[-1]
-    im = ax.imshow(probs.T, aspect="auto", cmap="viridis", vmin=0, vmax=1,
+    im = ax.imshow(probs_per_frame.T, aspect="auto", cmap="viridis", vmin=0, vmax=1,
                    extent=[0, num_frames, len(LABELS) - 0.5, -0.5])
     ax.set_yticks(range(len(LABELS)))
     ax.set_yticklabels(LABELS, fontsize=8)
@@ -353,7 +496,8 @@ def render_prob_bar(probs_t, palette_255, panel_w=220, panel_h=256, bar_h=40, gt
 
 
 def make_annotated_video(rgb_dir, frame_names, preds, probs, tubelet, save_path,
-                         crop_size=256, fps=15, gt_per_frame=None):
+                         crop_size=256, fps=15, gt_per_frame=None,
+                         frame_to_token=None):
     """Create video with skill label bar (bottom) + probability bars (right)."""
     from PIL import Image, ImageDraw
 
@@ -371,10 +515,11 @@ def make_annotated_video(rgb_dir, frame_names, preds, probs, tubelet, save_path,
     out = cv2.VideoWriter(tmp_path, fourcc, fps, (total_w, total_h))
 
     num_tokens = len(preds)
+    mapping = _token_mapping(
+        len(frame_names), num_tokens, tubelet, frame_to_token
+    )
     for fi, fn in enumerate(frame_names):
-        t = fi // tubelet
-        if t >= num_tokens:
-            t = num_tokens - 1
+        t = int(mapping[fi])
 
         pred_idx = preds[t]
         pred_label = LABELS[pred_idx]
@@ -382,7 +527,7 @@ def make_annotated_video(rgb_dir, frame_names, preds, probs, tubelet, save_path,
         color = palette_255[pred_idx]
 
         # Original frame
-        img = Image.open(os.path.join(rgb_dir, f"{fn}.png")).convert("RGB")
+        img = Image.open(_frame_path(rgb_dir, fn)).convert("RGB")
         img = img.resize((W, H), Image.BILINEAR)
 
         # Bottom label bar — green if pred matches GT, red if not, neutral if no GT
@@ -545,6 +690,49 @@ def main():
             dropout=cls_args.get("dropout", 0.3),
             pool=cls_args.get("pool", "mean"),
         )
+    elif model_name == "spatial_attention_mlp":
+        model_kwargs.update(
+            hidden_dims=tuple(cls_args.get("hidden_dims", [256, 128])),
+            dropout=cls_args.get("dropout", 0.3),
+        )
+    elif model_name in ("object_mask_attention_mlp", "object_text_prototype_mlp"):
+        model_kwargs.update(
+            hidden_dims=tuple(cls_args.get("hidden_dims", [256, 128])),
+            dropout=cls_args.get("dropout", 0.4),
+            object_prompt_count=int(cls_args["object_prompt_count"]),
+            object_mask_spatial_tokens=int(
+                cls_args["object_mask_spatial_tokens"]
+            ),
+            object_projection_dim=int(cls_args.get("object_projection_dim", 64)),
+            # Ablation flags did not exist in older full-fusion checkpoints.
+            # Their serialized value can therefore be absent or None; both
+            # mean the historical True default rather than False.
+            use_global_features=bool(
+                True if cls_args.get("use_global_features") is None
+                else cls_args["use_global_features"]
+            ),
+            use_object_features=bool(
+                True if cls_args.get("use_object_features") is None
+                else cls_args["use_object_features"]
+            ),
+            use_confidence_features=bool(
+                True if cls_args.get("use_confidence_features") is None
+                else cls_args["use_confidence_features"]
+            ),
+            use_occupancy_features=bool(
+                True if cls_args.get("use_occupancy_features") is None
+                else cls_args["use_occupancy_features"]
+            ),
+            use_confidence_gate=bool(
+                True if cls_args.get("use_confidence_gate") is None
+                else cls_args["use_confidence_gate"]
+            ),
+        )
+        if model_name == "object_text_prototype_mlp":
+            model_kwargs.update(
+                text_embedding_dim=int(cls_args.get("text_embedding_dim", 512)),
+                text_head_mode=str(cls_args.get("text_head_mode", "prototype")),
+            )
     elif model_name == "transformer":
         model_kwargs.update(
             d_model=cls_args.get("d_model", 256),
@@ -556,9 +744,38 @@ def main():
     classifier.load_state_dict(cls_ckpt["model"])
     classifier.eval()
 
-    # Load V-JEPA encoder only when needed
+    # Discover episodes
+    episodes = discover_episodes(args.data_dir, mano=args.mano, image_dir=args.image_dir)
+    print(f"Found {len(episodes)} episodes")
+    if not episodes:
+        raise ValueError(f"no usable episodes under {args.data_dir}")
+
+    variant = cls_args.get("variant", "mano_only")
+    bundle_feature_key = {
+        "mano_only": None,
+        "vjepa_orig": "vjepa_orig",
+        "masked_vjepa_orig": "vjepa_orig_masked",
+        "vjepa_robot": "vjepa_robot",
+        "vjepa_orig_dense": "vjepa_orig_dense",
+    }.get(variant)
+    if variant != "mano_only" and bundle_feature_key is None:
+        raise ValueError(f"unknown classifier variant: {variant}")
+    use_feature_bundles = all(ep["features_path"] is not None for ep in episodes)
+    expected_sampling_signature = cls_args.get("sampling_signature")
+    if expected_sampling_signature is not None:
+        expected_sampling_signature = tuple(expected_sampling_signature)
+        if expected_sampling_signature[0] != "legacy_dense" and not use_feature_bundles:
+            raise ValueError(
+                "this classifier requires aligned features.pt bundles; "
+                "direct dense inference would violate its sampling contract"
+            )
+
+    # Load V-JEPA only for the legacy direct-extraction fallback. New 4-FPS
+    # checkpoints consume their persisted alignment bundle instead.
     encoder, feat_extractor = None, None
-    if not mano_only:
+    if not mano_only and not use_feature_bundles:
+        if args.vjepa_ckpt is None:
+            raise ValueError("--vjepa_ckpt is required for direct V-JEPA extraction")
         from data_preprocess.feature_extractor import VJEPAFeatureExtractor, load_pretrained_encoder
         print("Loading V-JEPA encoder...")
         encoder = load_pretrained_encoder(
@@ -568,10 +785,8 @@ def main():
             tubelet_size=args.tubelet_size,
         )
         feat_extractor = VJEPAFeatureExtractor(encoder, pool="none").to(device)
-
-    # Discover episodes
-    episodes = discover_episodes(args.data_dir, mano=args.mano, image_dir=args.image_dir)
-    print(f"Found {len(episodes)} episodes")
+    elif use_feature_bundles:
+        print("Using persisted aligned features.pt bundles")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -580,8 +795,73 @@ def main():
         nf = ep["num_frames"]
         print(f"\n{'='*60}")
         print(f"Episode: {name} ({nf} frames)")
+        frame_to_token = None
 
-        if mano_only:
+        if use_feature_bundles:
+            from data_preprocess.preprocess import (
+                feature_sampling_signature,
+                validate_feature_bundle,
+            )
+
+            bundle = torch.load(
+                ep["features_path"], map_location="cpu", weights_only=True
+            )
+            validate_feature_bundle(bundle)
+            actual_signature = feature_sampling_signature(bundle)
+            if expected_sampling_signature is None:
+                if actual_signature[0] != "legacy_dense":
+                    raise ValueError(
+                        "classifier checkpoint has no sampling signature and "
+                        f"cannot consume {actual_signature[0]} bundles"
+                    )
+            elif actual_signature != expected_sampling_signature:
+                raise ValueError(
+                    f"classifier/bundle sampling mismatch: "
+                    f"{expected_sampling_signature} != {actual_signature}"
+                )
+            if model_name in ("object_mask_attention_mlp", "object_text_prototype_mlp"):
+                hand_tokens = load_object_context_sidecar(
+                    ep["features_path"], bundle, cls_args
+                )
+            elif cls_args.get("hand_representation") == "none":
+                hand_tokens = torch.zeros(len(bundle["mano"]), 0)
+            else:
+                hand_tokens = bundle["mano"]
+            if hand_tokens.shape[1] != hand_dim:
+                raise ValueError(
+                    f"classifier hand_dim {hand_dim} != bundle {hand_tokens.shape[1]}"
+                )
+            if bundle_feature_key is None:
+                vjepa_feats = torch.zeros(len(hand_tokens), 0)
+            else:
+                if bundle_feature_key not in bundle:
+                    raise ValueError(
+                        f"bundle missing classifier feature {bundle_feature_key}"
+                    )
+                vjepa_feats = bundle[bundle_feature_key]
+            if vjepa_feats.shape[-1] != vjepa_dim:
+                raise ValueError(
+                    f"classifier vjepa_dim {vjepa_dim} != bundle {vjepa_feats.shape[-1]}"
+                )
+            if cls_args.get("vjepa_diff", False) and vjepa_feats.shape[1] > 0:
+                vjepa_difference = torch.zeros_like(vjepa_feats)
+                vjepa_difference[1:] = vjepa_feats[1:] - vjepa_feats[:-1]
+                vjepa_feats = vjepa_difference
+            preds, probs = run_classifier_aligned(
+                classifier,
+                vjepa_feats,
+                hand_tokens,
+                window_size,
+                device,
+            )
+            frame_to_token = np.asarray(bundle["frame_to_token"], dtype=np.int64)
+            if frame_to_token.shape != (nf,):
+                raise ValueError(
+                    f"bundle/source frame mismatch: {frame_to_token.shape} vs {nf}"
+                )
+            num_tokens = len(preds)
+            tubelet = int(bundle["tubelet_size"])
+        elif mano_only:
             # Hand-only: extract MANO axis-angle from result.json
             print("  Extracting MANO axis-angle features...")
             hand_feats = load_mano_axis_angle(ep["json_path"], ep["frame_names"])
@@ -630,31 +910,29 @@ def main():
 
         print(f"  {nf} frames -> {num_tokens} steps")
 
-        # Print skill sequence summary
+        mapping = _token_mapping(
+            nf, len(preds), tubelet, frame_to_token
+        )
+        preds_per_frame = preds[mapping]
+
+        # Print skill sequence summary in original source-frame coordinates.
         segments = []
-        cur_label, cur_start = preds[0], 0
-        for t in range(1, len(preds)):
-            if preds[t] != cur_label:
-                segments.append((cur_start, t - 1, cur_label))
-                cur_label, cur_start = preds[t], t
-        segments.append((cur_start, len(preds) - 1, cur_label))
+        cur_label, cur_start = preds_per_frame[0], 0
+        for frame_index in range(1, nf):
+            if preds_per_frame[frame_index] != cur_label:
+                segments.append((cur_start, frame_index - 1, int(cur_label)))
+                cur_label, cur_start = preds_per_frame[frame_index], frame_index
+        segments.append((cur_start, nf - 1, int(cur_label)))
 
         print("  Predicted skill sequence:")
         for s_start, s_end, s_label in segments:
-            dur_frames = (s_end - s_start + 1) * tubelet
-            print(f"    [{s_start*tubelet:4d}-{s_end*tubelet:4d}] {LABELS[s_label]:>5s}  "
+            dur_frames = s_end - s_start + 1
+            print(f"    [{s_start:4d}-{s_end:4d}] {LABELS[s_label]:>5s}  "
                   f"({dur_frames} frames)")
 
         # Save results
         ep_dir = os.path.join(args.output_dir, name)
         os.makedirs(ep_dir, exist_ok=True)
-
-        # Per-frame predictions
-        preds_per_frame = np.repeat(preds, tubelet)
-        if len(preds_per_frame) < nf:
-            pad = np.full(nf - len(preds_per_frame), preds_per_frame[-1])
-            preds_per_frame = np.concatenate([preds_per_frame, pad])
-        preds_per_frame = preds_per_frame[:nf]
 
         # GT evaluation (if gt_labels.json exists)
         gt_path = Path(args.data_dir) / name / "gt_labels.json"
@@ -674,6 +952,8 @@ def main():
             "preds_per_frame": preds_per_frame,
             "num_frames": nf,
             "segments": segments,
+            "frame_to_token": mapping,
+            "sampling_signature": expected_sampling_signature,
             "eval_results": eval_results,
             "labels": LABELS,
         }, os.path.join(ep_dir, "predictions.pt"))
@@ -686,7 +966,8 @@ def main():
         plot_timeline(preds, probs, nf, tubelet,
                       f"Skill Predictions: {name}",
                       os.path.join(ep_dir, "timeline.png"),
-                      gt_per_frame=gt_per_frame)
+                      gt_per_frame=gt_per_frame,
+                      frame_to_token=mapping)
 
         # Annotated video
         if not args.no_video and ep.get("rgb_dir"):
@@ -696,6 +977,7 @@ def main():
                 tubelet, os.path.join(ep_dir, f"{exp_id}_{name}.mp4"),
                 crop_size=args.crop_size, fps=args.fps,
                 gt_per_frame=gt_per_frame,
+                frame_to_token=mapping,
             )
 
     print(f"\nDone! Results in {args.output_dir}")

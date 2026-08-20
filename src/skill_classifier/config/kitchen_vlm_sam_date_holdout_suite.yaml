@@ -1,0 +1,51 @@
+# Leave-one-recording-date-out generalization.  Validation uses originals only;
+# training uses original plus color-jitter views from the other two dates.
+base_config: src/skill_classifier/config/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco.yaml
+output_dir: output/skill_classifier/kitchen_0724_0728_human_vjepa21_vlm_sam_no_choco/date_holdout_300e
+max_parallel: 2
+common:
+  epochs: 300
+  save_every: 0
+  plot_best_updates: false
+  seed: 42
+  window_size: 4
+
+experiments:
+  - id: global_holdout_0724
+    group: holdout_0724
+    set:
+      model: spatial_attention_mlp
+      object_context_key: null
+      train_recording_glob: "0727__*,0728__*"
+      val_recording_glob: "0724__IMG_5019,0724__IMG_502[0-8]"
+  - id: object_holdout_0724
+    group: holdout_0724
+    set:
+      train_recording_glob: "0727__*,0728__*"
+      val_recording_glob: "0724__IMG_5019,0724__IMG_502[0-8]"
+
+  - id: global_holdout_0727
+    group: holdout_0727
+    set:
+      model: spatial_attention_mlp
+      object_context_key: null
+      train_recording_glob: "0724__*,0728__*"
+      val_recording_glob: "0727__07_27-[1-9],0727__07_27-1[0-9],0727__07_27-2[0-9],0727__07_27-20(1)"
+  - id: object_holdout_0727
+    group: holdout_0727
+    set:
+      train_recording_glob: "0724__*,0728__*"
+      val_recording_glob: "0727__07_27-[1-9],0727__07_27-1[0-9],0727__07_27-2[0-9],0727__07_27-20(1)"
+
+  - id: global_holdout_0728
+    group: holdout_0728
+    set:
+      model: spatial_attention_mlp
+      object_context_key: null
+      train_recording_glob: "0724__*,0727__*"
+      val_recording_glob: "0728__07_28-0[1-5]"
+  - id: object_holdout_0728
+    group: holdout_0728
+    set:
+      train_recording_glob: "0724__*,0727__*"
+      val_recording_glob: "0728__07_28-0[1-5]"

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "calibration_id": "depth-stereo-20260802-factory-intrinsics-refined-extrinsics-v1",
+  "created_date": "2026-08-03",
+  "purpose": "Metric registration of raw RealSense depth into unrotated camera-2 RGB coordinates",
+  "does_not_replace": "configs/calibration/cameras_20260802.json",
+  "coordinate_convention": {
+    "camera_axes": "x right, y down, z forward",
+    "rigid_transform": "X_target = R_target_from_source * X_source + t_target_from_source",
+    "image_transform": "none",
+    "rs2_rotation_storage": "column-major"
+  },
+  "device_bindings": {
+    "camera_1": {
+      "model": "RealSense D455",
+      "serial_number": "341522300432",
+      "depth_intrinsics": {
+        "width": 848,
+        "height": 480,
+        "fx": 431.785919,
+        "fy": 431.785919,
+        "ppx": 425.621277,
+        "ppy": 241.924103,
+        "model": "Brown Conrady",
+        "coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+      },
+      "color_intrinsics": {
+        "width": 1280,
+        "height": 720,
+        "fx": 648.734192,
+        "fy": 647.695129,
+        "ppx": 640.143982,
+        "ppy": 376.9328,
+        "model": "Inverse Brown Conrady",
+        "coeffs": [-0.0543576255, 0.0620360747, 0.00019799007, 0.00131882937, -0.0201759245]
+      },
+      "depth_units_m": 0.001,
+      "factory_depth_to_color": {
+        "source": "conversion_manifest.json color_tf_ref_raw parsed as rs2_extrinsics column-major rotation",
+        "raw": "rotation=0.999993,0.000462,-0.003680,-0.000466,0.999999,-0.001124,0.003679,0.001125,0.999993;translation=-0.059094,0.000057,0.000528",
+        "rotation": [
+          [0.999993, -0.000466, 0.003679],
+          [0.000462, 0.999999, 0.001125],
+          [-0.00368, -0.001124, 0.999993]
+        ],
+        "translation_m": [-0.059094, 0.000057, 0.000528]
+      },
+      "native_color_projection": {
+        "model_override": "opencv_brown_forward",
+        "reason": "The recorded D455 metadata labels these coefficients Inverse Brown Conrady, but forward OpenCV Brown projection is the convention consistent with the recorded RGB pixels and the factory depth-to-color endpoint.",
+        "checkerboard_qa": {
+          "accepted_views": 29,
+          "factory_intrinsics_forward_brown_rms_px": 0.1998204455,
+          "checkerboard_fitted_intrinsics_rms_px": 0.195357349,
+          "decision": "Use factory K/D so the projection shares the physical factory color frame used by depth_to_color; the 0.0045 px checkerboard fit difference is negligible."
+        }
+      }
+    },
+    "camera_2": {
+      "model": "RealSense D435I",
+      "serial_number": "261722074167",
+      "depth_intrinsics": {
+        "width": 848,
+        "height": 480,
+        "fx": 425.416138,
+        "fy": 425.416138,
+        "ppx": 429.708496,
+        "ppy": 240.799576,
+        "model": "Brown Conrady",
+        "coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+      },
+      "color_intrinsics": {
+        "width": 1280,
+        "height": 720,
+        "fx": 907.983337,
+        "fy": 907.939758,
+        "ppx": 652.578674,
+        "ppy": 389.446075,
+        "model": "Inverse Brown Conrady",
+        "coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+      },
+      "depth_units_m": 0.001,
+      "factory_depth_to_color": {
+        "source": "conversion_manifest.json color_tf_ref_raw parsed as rs2_extrinsics column-major rotation",
+        "raw": "rotation=0.999953,-0.005290,-0.008085,0.005344,0.999964,0.006639,0.008050,-0.006682,0.999945;translation=0.015064,0.000117,0.000320",
+        "rotation": [
+          [0.999953, 0.005344, 0.00805],
+          [-0.00529, 0.999964, -0.006682],
+          [-0.008085, 0.006639, 0.999945]
+        ],
+        "translation_m": [0.015064, 0.000117, 0.00032]
+      }
+    }
+  },
+  "color2_from_color1": {
+    "source": "factory-intrinsics stereo refinement on the 2026-08-02 checkerboard capture",
+    "rotation": [
+      [-0.8808524, 0.2117558, -0.42338933],
+      [-0.28495992, 0.47700365, 0.83142369],
+      [0.37801705, 0.85301055, -0.3598279]
+    ],
+    "translation_m": [0.3807362, -0.87296286, 1.09063763]
+  },
+  "depth1_to_color2_composed_reference": {
+    "source": "rounded QA reference; runtime composition of factory depth1_to_color1 and refined color1_to_color2 remains authoritative",
+    "rotation": [
+      [-0.87919033, 0.21264196, -0.4263888],
+      [-0.28779719, 0.47620144, 0.83090613],
+      [0.37973266, 0.85323799, -0.35747502]
+    ],
+    "translation_m": [0.43257781, -0.85565726, 1.06815772]
+  },
+  "qa": {
+    "stereo_reprojection_rms_px": 0.86957,
+    "table_alignment_offset_cm": {
+      "min": 0.008,
+      "max": 0.595
+    },
+    "notes": [
+      "The old cameras_20260802.json stereo transform was not mutated.",
+      "Depth1-to-color2 composition agrees with the rounded direct QA transform to below 1e-8 per element."
+    ]
+  }
+}

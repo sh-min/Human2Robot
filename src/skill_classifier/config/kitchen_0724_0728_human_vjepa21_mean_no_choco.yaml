@@ -1,0 +1,42 @@
+# Human-hand raw-video V-JEPA 2.1 mean-pooling experiment. The recordings,
+# split, optimizer, and classifier match the robot-overlay experiment.
+
+output_dir: output/skill_classifier/kitchen_0724_0728_human_vjepa21_mean_no_choco
+
+train_data_root: data/vjepa_training/kitchen_0724_0728_human_vjepa21_dense_no_choco
+train_recording_glob: "0724__IMG_5019,0724__IMG_502[0-6],0727__07_27-[1-9],0727__07_27-1[0-9],0727__07_27-2[0-3]*,0728__07_28-0[1-4]"
+val_data_root: data/vjepa_training/kitchen_0724_0728_human_vjepa21_dense_no_choco
+val_recording_glob: "0724__IMG_502[7-8],0727__07_27-2[4-9],0728__07_28-05"
+
+action_labels: [Cup, Lock, Milk, Snack, Sweep, Trans]
+
+model: mlp
+variant: vjepa_orig
+vjepa_diff: false
+hand_representation: none
+window_size: 8
+include_trans: true
+
+epochs: 300
+batch_size: 32
+num_workers: 0
+lr: 3.0e-4
+weight_decay: 1.0e-2
+warmup_epochs: 5
+grad_clip: 1.0
+label_smoothing: 0.1
+class_weights: none
+balance_sampling: median
+save_every: 50
+
+device: cuda
+seed: 42
+deterministic: true
+
+hidden_dims: [256, 128]
+dropout: 0.3
+pool: mean
+
+wandb_project: skill-segmentor
+wandb_entity: seongminjung-seoul-national-university
+no_wandb: true

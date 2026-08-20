@@ -4,10 +4,8 @@ Panels:
     RAW | HAND+ARM MASK | INPAINTED BACKGROUND
     ROBOT HAND+ARM | AMODAL MASK | FINAL
 
-The preferred robot-only input is written directly by
-render_rby1_xhand_full_arm.py, before compositing and without any human-mask
-clipping.  The old hand-only residual pipeline remains supported as a fallback.
-The amodal-mask panel is optional.
+The robot-only input is the locked RB5-850e + XHand render. The amodal-mask
+panel is optional.
 """
 import argparse
 from pathlib import Path
@@ -79,12 +77,7 @@ def main():
                   robot_only_candidates[0])
     )
     overlay_path = pd / "overlay_processor" / "video_overlay_raw.mkv"
-    final_candidates = [
-        pd / "video_overlay_rby1_xhand.mp4",
-        pd / "video_overlay_rby1_xhand.mkv",
-        pd / "video_overlay_xhand.mp4",
-        pd / "video_overlay_xhand.mkv",
-    ]
+    final_candidates = [pd / "overlay_processor_layered" / "video_overlay.mp4"]
     final_path = (
         args.final
         if args.final is not None
@@ -134,7 +127,7 @@ def main():
     if amodal is not None:
         n = min(n, len(amodal))
 
-    out = args.out or (pd / "pipeline_components_rby1_xhand.mp4")
+    out = args.out or (pd / "pipeline_components_rb5_850e_xhand.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
         str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps,

@@ -1,0 +1,14 @@
+# Two representative episodes per No group from 26.08.13_choco.
+# Selection: an episode near the group's median duration plus an episode with
+# a different primitive ordering. No1__IMG_5368 is retained as the previously
+# processed visual anchor.
+No1__IMG_5368
+No1__IMG_5384
+No2__IMG_5399
+No2__IMG_5415
+No3__IMG_5440
+No3__IMG_5426
+No4__IMG_5456
+No4__IMG_5468
+No5__IMG_5494
+No5__IMG_5490
